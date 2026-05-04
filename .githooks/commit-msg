@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# commit-msg — backstop validator. If an AI co-author trailer somehow survived
+# prepare-commit-msg (e.g., the user bypassed hooks then re-staged), reject the commit.
+#
+# AnchorageLabs policy: commits are authored by humans. See AGENTS.md.
+
+set -euo pipefail
+
+MSG_FILE="$1"
+[[ -z "${MSG_FILE:-}" || ! -f "$MSG_FILE" ]] && exit 0
+
+if grep -iE '^[[:space:]]*Co-Authored-By:.*(claude|codex|gpt-?[0-9]|openai|anthropic|noreply@anthropic|noreply@openai)' "$MSG_FILE" >/dev/null 2>&1; then
+  echo "" >&2
+  echo "✗ commit-msg: AI co-author trailer detected." >&2
+  echo "  AnchorageLabs commits are human-authored. Remove the Co-Authored-By line." >&2
+  echo "  Offending line(s):" >&2
+  grep -inE '^[[:space:]]*Co-Authored-By:.*(claude|codex|gpt-?[0-9]|openai|anthropic|noreply@anthropic|noreply@openai)' "$MSG_FILE" >&2 || true
+  exit 1
+fi
+
+# Soft warnings — never block, but make them visible.
+if [[ ! -s "$MSG_FILE" ]] || ! grep -vqE '^[[:space:]]*(#|$)' "$MSG_FILE"; then
+  echo "✗ commit-msg: empty commit message." >&2
+  exit 1
+fi
+
+exit 0

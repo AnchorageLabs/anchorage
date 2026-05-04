@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# prepare-commit-msg — strip AI co-author trailers before the commit is finalized.
+#
+# AnchorageLabs policy: commits are authored by humans. No `Co-Authored-By: Claude`,
+# `Co-Authored-By: Codex`, `Co-Authored-By: GPT-*`, or similar. Some agents add these
+# automatically; this hook removes them transparently so neither agent nor human has
+# to remember.
+#
+# Installed by anchorage-build/bin/init-anchorage.sh into .githooks/prepare-commit-msg
+# and wired with `git config core.hooksPath .githooks`.
+
+set -euo pipefail
+
+MSG_FILE="$1"
+[[ -z "${MSG_FILE:-}" || ! -f "$MSG_FILE" ]] && exit 0
+
+TMP=$(mktemp)
+
+# Drop any Co-Authored-By line that names an AI assistant or a noreply Anthropic / OpenAI address.
+# Match is case-insensitive and tolerant of trailing whitespace.
+awk '
+  BEGIN { IGNORECASE = 1 }
+  /^[[:space:]]*Co-Authored-By:.*(claude|codex|gpt-?[0-9]|openai|anthropic|noreply@anthropic|noreply@openai)/ { next }
+  { print }
+' "$MSG_FILE" >"$TMP"
+
+# Collapse trailing blank lines that might be left after stripping
+awk '
+  { lines[NR] = $0 }
+  END {
+    n = NR
+    while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--
+    for (i = 1; i <= n; i++) print lines[i]
+  }
+' "$TMP" >"$MSG_FILE"
+
+rm -f "$TMP"
+exit 0
