@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "001",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "not-a-date",
+  "type": "agent.started",
+  "level": "info",
+  "message": "started",
+  "data": {}
+}

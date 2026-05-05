@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_001",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:01Z",
+  "type": "agent.started",
+  "level": "info",
+  "message": "issue-reader v0.1.0 started",
+  "data": {
+    "agentVersion": "0.1.0"
+  }
+}

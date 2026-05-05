@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anchorage.dev/schemas/protocol-event.schema.json",
+  "title": "Anchorage Protocol Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "eventId",
+    "runId",
+    "taskId",
+    "timestamp",
+    "type",
+    "level",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[A-Za-z0-9_-]+$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[A-Za-z0-9_-]+$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^task_[A-Za-z0-9_-]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": {
+      "enum": [
+        "agent.started",
+        "agent.progress",
+        "agent.heartbeat",
+        "agent.completed",
+        "agent.failed",
+        "agent.output",
+        "artifact.created",
+        "policy.requested",
+        "policy.resolved",
+        "tool.requested",
+        "tool.result"
+      ]
+    },
+    "level": {
+      "enum": ["debug", "info", "warn", "error"]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "artifact.created" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "https://anchorage.dev/schemas/artifact-reference.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "agent.failed" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["error"],
+            "properties": {
+              "error": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["message"],
+                "properties": {
+                  "message": { "type": "string", "minLength": 1 },
+                  "code": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

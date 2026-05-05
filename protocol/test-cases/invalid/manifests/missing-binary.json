@@ -1,0 +1,7 @@
+{
+  "name": "issue-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "taskTypes": ["issue.read"],
+  "requires": ["github.read"]
+}

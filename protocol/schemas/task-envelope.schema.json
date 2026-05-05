@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anchorage.dev/schemas/task-envelope.schema.json",
+  "title": "Anchorage Task Envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["protocolVersion", "task", "run", "actor", "input", "capabilities"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "createdAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^task_[A-Za-z0-9_-]+$"
+        },
+        "type": {
+          "$ref": "#/$defs/taskType"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deadlineAt": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "attempt", "correlationId"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^run_[A-Za-z0-9_-]+$"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestedBy", "agent"],
+      "properties": {
+        "requestedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "owner", "name", "defaultBranch"],
+      "properties": {
+        "provider": {
+          "enum": ["github"]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultBranch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "humanApprovalRequired": {
+          "type": "boolean"
+        },
+        "maxDurationSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "parentTaskId": {
+          "type": ["string", "null"],
+          "pattern": "^task_[A-Za-z0-9_-]+$"
+        },
+        "priorArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "https://anchorage.dev/schemas/artifact-reference.schema.json"
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["$ref"],
+        "properties": {
+          "$ref": {
+            "type": "string",
+            "pattern": "^secret://[A-Za-z0-9._/-]+$"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "taskType": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    }
+  }
+}
