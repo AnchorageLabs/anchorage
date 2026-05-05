@@ -29,6 +29,49 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-05 — Make the public protocol executable through JSON Schema test cases and TypeScript SDK validation.
+
+**Intent:** Give agents, adapters, and future orchestrators a language-neutral protocol contract with a TypeScript validation implementation.
+
+**Files touched:**
+- package.json
+- pnpm-workspace.yaml
+- tsconfig.base.json
+- biome.json
+- protocol/SPEC.md
+- protocol/package.json
+- protocol/scripts/validate-test-cases.mjs
+- protocol/schemas/artifact-reference.schema.json
+- protocol/schemas/agent-manifest.schema.json
+- protocol/schemas/protocol-event.schema.json
+- protocol/schemas/task-envelope.schema.json
+- protocol/test-cases/valid/tasks/issue-read.json
+- protocol/test-cases/invalid/tasks/invalid-protocol-version.json
+- protocol/test-cases/invalid/tasks/missing-task-type.json
+- protocol/test-cases/valid/events/agent-started.json
+- protocol/test-cases/valid/events/artifact-created.json
+- protocol/test-cases/valid/events/agent-completed.json
+- protocol/test-cases/invalid/events/malformed-event.json
+- protocol/test-cases/valid/manifests/issue-reader.json
+- protocol/test-cases/invalid/manifests/missing-binary.json
+- sdk/typescript/package.json
+- sdk/typescript/tsconfig.json
+- sdk/typescript/vitest.config.ts
+- sdk/typescript/src/index.ts
+- sdk/typescript/src/types.ts
+- sdk/typescript/src/exit-codes.ts
+- sdk/typescript/src/schemas/index.ts
+- sdk/typescript/src/validation/index.ts
+- sdk/typescript/src/validation/validator.ts
+- sdk/typescript/src/events/event-types.ts
+- sdk/typescript/src/events/event-stream.ts
+- sdk/typescript/tests/validation.test.ts
+
+**Reason:** ADR-0003
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-04 — Bootstrap public open-core monorepo skeleton with module placeholders, license, and AGENTS/SOUL contracts.
 
 **Intent:** Bootstrap public open-core monorepo skeleton with module placeholders, license, and AGENTS/SOUL contracts.

@@ -1,0 +1,12 @@
+{
+  "name": "issue-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads a GitHub issue and emits structured metadata and summary.",
+  "taskTypes": ["issue.read"],
+  "inputs": ["github.issue"],
+  "outputs": ["issue.summary", "issue.metadata"],
+  "requires": ["github.read"],
+  "binary": "./bin/issue-reader",
+  "timeout": 120
+}

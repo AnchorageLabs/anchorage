@@ -1,0 +1,20 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_demo_001",
+    "createdAt": "2026-04-28T14:00:00Z"
+  },
+  "run": {
+    "id": "run_demo_001",
+    "attempt": 1,
+    "correlationId": "corr_demo_001"
+  },
+  "actor": {
+    "requestedBy": "orchestrator",
+    "agent": "issue-reader"
+  },
+  "input": {
+    "issueNumber": 42
+  },
+  "capabilities": ["github.read"]
+}

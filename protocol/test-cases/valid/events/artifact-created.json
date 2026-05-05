@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_005",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:04Z",
+  "type": "artifact.created",
+  "level": "info",
+  "message": "Issue summary artifact created",
+  "data": {
+    "artifactType": "issue.summary",
+    "uri": "file://.anchorage/runs/run_demo_001/issue-summary.json",
+    "mediaType": "application/json",
+    "sizeBytes": 512
+  }
+}
