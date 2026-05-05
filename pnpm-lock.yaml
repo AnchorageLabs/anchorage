@@ -18,6 +18,16 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.17)
 
+  agents/issue-reader:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   cli/anchorage-runner:
     dependencies:
       '@anchorage/sdk':
