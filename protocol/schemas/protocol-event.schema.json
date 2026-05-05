@@ -102,6 +102,85 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "tool.requested" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["tool", "input"],
+            "properties": {
+              "tool": { "type": "string", "minLength": 1 },
+              "input": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "tool.result" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["tool", "success", "output"],
+            "properties": {
+              "tool": { "type": "string", "minLength": 1 },
+              "success": { "type": "boolean" },
+              "output": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "policy.requested" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["gate"],
+            "properties": {
+              "gate": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "policy.resolved" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["decision", "resolvedBy"],
+            "properties": {
+              "decision": { "enum": ["approved", "denied", "overridden"] },
+              "resolvedBy": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
     }
   ]
 }

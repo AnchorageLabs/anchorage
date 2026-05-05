@@ -6,11 +6,11 @@
   "timestamp": "2026-04-28T14:00:04Z",
   "type": "artifact.created",
   "level": "info",
-  "message": "Issue summary artifact created",
+  "message": "Patch artifact created",
   "data": {
-    "artifactType": "issue.summary",
-    "uri": "file://.anchorage/runs/run_demo_001/issue-summary.json",
-    "mediaType": "application/json",
+    "artifactType": "patch",
+    "uri": "file://.anchorage/runs/run_demo_001/change.patch",
+    "mediaType": "text/x-diff",
     "sizeBytes": 512
   }
 }

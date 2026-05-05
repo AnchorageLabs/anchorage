@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_003",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:03Z",
+  "type": "tool.result",
+  "level": "info",
+  "message": "Target file read",
+  "data": {
+    "tool": "filesystem.read",
+    "success": true,
+    "output": {
+      "bytes": 128
+    }
+  }
+}

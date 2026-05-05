@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_failed_missing_error",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:04Z",
+  "type": "agent.failed",
+  "level": "error",
+  "message": "failed",
+  "data": {}
+}

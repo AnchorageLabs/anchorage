@@ -4,7 +4,12 @@ export {
   lifecycleEventTypes,
   terminalEventTypes,
 } from "./events/event-types.js";
-export { parseNdjsonEvents, validateEventStream } from "./events/event-stream.js";
+export {
+  eventStreamContextFromTaskEnvelope,
+  parseNdjsonEvents,
+  validateEventStream,
+} from "./events/event-stream.js";
+export type { EventStreamValidationContext } from "./events/event-stream.js";
 export {
   agentManifestSchema,
   artifactReferenceSchema,

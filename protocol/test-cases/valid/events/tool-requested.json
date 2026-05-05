@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_002",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:02Z",
+  "type": "tool.requested",
+  "level": "info",
+  "message": "Reading target file",
+  "data": {
+    "tool": "filesystem.read",
+    "input": {
+      "path": "src/index.ts"
+    }
+  }
+}

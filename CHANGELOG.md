@@ -141,6 +141,44 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Author:** Sol Soletti
 
 
+### 2026-05-05 — Tighten protocol conformance validation and neutralize flagship examples.
+
+**Intent:** Make the machine-readable protocol contract match the prose spec and keep conformance fixtures from presenting `issue.read` as the primary Anchorage use case.
+
+**Files touched:**
+- CHANGELOG.md
+- pnpm-lock.yaml
+- protocol/SPEC.md
+- protocol/schemas/protocol-event.schema.json
+- protocol/test-cases/valid/tasks/minimal-envelope.json
+- protocol/test-cases/invalid/tasks/invalid-protocol-version.json
+- protocol/test-cases/invalid/tasks/missing-task-type.json
+- protocol/test-cases/valid/events/agent-started.json
+- protocol/test-cases/valid/events/tool-requested.json
+- protocol/test-cases/valid/events/tool-result.json
+- protocol/test-cases/valid/events/policy-requested.json
+- protocol/test-cases/valid/events/policy-resolved.json
+- protocol/test-cases/valid/events/artifact-created.json
+- protocol/test-cases/valid/events/agent-completed.json
+- protocol/test-cases/invalid/events/agent-failed-missing-error.json
+- protocol/test-cases/invalid/events/malformed-event.json
+- protocol/test-cases/invalid/events/policy-requested-missing-gate.json
+- protocol/test-cases/invalid/events/policy-resolved-missing-decision.json
+- protocol/test-cases/invalid/events/tool-requested-missing-tool.json
+- protocol/test-cases/invalid/events/tool-result-missing-success.json
+- protocol/test-cases/valid/manifests/minimal-agent.json
+- protocol/test-cases/invalid/manifests/missing-binary.json
+- sdk/typescript/package.json
+- sdk/typescript/src/index.ts
+- sdk/typescript/src/validation/validator.ts
+- sdk/typescript/src/events/event-stream.ts
+- sdk/typescript/tests/validation.test.ts
+
+**Reason:** ADR-0004; post-merge review of PR #1 and ADR-0003.
+
+**Author:** Valentin Torassa
+
+
 ### 2026-05-05 — Make the public protocol executable through JSON Schema test cases and TypeScript SDK validation.
 
 **Intent:** Give agents, adapters, and future orchestrators a language-neutral protocol contract with a TypeScript validation implementation.

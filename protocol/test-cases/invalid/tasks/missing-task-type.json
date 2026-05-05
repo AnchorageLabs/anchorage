@@ -11,10 +11,10 @@
   },
   "actor": {
     "requestedBy": "orchestrator",
-    "agent": "issue-reader"
+    "agent": "minimal-agent"
   },
   "input": {
-    "issueNumber": 42
+    "instruction": "Apply the requested code change"
   },
-  "capabilities": ["github.read"]
+  "capabilities": ["workspace.read", "workspace.write"]
 }

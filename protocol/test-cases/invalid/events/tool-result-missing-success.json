@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_tool_result_missing_success",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:03Z",
+  "type": "tool.result",
+  "level": "info",
+  "message": "Tool returned",
+  "data": {
+    "tool": "filesystem.read",
+    "output": {}
+  }
+}

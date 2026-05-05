@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_policy_resolved_missing_decision",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:03Z",
+  "type": "policy.resolved",
+  "level": "info",
+  "message": "Policy decision resolved",
+  "data": {
+    "resolvedBy": "human:operator"
+  }
+}
