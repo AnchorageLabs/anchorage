@@ -1,0 +1,37 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_issue_read",
+    "type": "issue.read",
+    "createdAt": "2026-05-05T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_issue_read",
+    "attempt": 1,
+    "correlationId": "corr_example_issue_read"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "issue-reader"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "sandbox",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "issueNumber": 42,
+    "labels": ["enhancement"],
+    "body": "Add retry logic to the webhook handler."
+  },
+  "capabilities": ["github.read"],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": null,
+    "priorArtifacts": []
+  }
+}

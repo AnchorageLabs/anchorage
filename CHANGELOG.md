@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-05 — Add a local issue-reader agent slice that runs through the reference runner.
+
+**Intent:** Prove the CLI-first protocol path with a concrete `issue.read` agent and runnable example task.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/issue-reader/agent.json
+- agents/issue-reader/package.json
+- agents/issue-reader/tsconfig.json
+- agents/issue-reader/src/index.ts
+- examples/README.md
+- examples/tasks/issue-read.json
+
+**Reason:** issue #4; ADR-0003
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-05 — Add the reference CLI runner for executing protocol-compatible agents.
 
 **Intent:** Let users run a protocol-compatible agent locally through `anchorage run <agent> < task.json` with manifest, capability, event-stream, and exit-code validation.
