@@ -1,0 +1,12 @@
+{
+  "name": "issue-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads issue input and emits a structured issue summary.",
+  "taskTypes": ["issue.read"],
+  "inputs": ["github.issue"],
+  "outputs": ["issue.summary", "issue.metadata"],
+  "requires": ["github.read"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}
