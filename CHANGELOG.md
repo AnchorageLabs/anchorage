@@ -29,6 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-05 — Add the reference CLI runner for executing protocol-compatible agents.
+
+**Intent:** Let users run a protocol-compatible agent locally through `anchorage run <agent> < task.json` with manifest, capability, event-stream, and exit-code validation.
+
+**Files touched:**
+- CHANGELOG.md
+- cli/anchorage-runner/package.json
+- cli/anchorage-runner/tsconfig.json
+- cli/anchorage-runner/src/index.ts
+
+**Reason:** issue #3; ADR-0003
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-05 — Make the public protocol executable through JSON Schema test cases and TypeScript SDK validation.
 
 **Intent:** Give agents, adapters, and future orchestrators a language-neutral protocol contract with a TypeScript validation implementation.
