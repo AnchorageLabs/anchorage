@@ -1,0 +1,43 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_pr_open",
+    "type": "pr.open",
+    "createdAt": "2026-05-07T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_pr_open",
+    "attempt": 1,
+    "correlationId": "corr_example_pr_open"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "pr-opener"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "workspacePath": "/home/anchorage/envy",
+    "codeChangeResult": {
+      "status": "changed",
+      "planId": "plan_example_1",
+      "branchName": "feature/issue-1-agent-context-docs",
+      "changedFiles": ["AGENTS.md", "ARCHITECTURE.md"],
+      "summary": "Add agent-facing repository context docs",
+      "editedFiles": ["AGENTS.md", "ARCHITECTURE.md"]
+    }
+  },
+  "capabilities": ["github.write", "workspace.write", "shell.exec"],
+  "policy": {
+    "maxDurationSeconds": 300
+  },
+  "context": {
+    "parentTaskId": "task_envy_code_change",
+    "priorArtifacts": []
+  }
+}
