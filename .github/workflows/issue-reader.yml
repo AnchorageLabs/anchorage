@@ -1,0 +1,83 @@
+name: issue-reader
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to read
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Build task envelope
+        id: envelope
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -p .anchorage
+          jq -n \
+            --argjson n "$ISSUE_NUMBER" \
+            --arg owner "$REPO_OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg runId "$RUN_ID" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{
+              protocolVersion: "0.1",
+              task: {id: "task_gha_\($runId)_\($n)", type: "issue.read", createdAt: $ts, deadlineAt: null},
+              run: {id: "run_gha_\($runId)_\($n)", attempt: 1, correlationId: "corr_gha_\($runId)_\($n)"},
+              actor: {requestedBy: "github-actions", agent: "issue-reader"},
+              repository: {provider: "github", owner: $owner, name: $repo, defaultBranch: $branch},
+              input: {issueNumber: $n},
+              capabilities: ["github.read"],
+              policy: {maxDurationSeconds: 60},
+              context: {parentTaskId: null, priorArtifacts: []}
+            }' > .anchorage/task.json
+
+      - name: Run issue-reader
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANCHORAGE_ARTIFACT_DIR: ${{ github.workspace }}/.anchorage/artifacts
+        run: |
+          mkdir -p "$ANCHORAGE_ARTIFACT_DIR"
+          node cli/anchorage-runner/dist/index.js run issue-reader \
+            < .anchorage/task.json \
+            > .anchorage/events.ndjson
+
+      - name: Show event stream
+        run: cat .anchorage/events.ndjson
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-reader-${{ github.event.issue.number || inputs.issue_number }}
+          path: |
+            .anchorage/task.json
+            .anchorage/events.ndjson
+            .anchorage/artifacts/**
