@@ -29,3 +29,16 @@ node cli/anchorage-runner/dist/index.js \
 ```
 
 The planner also accepts a prior local `issue.summary` artifact through `context.priorArtifacts`.
+
+## coder
+
+Applies an implementation plan by calling Bedrock with Opus 4.7 and writing returned file edits into a target workspace. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_CODER_MODEL` to override the default `us.anthropic.claude-opus-4-7` inference profile.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run coder < examples/tasks/code-change.json
+```
+
+The example targets the repo root through `input.workspacePath: "../.."` because agents execute from their own package directories.

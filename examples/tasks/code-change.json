@@ -1,0 +1,61 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_code_change",
+    "type": "code.change",
+    "createdAt": "2026-05-07T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_code_change",
+    "attempt": 1,
+    "correlationId": "corr_example_code_change"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "coder"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "workspacePath": "../..",
+    "plan": {
+      "planId": "plan_example_code_change_19",
+      "goal": "Add a coder reference agent that applies implementation plans.",
+      "branchName": "issue-19-coder-agent",
+      "summary": "Implement a CLI-first coder wrapper that consumes implementation.plan and delegates code edits to an external coding CLI.",
+      "implementationSteps": [
+        "Inspect existing agents and copy the CLI-first envelope/event/artifact pattern.",
+        "Add agents/coder with task type code.change.",
+        "Read implementation.plan from input or prior artifacts.",
+        "Run the configured external coding CLI in the target workspace.",
+        "Emit code.change.result with changed files and command output summary."
+      ],
+      "acceptanceCriteria": [
+        "coder validates TaskEnvelope input and unsupported task types.",
+        "coder wraps an external coding CLI instead of implementing its own model loop.",
+        "coder emits valid protocol events and a code.change.result artifact on success."
+      ],
+      "likelyFiles": ["agents/coder/src/index.ts", "agents/coder/agent.json"],
+      "verificationCommands": ["corepack pnpm -r build", "corepack pnpm -r typecheck"],
+      "risks": ["The external coding CLI may not be installed in the local environment."],
+      "handoff": {
+        "nextAgent": "coder",
+        "taskType": "code.change",
+        "instructions": "Apply the plan in the target workspace. Do not commit, push, or open a PR."
+      }
+    }
+  },
+  "capabilities": ["workspace.write", "llm.code", "shell.exec"],
+  "policy": {
+    "maxDurationSeconds": 900
+  },
+  "context": {
+    "parentTaskId": null,
+    "priorArtifacts": []
+  }
+}

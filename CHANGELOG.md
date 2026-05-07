@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-06 — Add coder agent wrapper for implementation plans.
+
+**Intent:** Let the local agent chain move from a planner artifact into actual workspace changes by delegating `code.change` to Bedrock Opus 4.7 and applying structured file edits.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/coder/agent.json
+- agents/coder/package.json
+- agents/coder/src/index.ts
+- agents/coder/tsconfig.json
+- examples/README.md
+- examples/tasks/code-change.json
+
+**Reason:** issue #19; ADR-0005
+
+**Author:** Sol Soletti
+
 ### 2026-05-06 — Add planner agent for issue-to-plan handoff.
 
 **Intent:** Let the local agent chain move from a read GitHub issue into a Bedrock-generated implementation plan that a future coder agent can consume without scraping prose.
