@@ -1,0 +1,42 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_merge_prepare",
+    "type": "merge.prepare",
+    "createdAt": "2026-05-07T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_merge_prepare",
+    "attempt": 1,
+    "correlationId": "corr_example_merge_prepare"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "merge-gate"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "pr": {
+      "prNumber": 1,
+      "prUrl": "https://github.com/AnchorageLabs/envy/pull/1",
+      "branchName": "feature/issue-1-agent-context-docs",
+      "baseBranch": "main",
+      "title": "Add agent-facing repository context docs"
+    },
+    "reviewDecision": "approve"
+  },
+  "capabilities": ["github.write"],
+  "policy": {
+    "maxDurationSeconds": 600
+  },
+  "context": {
+    "parentTaskId": "task_envy_pr_review",
+    "priorArtifacts": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "merge-gate",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Checks CI status and auto-merges green PRs.",
+  "taskTypes": ["merge.prepare"],
+  "inputs": ["pr.review.result"],
+  "outputs": ["merge.completed"],
+  "requires": ["github.write"],
+  "binary": "./dist/index.js",
+  "timeout": 600
+}
