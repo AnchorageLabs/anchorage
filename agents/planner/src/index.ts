@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -179,51 +180,40 @@ async function createPlan(
   task: TaskEnvelope,
   issue: IssueSummary,
 ): Promise<{ ok: true; value: ImplementationPlan } | PlannerFailure> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!hasBedrockAuth()) {
     return failure(
       "missing_llm_api_key",
-      "Set ANTHROPIC_API_KEY so planner can call the planning LLM.",
+      "Set AWS_BEARER_TOKEN_BEDROCK or standard AWS credentials so planner can call Bedrock.",
       ExitCode.MissingCapability,
     );
   }
 
-  const model = process.env.ANCHORAGE_PLANNER_MODEL ?? "claude-3-5-sonnet-latest";
+  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
+  const model =
+    process.env.ANCHORAGE_PLANNER_MODEL ?? "us.anthropic.claude-3-5-sonnet-20241022-v2:0";
   emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
-    tool: "anthropic.messages.create",
-    input: { provider: "anthropic", model, issueNumber: issue.issueNumber },
+    tool: "bedrock.converse",
+    input: { provider: "aws-bedrock", region, model, issueNumber: issue.issueNumber },
   });
 
-  let response: Response;
+  let response: unknown;
   try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2400,
-        temperature: 0.2,
-        system: plannerSystemPrompt(),
-        messages: [{ role: "user", content: plannerUserPrompt(issue) }],
+    const client = new BedrockRuntimeClient({ region });
+    response = await client.send(
+      new ConverseCommand({
+        modelId: model,
+        system: [{ text: plannerSystemPrompt() }],
+        messages: [{ role: "user", content: [{ text: plannerUserPrompt(issue) }] }],
+        inferenceConfig: { maxTokens: 2400, temperature: 0.2 },
       }),
-    });
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     emitLlmFailure(task, message);
     return failure("llm_request_failed", message, ExitCode.ExternalDependencyFailure);
   }
 
-  if (!response.ok) {
-    const message = await response.text();
-    emitLlmFailure(task, message);
-    return failure("llm_request_failed", message, ExitCode.ExternalDependencyFailure);
-  }
-
-  const parsedResponse = parseAnthropicResponse(await response.json());
+  const parsedResponse = parseBedrockResponse(response);
   if (!parsedResponse.ok) {
     emitLlmFailure(task, parsedResponse.message);
     return failure(
@@ -241,9 +231,10 @@ async function createPlan(
 
   const plan = normalizePlan(task, issue, rawPlan.value);
   emit(task, "tool.result", "info", "LLM implementation plan received", {
-    tool: "anthropic.messages.create",
+    tool: "bedrock.converse",
     success: true,
     output: {
+      region,
       model,
       stopReason: parsedResponse.stopReason,
       inputTokens: parsedResponse.inputTokens,
@@ -252,6 +243,17 @@ async function createPlan(
   });
 
   return { ok: true, value: plan };
+}
+
+function hasBedrockAuth(): boolean {
+  return Boolean(
+    process.env.AWS_BEARER_TOKEN_BEDROCK ||
+      process.env.AWS_ACCESS_KEY_ID ||
+      process.env.AWS_PROFILE ||
+      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+  );
 }
 
 function plannerSystemPrompt(): string {
@@ -301,30 +303,32 @@ function plannerUserPrompt(issue: IssueSummary): string {
   );
 }
 
-function parseAnthropicResponse(
+function parseBedrockResponse(
   value: unknown,
 ):
   | { ok: true; text: string; stopReason: null | string; inputTokens: number; outputTokens: number }
   | { ok: false; message: string } {
-  if (!isObject(value)) return { ok: false, message: "Anthropic response was not an object." };
-  if (!Array.isArray(value.content)) {
-    return { ok: false, message: "Anthropic response did not include content[]." };
+  if (!isObject(value)) return { ok: false, message: "Bedrock response was not an object." };
+  const output = isObject(value.output) ? value.output : {};
+  const message = isObject(output.message) ? output.message : {};
+  if (!Array.isArray(message.content)) {
+    return { ok: false, message: "Bedrock response did not include output.message.content[]." };
   }
 
-  const text = value.content
-    .map((block) => (isObject(block) && block.type === "text" ? block.text : null))
+  const text = message.content
+    .map((block) => (isObject(block) ? block.text : null))
     .filter(isString)
     .join("\n")
     .trim();
-  if (!text) return { ok: false, message: "Anthropic response did not include text content." };
+  if (!text) return { ok: false, message: "Bedrock response did not include text content." };
 
   const usage = isObject(value.usage) ? value.usage : {};
   return {
     ok: true,
     text,
-    stopReason: typeof value.stop_reason === "string" ? value.stop_reason : null,
-    inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
-    outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
+    stopReason: typeof value.stopReason === "string" ? value.stopReason : null,
+    inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : 0,
+    outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : 0,
   };
 }
 
@@ -401,7 +405,7 @@ function stringArrayValue(value: JsonValue | undefined): string[] {
 
 function emitLlmFailure(task: TaskEnvelope, message: string): void {
   emit(task, "tool.result", "error", "LLM implementation plan failed", {
-    tool: "anthropic.messages.create",
+    tool: "bedrock.converse",
     success: false,
     error: { code: "llm_plan_failed", message },
   });

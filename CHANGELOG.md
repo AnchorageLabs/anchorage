@@ -31,7 +31,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ### 2026-05-06 — Add planner agent for issue-to-plan handoff.
 
-**Intent:** Let the local agent chain move from a read GitHub issue into an LLM-generated implementation plan that a future coder agent can consume without scraping prose.
+**Intent:** Let the local agent chain move from a read GitHub issue into a Bedrock-generated implementation plan that a future coder agent can consume without scraping prose.
 
 **Files touched:**
 - CHANGELOG.md
