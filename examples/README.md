@@ -29,3 +29,16 @@ node cli/anchorage-runner/dist/index.js \
 ```
 
 The planner also accepts a prior local `issue.summary` artifact through `context.priorArtifacts`.
+
+## coder
+
+Applies an implementation plan by running an external coding CLI in a target workspace. By default it runs `claude -p <prompt>`; override the command with `ANCHORAGE_CODER_COMMAND` and the argument array with `ANCHORAGE_CODER_ARGS_JSON`.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run coder < examples/tasks/code-change.json
+```
+
+The example targets the repo root through `input.workspacePath: "../.."` because agents execute from their own package directories.
