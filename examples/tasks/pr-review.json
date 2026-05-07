@@ -1,0 +1,42 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_pr_review",
+    "type": "pr.review",
+    "createdAt": "2026-05-07T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_pr_review",
+    "attempt": 1,
+    "correlationId": "corr_example_pr_review"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "reviewer"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "pr": {
+      "prNumber": 1,
+      "prUrl": "https://github.com/AnchorageLabs/envy/pull/1",
+      "branchName": "feature/issue-1-agent-context-docs",
+      "baseBranch": "main",
+      "title": "Add agent-facing repository context docs",
+      "changedFiles": ["AGENTS.md", "ARCHITECTURE.md", "CONTRIBUTING.md", "TESTING.md"]
+    }
+  },
+  "capabilities": ["github.read", "llm.review"],
+  "policy": {
+    "maxDurationSeconds": 300
+  },
+  "context": {
+    "parentTaskId": "task_envy_pr_open",
+    "priorArtifacts": []
+  }
+}
