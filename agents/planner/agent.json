@@ -1,0 +1,12 @@
+{
+  "name": "planner",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Turns issue summaries into implementation plans for coder agents.",
+  "taskTypes": ["plan.create"],
+  "inputs": ["issue.summary"],
+  "outputs": ["implementation.plan"],
+  "requires": [],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

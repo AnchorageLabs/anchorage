@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-06 — Add planner agent for issue-to-plan handoff.
+
+**Intent:** Let the local agent chain move from a read GitHub issue into a structured implementation plan that a future coder agent can consume without scraping prose.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/planner/agent.json
+- agents/planner/package.json
+- agents/planner/src/index.ts
+- agents/planner/tsconfig.json
+- examples/README.md
+- examples/tasks/plan-create.json
+
+**Reason:** issue #17; ADR-0004
+
+**Author:** Sol Soletti
+
 ### 2026-05-07 — Auto-run issue-reader on every newly opened issue.
 
 **Intent:** Demonstrate the trigger story end-to-end without the private orchestrator: a GitHub Actions workflow turns a real `issues.opened` event into a TaskEnvelope, runs the reference runner against it, and uploads the resulting `issue.summary` artifact and event stream as workflow artifacts.

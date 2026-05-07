@@ -1,0 +1,44 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_plan_create",
+    "type": "plan.create",
+    "createdAt": "2026-05-07T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_plan_create",
+    "attempt": 1,
+    "correlationId": "corr_example_plan_create"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "planner"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "issue": {
+      "issueNumber": 17,
+      "title": "Add planner agent that turns issue summaries into implementation plans",
+      "repository": "AnchorageLabs/anchorage",
+      "state": "open",
+      "labels": ["enhancement"],
+      "body": "Implement a CLI-first planner reference agent that consumes an issue summary from input or prior artifacts and emits an implementation plan artifact for the future coder agent.",
+      "url": "https://github.com/AnchorageLabs/anchorage/issues/17",
+      "author": "developer"
+    }
+  },
+  "capabilities": [],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": null,
+    "priorArtifacts": []
+  }
+}
