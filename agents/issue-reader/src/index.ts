@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { Octokit } from "@octokit/rest";
 
 const agentName = "issue-reader";
 const agentVersion = "0.1.0";
@@ -34,26 +35,27 @@ async function main(): Promise<number> {
     agentVersion,
   });
 
-  const issueNumber = Number(task.value.input.issueNumber ?? 0);
-  const title = `Issue #${issueNumber}`;
-  const summary = {
-    issueNumber,
-    title,
-    repository: task.value.repository
-      ? `${task.value.repository.owner}/${task.value.repository.name}`
-      : null,
-    labels: Array.isArray(task.value.input.labels) ? task.value.input.labels : [],
-    body: typeof task.value.input.body === "string" ? task.value.input.body : "",
-  };
+  const issue = await readIssue(task.value);
+  if (!issue.ok) {
+    emit(task.value, "agent.failed", "error", issue.message, {
+      error: {
+        code: issue.code,
+        message: issue.message,
+      },
+    });
+    return issue.exitCode;
+  }
 
-  emit(task.value, "agent.output", "info", "Issue parsed", summary);
+  const summary = issue.value;
+
+  emit(task.value, "agent.output", "info", "Issue parsed", summary as ProtocolEvent["data"]);
 
   const artifact = await writeSummaryArtifact(task.value, summary);
   emit(task.value, "artifact.created", "info", "Issue summary artifact created", artifact);
 
   emit(task.value, "agent.completed", "info", "issue-reader completed successfully", {
-    issueNumber,
-    title,
+    issueNumber: summary.issueNumber,
+    title: summary.title,
   });
 
   return ExitCode.Success;
@@ -102,6 +104,115 @@ async function writeSummaryArtifact(task: TaskEnvelope, summary: unknown) {
   };
 }
 
+async function readIssue(
+  task: TaskEnvelope,
+): Promise<{ ok: true; value: IssueSummary } | IssueFailure> {
+  const issueNumber = Number(task.input.issueNumber);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return failure(
+      "invalid_issue_number",
+      "input.issueNumber must be a positive integer.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  if (task.input.mode === "fake") {
+    return {
+      ok: true,
+      value: {
+        issueNumber,
+        title: `Issue #${issueNumber}`,
+        repository: task.repository ? `${task.repository.owner}/${task.repository.name}` : null,
+        state: "open",
+        labels: Array.isArray(task.input.labels) ? task.input.labels.filter(isString) : [],
+        body: typeof task.input.body === "string" ? task.input.body : "",
+        url: null,
+        author: null,
+      },
+    };
+  }
+
+  if (!task.repository) {
+    return failure(
+      "missing_repository",
+      "repository.owner and repository.name are required for real GitHub reads.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  if (!token) {
+    return failure(
+      "missing_github_token",
+      "Set GITHUB_TOKEN or GH_TOKEN to read a real GitHub issue.",
+      ExitCode.MissingCapability,
+    );
+  }
+
+  emit(task, "tool.requested", "info", `Fetching issue #${issueNumber}`, {
+    tool: "github.issues.get",
+    input: {
+      owner: task.repository.owner,
+      repo: task.repository.name,
+      issue_number: issueNumber,
+    },
+  });
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    const response = await octokit.issues.get({
+      owner: task.repository.owner,
+      repo: task.repository.name,
+      issue_number: issueNumber,
+    });
+    const issue = response.data;
+    const summary = {
+      issueNumber: issue.number,
+      title: issue.title,
+      repository: `${task.repository.owner}/${task.repository.name}`,
+      state: issue.state,
+      labels: issue.labels
+        .map((label) => (typeof label === "string" ? label : label.name))
+        .filter(isString),
+      body: issue.body ?? "",
+      url: issue.html_url,
+      author: issue.user?.login ?? null,
+    };
+
+    emit(task, "tool.result", "info", `Issue #${issueNumber} fetched`, {
+      tool: "github.issues.get",
+      success: true,
+      output: {
+        title: summary.title,
+        state: summary.state,
+        labels: summary.labels,
+      },
+    });
+
+    return { ok: true, value: summary };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(task, "tool.result", "error", `Issue #${issueNumber} fetch failed`, {
+      tool: "github.issues.get",
+      success: false,
+      error: {
+        code: "github_issue_read_failed",
+        message,
+      },
+    });
+
+    return failure("github_issue_read_failed", message, ExitCode.ExternalDependencyFailure);
+  }
+}
+
+function failure(code: string, message: string, exitCode: number): IssueFailure {
+  return { ok: false, code, message, exitCode };
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 function emit(
   task: TaskEnvelope,
   type: ProtocolEvent["type"],
@@ -128,6 +239,22 @@ interface AgentFailure {
   ok: false;
   exitCode: number;
 }
+
+interface IssueFailure extends AgentFailure {
+  code: string;
+  message: string;
+}
+
+type IssueSummary = ProtocolEvent["data"] & {
+  issueNumber: number;
+  title: string;
+  repository: null | string;
+  state: string;
+  labels: string[];
+  body: string;
+  url: null | string;
+  author: null | string;
+};
 
 main()
   .then((exitCode) => {
