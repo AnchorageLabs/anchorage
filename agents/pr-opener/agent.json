@@ -1,0 +1,12 @@
+{
+  "name": "pr-opener",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Commits workspace changes, pushes the branch, and opens a GitHub PR.",
+  "taskTypes": ["pr.open"],
+  "inputs": ["code.change.result"],
+  "outputs": ["pr.opened"],
+  "requires": ["github.write", "workspace.write", "shell.exec"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}

@@ -57,6 +57,19 @@ importers:
         specifier: ^22.10.2
         version: 22.19.17
 
+  agents/pr-opener:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+      '@octokit/rest':
+        specifier: ^21.1.1
+        version: 21.1.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   cli/anchorage-runner:
     dependencies:
       '@anchorage/sdk':
