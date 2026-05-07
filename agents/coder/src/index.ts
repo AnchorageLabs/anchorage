@@ -42,6 +42,13 @@ async function main(): Promise<number> {
   const auth = resolveBedrockConfig();
   if (!auth.ok) return fail(task.value, auth);
 
+  const branchResult = await ensureBranch(
+    task.value,
+    input.value.workspacePath,
+    input.value.plan.branchName,
+  );
+  if (!branchResult.ok) return fail(task.value, branchResult);
+
   const beforeStatus = await gitStatus(input.value.workspacePath);
   const workspaceContext = await collectWorkspaceContext(
     input.value.workspacePath,
@@ -512,12 +519,51 @@ function safeWorkspacePath(
   return { absolutePath, relativePath };
 }
 
-async function gitStatus(workspacePath: string): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn("git", ["status", "--short"], {
-      cwd: workspacePath,
-      stdio: ["ignore", "pipe", "pipe"],
+async function ensureBranch(
+  task: TaskEnvelope,
+  workspacePath: string,
+  branchName: string,
+): Promise<{ ok: true } | CoderFailure> {
+  emit(task, "tool.requested", "info", `Switching to branch ${branchName}`, {
+    tool: "git.switch",
+    input: { branchName, workspacePath },
+  });
+
+  const createResult = await runGit(workspacePath, ["switch", "-c", branchName]);
+  if (createResult.exitCode === 0) {
+    emit(task, "tool.result", "info", `Created and switched to branch ${branchName}`, {
+      tool: "git.switch",
+      success: true,
+      output: { created: true, branchName },
     });
+    return { ok: true };
+  }
+
+  const switchResult = await runGit(workspacePath, ["switch", branchName]);
+  if (switchResult.exitCode === 0) {
+    emit(task, "tool.result", "info", `Switched to existing branch ${branchName}`, {
+      tool: "git.switch",
+      success: true,
+      output: { created: false, branchName },
+    });
+    return { ok: true };
+  }
+
+  const message =
+    switchResult.stderr ||
+    switchResult.stdout ||
+    `git switch failed with exit ${switchResult.exitCode}`;
+  emit(task, "tool.result", "error", `Failed to switch to branch ${branchName}`, {
+    tool: "git.switch",
+    success: false,
+    error: { code: "branch_checkout_failed", message },
+  });
+  return failure("branch_checkout_failed", message, ExitCode.ExternalDependencyFailure);
+}
+
+async function runGit(workspacePath: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, { cwd: workspacePath, stdio: ["ignore", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -531,6 +577,10 @@ async function gitStatus(workspacePath: string): Promise<CommandResult> {
       });
     });
   });
+}
+
+async function gitStatus(workspacePath: string): Promise<CommandResult> {
+  return runGit(workspacePath, ["status", "--short"]);
 }
 
 function changedFilesFromStatus(status: string): string[] {
