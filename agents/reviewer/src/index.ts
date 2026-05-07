@@ -159,6 +159,46 @@ async function main(): Promise<number> {
     prInfo.value.prUrl ??
     `https://github.com/${prInfo.value.owner}/${prInfo.value.repo}/pull/${prInfo.value.prNumber}`;
 
+  // Post the review to GitHub so it's visible in the PR and the merge-gate can check it.
+  emit(
+    task.value,
+    "tool.requested",
+    "info",
+    `Posting review to GitHub PR #${prInfo.value.prNumber}`,
+    {
+      tool: "github.pulls.createReview",
+      input: {
+        owner: prInfo.value.owner,
+        repo: prInfo.value.repo,
+        pull_number: prInfo.value.prNumber,
+        event: reviewResult.value.decision === "approve" ? "APPROVE" : "REQUEST_CHANGES",
+      },
+    },
+  );
+
+  try {
+    await octokit.pulls.createReview({
+      owner: prInfo.value.owner,
+      repo: prInfo.value.repo,
+      pull_number: prInfo.value.prNumber,
+      body: buildGithubReviewBody(reviewResult.value),
+      event: reviewResult.value.decision === "approve" ? "APPROVE" : "REQUEST_CHANGES",
+    });
+    emit(task.value, "tool.result", "info", "GitHub review posted", {
+      tool: "github.pulls.createReview",
+      success: true,
+      output: { decision: reviewResult.value.decision },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Non-fatal: artifact is still written even if GitHub review fails.
+    emit(task.value, "tool.result", "warn", "GitHub review post failed (non-fatal)", {
+      tool: "github.pulls.createReview",
+      success: false,
+      error: { code: "github_review_post_failed", message },
+    });
+  }
+
   const output: ReviewResult = {
     decision: reviewResult.value.decision,
     prNumber: prInfo.value.prNumber,
@@ -562,6 +602,35 @@ function normalizeReviewResult(
       outputTokens: response.outputTokens,
     },
   };
+}
+
+function buildGithubReviewBody(result: {
+  decision: string;
+  summary: string;
+  comments: Array<{ path: string; line: number | null; body: string }>;
+  risks: string[];
+}): string {
+  const lines: string[] = [];
+  const icon = result.decision === "approve" ? "✅" : "⚠️";
+  lines.push(
+    `${icon} **Anchorage automated review** — ${result.decision === "approve" ? "Approved" : "Changes requested"}`,
+  );
+  lines.push("");
+  lines.push(result.summary);
+  if (result.risks.length > 0) {
+    lines.push("");
+    lines.push("**Risks:**");
+    for (const risk of result.risks) lines.push(`- ${risk}`);
+  }
+  if (result.comments.length > 0) {
+    lines.push("");
+    lines.push("**Inline notes:**");
+    for (const comment of result.comments) {
+      const location = comment.line ? `\`${comment.path}:${comment.line}\`` : `\`${comment.path}\``;
+      lines.push(`- ${location}: ${comment.body}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 async function writeResultArtifact(task: TaskEnvelope, result: ReviewResult) {
