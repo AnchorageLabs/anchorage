@@ -65,7 +65,7 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const reviewDecision = resolveReviewDecision(task.value);
+  const reviewDecision = await resolveReviewDecision(task.value);
   if (reviewDecision !== "approve") {
     emit(task.value, "agent.failed", "error", "Review not approved", {
       error: {
@@ -243,27 +243,24 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   return { ok: true, value: result.value };
 }
 
-function resolveReviewDecision(task: TaskEnvelope): string {
+async function resolveReviewDecision(task: TaskEnvelope): Promise<string> {
   if (isObject(task.input) && isString((task.input as Record<string, unknown>).reviewDecision)) {
     return (task.input as Record<string, unknown>).reviewDecision as string;
   }
 
-  if (
-    isObject(task.context) &&
-    Array.isArray((task.context as Record<string, unknown>).priorArtifacts)
-  ) {
-    const artifacts = (task.context as Record<string, unknown>).priorArtifacts as unknown[];
-    for (const artifact of artifacts) {
-      if (
-        isObject(artifact) &&
-        (artifact as Record<string, unknown>).artifactType === "pr.review.result" &&
-        isObject((artifact as Record<string, unknown>).data) &&
-        isString(((artifact as Record<string, unknown>).data as Record<string, unknown>).decision)
-      ) {
-        return ((artifact as Record<string, unknown>).data as Record<string, unknown>)
-          .decision as string;
-      }
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === "pr.review.result");
+  if (!artifact) return "unknown";
+
+  if (!artifact.uri.startsWith("file://")) return "unknown";
+
+  try {
+    const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    const parsed = JSON.parse(raw);
+    if (isObject(parsed) && isString((parsed as Record<string, unknown>).decision)) {
+      return (parsed as Record<string, unknown>).decision as string;
     }
+  } catch {
+    // fall through
   }
 
   return "unknown";
@@ -282,6 +279,26 @@ async function resolvePrInfo(
     const pr = (task.input as Record<string, unknown>).pr as Record<string, unknown>;
     prNumber = Number(pr.prNumber);
     prUrl = isString(pr.prUrl) ? (pr.prUrl as string) : undefined;
+  }
+
+  // Try to get PR info from the pr.review.result artifact if not in input.
+  if (!prNumber) {
+    const artifact = task.context?.priorArtifacts?.find(
+      (a) => a.artifactType === "pr.review.result",
+    );
+    if (artifact?.uri.startsWith("file://")) {
+      try {
+        const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+        const parsed = JSON.parse(raw);
+        if (isObject(parsed)) {
+          const p = parsed as Record<string, unknown>;
+          prNumber = Number(p.prNumber);
+          if (isString(p.prUrl)) prUrl = p.prUrl as string;
+        }
+      } catch {
+        // fall through to validation error
+      }
+    }
   }
 
   if (task.repository) {
