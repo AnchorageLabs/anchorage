@@ -22,6 +22,7 @@
     "defaultBranch": "main"
   },
   "input": {
+    "mode": "fake",
     "issueNumber": 42,
     "labels": ["enhancement"],
     "body": "Add retry logic to the webhook handler."
