@@ -19,7 +19,7 @@ The example task targets `AnchorageLabs/anchorage#1`. Edit `examples/tasks/issue
 
 ## planner
 
-Turns an issue summary into an implementation plan artifact for the next coder agent.
+Turns an issue summary into an implementation plan artifact for the next coder agent. Requires `ANTHROPIC_API_KEY`; optionally set `ANCHORAGE_PLANNER_MODEL` to override the default model.
 
 ```bash
 pnpm install

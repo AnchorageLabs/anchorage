@@ -42,7 +42,15 @@ async function main(): Promise<number> {
     return issue.exitCode;
   }
 
-  const plan = createPlan(task.value, issue.value);
+  const planResult = await createPlan(task.value, issue.value);
+  if (!planResult.ok) {
+    emit(task.value, "agent.failed", "error", planResult.message, {
+      error: { code: planResult.code, message: planResult.message },
+    });
+    return planResult.exitCode;
+  }
+
+  const plan = planResult.value;
   emit(task.value, "agent.output", "info", "Implementation plan created", plan);
 
   const artifact = await writePlanArtifact(task.value, plan);
@@ -167,15 +175,189 @@ function parseIssueSummary(value: unknown): { ok: true; value: IssueSummary } | 
   };
 }
 
-function createPlan(task: TaskEnvelope, issue: IssueSummary): ImplementationPlan {
-  const slug = slugify(issue.title || `issue-${issue.issueNumber}`);
-  const labels = issue.labels.map((label) => label.toLowerCase());
-  const isBug = labels.some((label) => ["bug", "fix", "defect"].includes(label));
-  const isDocs = labels.some((label) => ["docs", "documentation"].includes(label));
+async function createPlan(
+  task: TaskEnvelope,
+  issue: IssueSummary,
+): Promise<{ ok: true; value: ImplementationPlan } | PlannerFailure> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return failure(
+      "missing_llm_api_key",
+      "Set ANTHROPIC_API_KEY so planner can call the planning LLM.",
+      ExitCode.MissingCapability,
+    );
+  }
 
-  const likelyFiles = inferLikelyFiles(issue, isDocs);
-  const verificationCommands = inferVerificationCommands(isDocs);
+  const model = process.env.ANCHORAGE_PLANNER_MODEL ?? "claude-3-5-sonnet-latest";
+  emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
+    tool: "anthropic.messages.create",
+    input: { provider: "anthropic", model, issueNumber: issue.issueNumber },
+  });
 
+  let response: Response;
+  try {
+    response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2400,
+        temperature: 0.2,
+        system: plannerSystemPrompt(),
+        messages: [{ role: "user", content: plannerUserPrompt(issue) }],
+      }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emitLlmFailure(task, message);
+    return failure("llm_request_failed", message, ExitCode.ExternalDependencyFailure);
+  }
+
+  if (!response.ok) {
+    const message = await response.text();
+    emitLlmFailure(task, message);
+    return failure("llm_request_failed", message, ExitCode.ExternalDependencyFailure);
+  }
+
+  const parsedResponse = parseAnthropicResponse(await response.json());
+  if (!parsedResponse.ok) {
+    emitLlmFailure(task, parsedResponse.message);
+    return failure(
+      "invalid_llm_response",
+      parsedResponse.message,
+      ExitCode.ExternalDependencyFailure,
+    );
+  }
+
+  const rawPlan = parsePlanJson(parsedResponse.text);
+  if (!rawPlan.ok) {
+    emitLlmFailure(task, rawPlan.message);
+    return failure("invalid_llm_plan_json", rawPlan.message, ExitCode.ExternalDependencyFailure);
+  }
+
+  const plan = normalizePlan(task, issue, rawPlan.value);
+  emit(task, "tool.result", "info", "LLM implementation plan received", {
+    tool: "anthropic.messages.create",
+    success: true,
+    output: {
+      model,
+      stopReason: parsedResponse.stopReason,
+      inputTokens: parsedResponse.inputTokens,
+      outputTokens: parsedResponse.outputTokens,
+    },
+  });
+
+  return { ok: true, value: plan };
+}
+
+function plannerSystemPrompt(): string {
+  return `You are Anchorage planner, a planning agent in a CLI-first multi-agent software workflow.
+Your output is consumed by a coder agent, not by a human.
+Return only strict JSON. Do not wrap it in markdown.
+Design the smallest product-oriented plan that can resolve the issue.
+Do not invent private context. Prefer repository inspection by the coder when uncertain.
+Do not propose tests as standalone files unless the issue clearly requires them.
+The JSON shape must be:
+{
+  "goal": string,
+  "branchName": string,
+  "summary": string,
+  "implementationSteps": string[],
+  "acceptanceCriteria": string[],
+  "likelyFiles": string[],
+  "verificationCommands": string[],
+  "risks": string[],
+  "handoffInstructions": string
+}`;
+}
+
+function plannerUserPrompt(issue: IssueSummary): string {
+  return JSON.stringify(
+    {
+      task: "Create an implementation plan for the coder agent.",
+      issue: {
+        number: issue.issueNumber,
+        title: issue.title,
+        repository: issue.repository,
+        state: issue.state,
+        labels: issue.labels,
+        body: issue.body,
+        url: issue.url,
+        author: issue.author,
+      },
+      constraints: [
+        "Return only JSON matching the requested shape.",
+        "The coder will inspect the repository and write code after this plan.",
+        "Keep the plan focused on shipping the product behavior quickly.",
+        "No testing-only or documentation-only detours unless necessary for the issue.",
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+function parseAnthropicResponse(
+  value: unknown,
+):
+  | { ok: true; text: string; stopReason: null | string; inputTokens: number; outputTokens: number }
+  | { ok: false; message: string } {
+  if (!isObject(value)) return { ok: false, message: "Anthropic response was not an object." };
+  if (!Array.isArray(value.content)) {
+    return { ok: false, message: "Anthropic response did not include content[]." };
+  }
+
+  const text = value.content
+    .map((block) => (isObject(block) && block.type === "text" ? block.text : null))
+    .filter(isString)
+    .join("\n")
+    .trim();
+  if (!text) return { ok: false, message: "Anthropic response did not include text content." };
+
+  const usage = isObject(value.usage) ? value.usage : {};
+  return {
+    ok: true,
+    text,
+    stopReason: typeof value.stop_reason === "string" ? value.stop_reason : null,
+    inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
+    outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
+  };
+}
+
+function parsePlanJson(
+  value: string,
+): { ok: true; value: JsonObject } | { ok: false; message: string } {
+  const json = extractJsonObject(value);
+  if (!json) return { ok: false, message: "LLM response did not contain a JSON object." };
+  try {
+    const parsed = JSON.parse(json);
+    if (!isObject(parsed)) return { ok: false, message: "LLM plan JSON was not an object." };
+    return { ok: true, value: parsed };
+  } catch (error) {
+    return { ok: false, message: `LLM plan JSON was invalid: ${(error as Error).message}` };
+  }
+}
+
+function extractJsonObject(value: string): null | string {
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  return value.slice(start, end + 1);
+}
+
+function normalizePlan(
+  task: TaskEnvelope,
+  issue: IssueSummary,
+  rawPlan: JsonObject,
+): ImplementationPlan {
+  const branchName = stringValue(
+    rawPlan.branchName,
+    `issue-${issue.issueNumber}-${slugify(issue.title)}`,
+  );
   return {
     planId: `plan_${task.run.id}_${issue.issueNumber}`,
     issue: {
@@ -186,123 +368,43 @@ function createPlan(task: TaskEnvelope, issue: IssueSummary): ImplementationPlan
       author: issue.author,
       labels: issue.labels,
     },
-    goal: issue.title,
-    branchName: `issue-${issue.issueNumber}-${slug}`,
-    summary: summarizeIssue(issue),
-    implementationSteps: buildImplementationSteps(isBug, isDocs),
-    acceptanceCriteria: buildAcceptanceCriteria(isBug, isDocs),
-    likelyFiles,
-    verificationCommands,
-    risks: buildRisks(issue, likelyFiles),
+    goal: stringValue(rawPlan.goal, issue.title),
+    branchName,
+    summary: stringValue(rawPlan.summary, `Plan for ${issue.repository}#${issue.issueNumber}.`),
+    implementationSteps: stringArrayValue(rawPlan.implementationSteps),
+    acceptanceCriteria: stringArrayValue(rawPlan.acceptanceCriteria),
+    likelyFiles: stringArrayValue(rawPlan.likelyFiles),
+    verificationCommands: stringArrayValue(rawPlan.verificationCommands),
+    risks: stringArrayValue(rawPlan.risks),
     handoff: {
       nextAgent: "coder",
       taskType: "code.change",
-      instructions:
-        "Implement the plan on the suggested branch, keep the diff scoped to the issue, and return changed files, commands run, and any blocker that requires plan revision.",
+      instructions: stringValue(
+        rawPlan.handoffInstructions,
+        "Implement this plan, keep changes scoped, and report blockers that require plan revision.",
+      ),
     },
   };
 }
 
-function summarizeIssue(issue: IssueSummary): string {
-  const body = issue.body.trim().replace(/\s+/g, " ");
-  if (!body) return `Resolve ${issue.repository}#${issue.issueNumber}: ${issue.title}.`;
-  const clipped = body.length > 420 ? `${body.slice(0, 417)}...` : body;
-  return `Resolve ${issue.repository}#${issue.issueNumber}: ${issue.title}. Issue context: ${clipped}`;
+function stringValue(value: JsonValue | undefined, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-function inferLikelyFiles(issue: IssueSummary, isDocs: boolean): string[] {
-  const body = issue.body.toLowerCase();
-  const title = issue.title.toLowerCase();
-  const text = `${title}\n${body}`;
-  const files = new Set<string>();
-
-  for (const match of text.matchAll(
-    /[`\s]([\w./-]+\.(?:ts|tsx|js|mjs|json|md|yml|yaml))[`\s.,)]/g,
-  )) {
-    const filePath = match[1];
-    if (filePath) files.add(filePath);
-  }
-
-  if (text.includes("issue-reader")) files.add("agents/issue-reader/src/index.ts");
-  if (text.includes("planner")) files.add("agents/planner/src/index.ts");
-  if (text.includes("runner") || text.includes("cli"))
-    files.add("cli/anchorage-runner/src/index.ts");
-  if (text.includes("protocol")) files.add("protocol/SPEC.md");
-  if (isDocs) files.add("README.md");
-
-  if (files.size === 0) files.add("TBD by coder after repository inspection");
-  return [...files];
+function stringArrayValue(value: JsonValue | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isString)
+    .map((entry) => entry.trim())
+    .filter(isString);
 }
 
-function inferVerificationCommands(isDocs: boolean): string[] {
-  if (isDocs) return ["corepack pnpm lint"];
-  return ["corepack pnpm -r build", "corepack pnpm -r typecheck", "corepack pnpm lint"];
-}
-
-function buildImplementationSteps(isBug: boolean, isDocs: boolean): string[] {
-  if (isDocs) {
-    return [
-      "Read the issue and identify the exact public documentation surface that should change.",
-      "Update the smallest documentation section that resolves the issue.",
-      "Check links, commands, and examples for accuracy.",
-      "Keep wording public-safe and free of internal-only details.",
-    ];
-  }
-
-  if (isBug) {
-    return [
-      "Reproduce or reason through the reported failure from the issue context.",
-      "Locate the smallest code path responsible for the behavior.",
-      "Apply a focused fix without broad refactors or compatibility shims unless required.",
-      "Run the relevant build and validation commands.",
-      "Summarize the behavioral change and any residual risk for the PR.",
-    ];
-  }
-
-  return [
-    "Inspect the relevant package and existing patterns before editing.",
-    "Implement the smallest product slice that satisfies the issue.",
-    "Persist machine-readable output as artifacts when the change affects agent handoff.",
-    "Run the relevant build and validation commands.",
-    "Prepare a PR summary that explains the user-visible outcome.",
-  ];
-}
-
-function buildAcceptanceCriteria(isBug: boolean, isDocs: boolean): string[] {
-  if (isDocs) {
-    return [
-      "The documentation answers the issue without requiring private context.",
-      "Commands or examples are copy-pasteable from the repo root when applicable.",
-      "No private repository details, internal endpoints, or secrets are exposed.",
-    ];
-  }
-
-  if (isBug) {
-    return [
-      "The reported behavior is fixed or clearly narrowed to an external dependency failure.",
-      "The fix is scoped to the issue and does not introduce unrelated behavior changes.",
-      "Build and typecheck pass for affected workspaces.",
-    ];
-  }
-
-  return [
-    "The requested product behavior exists in the CLI-first path.",
-    "The output is structured enough for the next agent to consume without scraping prose.",
-    "Build and typecheck pass for affected workspaces.",
-  ];
-}
-
-function buildRisks(issue: IssueSummary, likelyFiles: string[]): string[] {
-  const risks = [
-    "The issue may be underspecified; coder should inspect the repository before broad changes.",
-  ];
-  if (likelyFiles.includes("protocol/SPEC.md")) {
-    risks.push("Protocol changes may be architecture-sensitive and require an ADR before landing.");
-  }
-  if (issue.body.trim().length === 0) {
-    risks.push("Issue body is empty, so the plan is based mostly on title and labels.");
-  }
-  return risks;
+function emitLlmFailure(task: TaskEnvelope, message: string): void {
+  emit(task, "tool.result", "error", "LLM implementation plan failed", {
+    tool: "anthropic.messages.create",
+    success: false,
+    error: { code: "llm_plan_failed", message },
+  });
 }
 
 async function writePlanArtifact(task: TaskEnvelope, plan: ImplementationPlan) {

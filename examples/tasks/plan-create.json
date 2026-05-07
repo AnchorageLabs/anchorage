@@ -33,7 +33,7 @@
       "author": "developer"
     }
   },
-  "capabilities": [],
+  "capabilities": ["llm.plan"],
   "policy": {
     "maxDurationSeconds": 120
   },
