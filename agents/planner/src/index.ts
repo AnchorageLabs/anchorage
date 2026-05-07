@@ -189,7 +189,7 @@ async function createPlan(
   }
 
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-  const model = process.env.ANCHORAGE_PLANNER_MODEL ?? "anthropic.claude-sonnet-4-6";
+  const model = process.env.ANCHORAGE_PLANNER_MODEL ?? "us.anthropic.claude-sonnet-4-6";
   emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
     tool: "bedrock.converse",
     input: { provider: "aws-bedrock", region, model, issueNumber: issue.issueNumber },
