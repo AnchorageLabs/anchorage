@@ -29,6 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-06 — Let issue-reader read real GitHub issues while preserving fake mode.
+
+**Intent:** Allow the reference `issue-reader` agent to ingest real GitHub issue data through the CLI path without moving orchestration logic into the public repo.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/issue-reader/package.json
+- agents/issue-reader/src/index.ts
+- examples/tasks/issue-read.json
+
+**Reason:** issue #8
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-05 — Add a local issue-reader agent slice that runs through the reference runner.
 
 **Intent:** Prove the CLI-first protocol path with a concrete `issue.read` agent and runnable example task.
