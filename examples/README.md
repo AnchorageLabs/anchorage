@@ -16,3 +16,16 @@ GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
 ```
 
 The example task targets `AnchorageLabs/anchorage#1`. Edit `examples/tasks/issue-read.json` to point at any other public or accessible issue.
+
+## planner
+
+Turns an issue summary into an implementation plan artifact for the next coder agent. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_PLANNER_MODEL` to override the default `us.anthropic.claude-sonnet-4-6` inference profile.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run planner < examples/tasks/plan-create.json
+```
+
+The planner also accepts a prior local `issue.summary` artifact through `context.priorArtifacts`.
