@@ -19,7 +19,7 @@ The example task targets `AnchorageLabs/anchorage#1`. Edit `examples/tasks/issue
 
 ## planner
 
-Turns an issue summary into an implementation plan artifact for the next coder agent. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_PLANNER_MODEL` to override the defaults.
+Turns an issue summary into an implementation plan artifact for the next coder agent. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_PLANNER_MODEL` to override the default `anthropic.claude-sonnet-4-6` model.
 
 ```bash
 pnpm install
