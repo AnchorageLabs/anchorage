@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-07 — Auto-run issue-reader on every newly opened issue.
+
+**Intent:** Demonstrate the trigger story end-to-end without the private orchestrator: a GitHub Actions workflow turns a real `issues.opened` event into a TaskEnvelope, runs the reference runner against it, and uploads the resulting `issue.summary` artifact and event stream as workflow artifacts.
+
+**Files touched:**
+- .github/workflows/issue-reader.yml
+- CHANGELOG.md
+
+**Reason:** issue #14
+
+**Author:** Valentin Torassa
+
+
 ### 2026-05-06 — Drop the unused fake-mode branch from issue-reader.
 
 **Intent:** Remove the deterministic stub path that #10 introduced and #11 preserved; the agent's purpose is real GitHub reads, and a second in-agent code path muddied the contract for new contributors.
