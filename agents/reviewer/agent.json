@@ -1,0 +1,12 @@
+{
+  "name": "reviewer",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reviews PR diffs for scope, safety, and quality using Bedrock.",
+  "taskTypes": ["pr.review"],
+  "inputs": ["pr.opened"],
+  "outputs": ["pr.review.result"],
+  "requires": ["github.read", "llm.review"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}
