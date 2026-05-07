@@ -8,4 +8,4 @@ Implemented reference agents:
 
 - `issue-reader`: reads a GitHub issue and emits `issue.summary`.
 - `planner`: turns `issue.summary` into `implementation.plan` for the coder handoff.
-- `coder`: applies `implementation.plan` by wrapping an external coding CLI.
+- `coder`: applies `implementation.plan` by calling Bedrock and writing workspace changes.

@@ -23,6 +23,9 @@ importers:
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.812.0
+        version: 3.1044.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

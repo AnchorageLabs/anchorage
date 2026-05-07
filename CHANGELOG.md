@@ -31,7 +31,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ### 2026-05-06 — Add coder agent wrapper for implementation plans.
 
-**Intent:** Let the local agent chain move from a planner artifact into actual workspace changes by delegating `code.change` to an external coding CLI instead of implementing a new coding model.
+**Intent:** Let the local agent chain move from a planner artifact into actual workspace changes by delegating `code.change` to Bedrock Opus 4.7 and applying structured file edits.
 
 **Files touched:**
 - CHANGELOG.md

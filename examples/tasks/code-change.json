@@ -50,7 +50,7 @@
       }
     }
   },
-  "capabilities": ["workspace.write", "shell.exec"],
+  "capabilities": ["workspace.write", "llm.code", "shell.exec"],
   "policy": {
     "maxDurationSeconds": 900
   },

@@ -2,11 +2,11 @@
   "name": "coder",
   "version": "0.1.0",
   "protocolVersion": "0.1",
-  "description": "Applies implementation plans by wrapping an external coding CLI.",
+  "description": "Applies implementation plans by calling Bedrock and writing workspace changes.",
   "taskTypes": ["code.change"],
   "inputs": ["implementation.plan"],
   "outputs": ["code.change.result"],
-  "requires": ["workspace.write", "shell.exec"],
+  "requires": ["workspace.write", "llm.code", "shell.exec"],
   "binary": "./dist/index.js",
   "timeout": 900
 }
