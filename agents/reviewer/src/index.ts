@@ -36,7 +36,7 @@ async function main(): Promise<number> {
 
   emit(task.value, "agent.started", "info", "reviewer started", { agentVersion });
 
-  const prInfo = resolvePrInfo(task.value);
+  const prInfo = await resolvePrInfoAsync(task.value);
   if (!prInfo.ok) return fail(task.value, prInfo);
 
   const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
@@ -206,23 +206,107 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   return { ok: true, value: result.value };
 }
 
-function resolvePrInfo(task: TaskEnvelope): { ok: true; value: PrInfo } | ReviewerFailure {
+async function resolvePrInfoAsync(
+  task: TaskEnvelope,
+): Promise<{ ok: true; value: PrInfo } | ReviewerFailure> {
   const directPr = parsePrInput(task.input.pr, task.repository);
   if (directPr.ok) return directPr;
 
   const artifact = task.context?.priorArtifacts?.find(
     (candidate) => candidate.artifactType === "pr.opened",
   );
-  if (artifact) {
-    const artifactPr = parsePrFromArtifact(artifact, task.repository);
-    if (artifactPr.ok) return artifactPr;
+  if (!artifact) {
+    return failure(
+      "missing_pr_info",
+      "reviewer requires input.pr (with prNumber and repository owner/name) or a prior pr.opened artifact.",
+      ExitCode.InvalidInput,
+    );
   }
 
-  return failure(
-    "missing_pr_info",
-    "reviewer requires input.pr (with prNumber and repository owner/name) or a prior pr.opened artifact.",
-    ExitCode.InvalidInput,
-  );
+  if (artifact.uri.startsWith("file://")) {
+    let raw: string;
+    try {
+      raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    } catch (error) {
+      return failure(
+        "artifact_read_failed",
+        `Could not read pr.opened artifact: ${(error as Error).message}`,
+        ExitCode.InvalidInput,
+      );
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      return failure(
+        "invalid_artifact_json",
+        `pr.opened artifact is not valid JSON: ${(error as Error).message}`,
+        ExitCode.InvalidInput,
+      );
+    }
+
+    if (!isObject(parsed)) {
+      return failure(
+        "invalid_artifact_json",
+        "pr.opened artifact must be a JSON object.",
+        ExitCode.InvalidInput,
+      );
+    }
+
+    const prNumber = Number(parsed.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      return failure(
+        "invalid_artifact_json",
+        "pr.opened artifact must include a valid prNumber.",
+        ExitCode.InvalidInput,
+      );
+    }
+
+    const owner =
+      task.repository?.owner ??
+      (isObject(parsed.repository) ? String(parsed.repository.owner ?? "") : "");
+    const repo =
+      task.repository?.name ??
+      (isObject(parsed.repository) ? String(parsed.repository.name ?? "") : "");
+
+    if (!owner || !repo) {
+      return failure(
+        "missing_repository",
+        "Could not determine repository owner/name from artifact or task envelope.",
+        ExitCode.InvalidInput,
+      );
+    }
+
+    return {
+      ok: true,
+      value: {
+        prNumber,
+        owner,
+        repo,
+        prUrl: typeof parsed.prUrl === "string" ? parsed.prUrl : null,
+      },
+    };
+  }
+
+  const urlMatch = artifact.uri.match(/\/pull\/(\d+)/);
+  if (!urlMatch || !task.repository) {
+    return failure(
+      "missing_pr_info",
+      "Could not extract PR number from artifact URI.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  return {
+    ok: true,
+    value: {
+      prNumber: Number(urlMatch[1]),
+      owner: task.repository.owner,
+      repo: task.repository.name,
+      prUrl: artifact.uri.startsWith("http") ? artifact.uri : null,
+    },
+  };
 }
 
 function parsePrInput(
@@ -245,29 +329,6 @@ function parsePrInput(
       owner,
       repo,
       prUrl: typeof value.prUrl === "string" ? value.prUrl : null,
-    },
-  };
-}
-
-function parsePrFromArtifact(
-  artifact: { artifactType: string; uri: string; mediaType?: string; sizeBytes?: number },
-  repository: TaskEnvelope["repository"],
-): { ok: true; value: PrInfo } | { ok: false } {
-  if (!repository) return { ok: false };
-
-  const urlMatch = artifact.uri.match(/\/pull\/(\d+)/);
-  if (!urlMatch) return { ok: false };
-
-  const prNumber = Number(urlMatch[1]);
-  if (!Number.isInteger(prNumber) || prNumber <= 0) return { ok: false };
-
-  return {
-    ok: true,
-    value: {
-      prNumber,
-      owner: repository.owner,
-      repo: repository.name,
-      prUrl: artifact.uri.startsWith("http") ? artifact.uri : null,
     },
   };
 }
