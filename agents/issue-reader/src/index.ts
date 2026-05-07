@@ -116,22 +116,6 @@ async function readIssue(
     );
   }
 
-  if (task.input.mode === "fake") {
-    return {
-      ok: true,
-      value: {
-        issueNumber,
-        title: `Issue #${issueNumber}`,
-        repository: task.repository ? `${task.repository.owner}/${task.repository.name}` : null,
-        state: "open",
-        labels: Array.isArray(task.input.labels) ? task.input.labels.filter(isString) : [],
-        body: typeof task.input.body === "string" ? task.input.body : "",
-        url: null,
-        author: null,
-      },
-    };
-  }
-
   if (!task.repository) {
     return failure(
       "missing_repository",

@@ -3,7 +3,7 @@
   "task": {
     "id": "task_example_issue_read",
     "type": "issue.read",
-    "createdAt": "2026-05-05T00:00:00Z",
+    "createdAt": "2026-05-06T00:00:00Z",
     "deadlineAt": null
   },
   "run": {
@@ -18,14 +18,11 @@
   "repository": {
     "provider": "github",
     "owner": "AnchorageLabs",
-    "name": "sandbox",
+    "name": "anchorage",
     "defaultBranch": "main"
   },
   "input": {
-    "mode": "fake",
-    "issueNumber": 42,
-    "labels": ["enhancement"],
-    "body": "Add retry logic to the webhook handler."
+    "issueNumber": 1
   },
   "capabilities": ["github.read"],
   "policy": {
