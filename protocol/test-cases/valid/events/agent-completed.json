@@ -6,9 +6,8 @@
   "timestamp": "2026-04-28T14:00:04Z",
   "type": "agent.completed",
   "level": "info",
-  "message": "issue-reader completed successfully",
+  "message": "minimal-agent completed successfully",
   "data": {
-    "issueNumber": 42,
-    "title": "Add retry logic to webhook handler"
+    "artifactType": "patch"
   }
 }

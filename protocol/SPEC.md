@@ -4,7 +4,7 @@
 > **Version:** 0.1
 > **Last updated:** 2026-04-28
 > **Last reviewed:** 2026-05-02 by Valen + Sol
-> **License:** Apache-2.0 (this spec is public; it will move to `anchorage/protocol/SPEC.md`)
+> **License:** Apache-2.0
 > **Scope:** CLI ABI, task envelope, NDJSON event schema, exit codes, adapter mapping
 > **Non-goals:** orchestrator internals, billing, UI, model gateway, sandbox implementation
 
@@ -67,7 +67,7 @@ anchorage run <agent-name> < task.json
 Or directly:
 
 ```bash
-issue-reader < task.json
+code-writer < task.json
 ```
 
 ### 4.2 Contract
@@ -100,7 +100,7 @@ The task envelope is the JSON document delivered on stdin. All fields at the top
   "protocolVersion": "0.1",
   "task": {
     "id": "task_a1b2c3d4",
-    "type": "issue.read",
+    "type": "code.change",
     "createdAt": "2026-04-28T12:00:00Z",
     "deadlineAt": null
   },
@@ -111,7 +111,7 @@ The task envelope is the JSON document delivered on stdin. All fields at the top
   },
   "actor": {
     "requestedBy": "orchestrator",
-    "agent": "issue-reader"
+    "agent": "code-writer"
   },
   "repository": {
     "provider": "github",
@@ -120,10 +120,12 @@ The task envelope is the JSON document delivered on stdin. All fields at the top
     "defaultBranch": "main"
   },
   "input": {
-    "issueNumber": 42
+    "instruction": "Apply the requested code change",
+    "files": ["src/index.ts"]
   },
   "capabilities": [
-    "github.read"
+    "workspace.read",
+    "workspace.write"
   ],
   "policy": {
     "humanApprovalRequired": false,
@@ -134,7 +136,7 @@ The task envelope is the JSON document delivered on stdin. All fields at the top
     "priorArtifacts": []
   },
   "secrets": {
-    "GITHUB_TOKEN": { "$ref": "secret://github-app-token" }
+    "BUILD_CACHE_TOKEN": { "$ref": "secret://build-cache-token" }
   }
 }
 ```
@@ -179,7 +181,7 @@ Every event MUST include:
   "timestamp": "2026-04-28T12:00:01Z",
   "type": "agent.started",
   "level": "info",
-  "message": "Issue reader started",
+  "message": "code-writer started",
   "data": {}
 }
 ```
@@ -280,15 +282,15 @@ Agents declare their capabilities via a manifest file (`agent.json`) at the root
 
 ```json
 {
-  "name": "issue-reader",
+  "name": "code-writer",
   "version": "0.1.0",
   "protocolVersion": "0.1",
-  "description": "Reads a GitHub issue and emits structured metadata and summary.",
-  "taskTypes": ["issue.read"],
-  "inputs": ["github.issue"],
-  "outputs": ["issue.summary", "issue.metadata"],
-  "requires": ["github.read"],
-  "binary": "./bin/issue-reader",
+  "description": "Applies a scoped code change and emits a patch artifact.",
+  "taskTypes": ["code.change"],
+  "inputs": ["change.request"],
+  "outputs": ["patch"],
+  "requires": ["workspace.read", "workspace.write"],
+  "binary": "./bin/code-writer",
   "timeout": 120
 }
 ```
@@ -492,7 +494,7 @@ AnchorageLabs v0 note: these event types remain in the public protocol so v0.1+ 
   "protocolVersion": "0.1",
   "task": {
     "id": "task_demo_001",
-    "type": "issue.read",
+    "type": "code.change",
     "createdAt": "2026-04-28T14:00:00Z",
     "deadlineAt": null
   },
@@ -503,7 +505,7 @@ AnchorageLabs v0 note: these event types remain in the public protocol so v0.1+ 
   },
   "actor": {
     "requestedBy": "orchestrator",
-    "agent": "issue-reader"
+    "agent": "code-writer"
   },
   "repository": {
     "provider": "github",
@@ -512,32 +514,30 @@ AnchorageLabs v0 note: these event types remain in the public protocol so v0.1+ 
     "defaultBranch": "main"
   },
   "input": {
-    "issueNumber": 42
+    "instruction": "Apply the requested validation change",
+    "files": ["src/index.ts"]
   },
-  "capabilities": ["github.read"],
+  "capabilities": ["workspace.read", "workspace.write"],
   "policy": {},
-  "context": {},
-  "secrets": {
-    "GITHUB_TOKEN": { "$ref": "secret://github-app-token" }
-  }
+  "context": {}
 }
 ```
 
 ### 16.2 Invocation
 
 ```bash
-issue-reader < task.json
+code-writer < task.json
 ```
 
 ### 16.3 stdout (NDJSON event stream)
 
 ```jsonl
-{"protocolVersion":"0.1","eventId":"evt_001","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:01Z","type":"agent.started","level":"info","message":"issue-reader v0.1.0 started","data":{"agentVersion":"0.1.0"}}
-{"protocolVersion":"0.1","eventId":"evt_002","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:02Z","type":"tool.requested","level":"info","message":"Fetching issue #42","data":{"tool":"github.issues.get","input":{"owner":"AnchorageLabs","repo":"example-repo","issue_number":42}}}
-{"protocolVersion":"0.1","eventId":"evt_003","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:03Z","type":"tool.result","level":"info","message":"Issue #42 fetched","data":{"tool":"github.issues.get","success":true,"output":{"title":"Add retry logic to webhook handler","state":"open","labels":["enhancement"]}}}
-{"protocolVersion":"0.1","eventId":"evt_004","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:03Z","type":"agent.output","level":"info","message":"Issue parsed","data":{"title":"Add retry logic to webhook handler","labels":["enhancement"],"complexity":"low","estimatedTasks":1}}
-{"protocolVersion":"0.1","eventId":"evt_005","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:04Z","type":"artifact.created","level":"info","message":"Issue summary artifact created","data":{"artifactType":"issue.summary","uri":"s3://anchorage-artifacts/run_demo_001/issue-summary.json","mediaType":"application/json","sizeBytes":512}}
-{"protocolVersion":"0.1","eventId":"evt_006","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:04Z","type":"agent.completed","level":"info","message":"issue-reader completed successfully","data":{"issueNumber":42,"title":"Add retry logic to webhook handler"}}
+{"protocolVersion":"0.1","eventId":"evt_001","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:01Z","type":"agent.started","level":"info","message":"code-writer v0.1.0 started","data":{"agentVersion":"0.1.0"}}
+{"protocolVersion":"0.1","eventId":"evt_002","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:02Z","type":"tool.requested","level":"info","message":"Reading target file","data":{"tool":"filesystem.read","input":{"path":"src/index.ts"}}}
+{"protocolVersion":"0.1","eventId":"evt_003","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:03Z","type":"tool.result","level":"info","message":"Target file read","data":{"tool":"filesystem.read","success":true,"output":{"bytes":128}}}
+{"protocolVersion":"0.1","eventId":"evt_004","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:03Z","type":"agent.output","level":"info","message":"Patch prepared","data":{"files":["src/index.ts"],"summary":"Applied the requested validation change"}}
+{"protocolVersion":"0.1","eventId":"evt_005","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:04Z","type":"artifact.created","level":"info","message":"Patch artifact created","data":{"artifactType":"patch","uri":"s3://anchorage-artifacts/run_demo_001/change.patch","mediaType":"text/x-diff","sizeBytes":512}}
+{"protocolVersion":"0.1","eventId":"evt_006","runId":"run_demo_001","taskId":"task_demo_001","timestamp":"2026-04-28T14:00:04Z","type":"agent.completed","level":"info","message":"code-writer completed successfully","data":{"artifactType":"patch","uri":"s3://anchorage-artifacts/run_demo_001/change.patch"}}
 ```
 
 ### 16.4 Exit
@@ -554,7 +554,6 @@ The following items are explicitly deferred. They MUST NOT block v0.1 implementa
 
 | Question | Notes |
 |---|---|
-| Formal JSON Schema files | Publish machine-readable schemas for envelope, events, and manifest. |
 | Event signing | Cryptographic signatures on events for tamper evidence. |
 | Agent registry / discovery | How agents are registered, versioned, and discovered at runtime. |
 | Artifact storage URI conventions | Standardize URI schemes (`s3://`, `git://`, `file://`, etc.). |

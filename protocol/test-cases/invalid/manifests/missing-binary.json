@@ -1,7 +1,7 @@
 {
-  "name": "issue-reader",
+  "name": "minimal-agent",
   "version": "0.1.0",
   "protocolVersion": "0.1",
-  "taskTypes": ["issue.read"],
-  "requires": ["github.read"]
+  "taskTypes": ["code.change"],
+  "requires": ["workspace.read", "workspace.write"]
 }

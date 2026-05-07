@@ -2,7 +2,7 @@
   "protocolVersion": "v0.1",
   "task": {
     "id": "task_demo_001",
-    "type": "issue.read",
+    "type": "code.change",
     "createdAt": "2026-04-28T14:00:00Z"
   },
   "run": {
@@ -12,10 +12,10 @@
   },
   "actor": {
     "requestedBy": "orchestrator",
-    "agent": "issue-reader"
+    "agent": "minimal-agent"
   },
   "input": {
-    "issueNumber": 42
+    "instruction": "Apply the requested code change"
   },
-  "capabilities": ["github.read"]
+  "capabilities": ["workspace.read", "workspace.write"]
 }

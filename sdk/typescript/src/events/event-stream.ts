@@ -1,11 +1,27 @@
 import { ExitCode, terminalEventTypeForExitCode } from "../exit-codes.js";
-import type { ProtocolEvent } from "../types.js";
+import type { ProtocolEvent, TaskEnvelope } from "../types.js";
 import { validateProtocolEvent } from "../validation/index.js";
 import { isTerminalEventType } from "./event-types.js";
 
 export type EventStreamValidationResult =
   | { ok: true; events: ProtocolEvent[] }
   | { ok: false; errors: string[] };
+
+export interface EventStreamValidationContext {
+  protocolVersion?: string;
+  runId?: string;
+  taskId?: string;
+}
+
+export function eventStreamContextFromTaskEnvelope(
+  envelope: TaskEnvelope,
+): Required<EventStreamValidationContext> {
+  return {
+    protocolVersion: envelope.protocolVersion,
+    runId: envelope.run.id,
+    taskId: envelope.task.id,
+  };
+}
 
 export function parseNdjsonEvents(ndjson: string): EventStreamValidationResult {
   const events: ProtocolEvent[] = [];
@@ -43,6 +59,7 @@ export function parseNdjsonEvents(ndjson: string): EventStreamValidationResult {
 export function validateEventStream(
   events: readonly ProtocolEvent[],
   exitCode: number,
+  context: EventStreamValidationContext = {},
 ): EventStreamValidationResult {
   const errors: string[] = [];
 
@@ -56,6 +73,28 @@ export function validateEventStream(
     errors.push("first event must be agent.started");
   }
 
+  const expectedProtocolVersion = context.protocolVersion ?? firstEvent?.protocolVersion;
+  const expectedRunId = context.runId ?? firstEvent?.runId;
+  const expectedTaskId = context.taskId ?? firstEvent?.taskId;
+  const eventIds = new Set<string>();
+
+  for (const event of events) {
+    if (eventIds.has(event.eventId)) {
+      errors.push(`duplicate eventId: ${event.eventId}`);
+    }
+    eventIds.add(event.eventId);
+
+    if (event.protocolVersion !== expectedProtocolVersion) {
+      errors.push(`event ${event.eventId} protocolVersion must match the stream context`);
+    }
+    if (event.runId !== expectedRunId) {
+      errors.push(`event ${event.eventId} runId must match the stream context`);
+    }
+    if (event.taskId !== expectedTaskId) {
+      errors.push(`event ${event.eventId} taskId must match the stream context`);
+    }
+  }
+
   const terminalEvents = events.filter((event) => isTerminalEventType(event.type));
   if (terminalEvents.length !== 1) {
     errors.push("event stream must contain exactly one terminal event");
@@ -67,7 +106,11 @@ export function validateEventStream(
     errors.push("terminal event must be the last event");
   }
 
-  if (exitCode < ExitCode.Success || exitCode > ExitCode.PartialSuccessAttentionRequired) {
+  if (
+    !Number.isInteger(exitCode) ||
+    exitCode < ExitCode.Success ||
+    exitCode > ExitCode.PartialSuccessAttentionRequired
+  ) {
     errors.push("exit code must be in the Anchorage protocol range 0-9");
   }
 

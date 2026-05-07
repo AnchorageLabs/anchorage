@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import type { FormatsPlugin } from "ajv-formats";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import {
   agentManifestSchema,
@@ -10,14 +12,14 @@ export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; errors: readonly ErrorObject[] };
 
+const require = createRequire(import.meta.url);
+const addFormats = require("ajv-formats") as FormatsPlugin;
+
 const ajv = new Ajv2020({
   allErrors: true,
   strict: true,
 });
-ajv.addFormat("date-time", {
-  type: "string",
-  validate: (value: string) => !Number.isNaN(Date.parse(value)),
-});
+addFormats(ajv);
 
 for (const schema of [
   artifactReferenceSchema,

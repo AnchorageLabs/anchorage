@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_tool_requested_missing_tool",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:02Z",
+  "type": "tool.requested",
+  "level": "info",
+  "message": "Tool requested",
+  "data": {
+    "input": {}
+  }
+}

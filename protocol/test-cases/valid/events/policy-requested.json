@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "0.1",
+  "eventId": "evt_policy_requested",
+  "runId": "run_demo_001",
+  "taskId": "task_demo_001",
+  "timestamp": "2026-04-28T14:00:02Z",
+  "type": "policy.requested",
+  "level": "info",
+  "message": "Policy decision requested",
+  "data": {
+    "gate": "human.approval"
+  }
+}

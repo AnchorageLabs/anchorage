@@ -1,0 +1,12 @@
+{
+  "name": "minimal-agent",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Runs a single protocol-conformant task.",
+  "taskTypes": ["code.change"],
+  "inputs": ["change.request"],
+  "outputs": ["patch"],
+  "requires": ["workspace.read", "workspace.write"],
+  "binary": "./bin/minimal-agent",
+  "timeout": 120
+}
