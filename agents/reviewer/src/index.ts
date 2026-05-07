@@ -171,7 +171,7 @@ async function main(): Promise<number> {
         owner: prInfo.value.owner,
         repo: prInfo.value.repo,
         pull_number: prInfo.value.prNumber,
-        event: reviewResult.value.decision === "approve" ? "APPROVE" : "REQUEST_CHANGES",
+        event: "COMMENT",
       },
     },
   );
@@ -182,7 +182,7 @@ async function main(): Promise<number> {
       repo: prInfo.value.repo,
       pull_number: prInfo.value.prNumber,
       body: buildGithubReviewBody(reviewResult.value),
-      event: reviewResult.value.decision === "approve" ? "APPROVE" : "REQUEST_CHANGES",
+      event: "COMMENT",
     });
     emit(task.value, "tool.result", "info", "GitHub review posted", {
       tool: "github.pulls.createReview",
