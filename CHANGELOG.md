@@ -29,6 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-06 — Drop the unused fake-mode branch from issue-reader.
+
+**Intent:** Remove the deterministic stub path that #10 introduced and #11 preserved; the agent's purpose is real GitHub reads, and a second in-agent code path muddied the contract for new contributors.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/issue-reader/src/index.ts
+- examples/README.md
+- examples/tasks/issue-read.json
+
+**Reason:** issue #12
+
+**Author:** Valentin Torassa
+
+
 ### 2026-05-06 — Let issue-reader read real GitHub issues while preserving fake mode.
 
 **Intent:** Allow the reference `issue-reader` agent to ingest real GitHub issue data through the CLI path without moving orchestration logic into the public repo.
