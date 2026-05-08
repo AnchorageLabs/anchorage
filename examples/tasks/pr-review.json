@@ -2,7 +2,7 @@
   "protocolVersion": "0.1",
   "task": {
     "id": "task_example_pr_review",
-    "type": "pr.review",
+    "type": "review.run",
     "createdAt": "2026-05-07T00:00:00Z",
     "deadlineAt": null
   },

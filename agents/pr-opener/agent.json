@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "protocolVersion": "0.1",
   "description": "Commits workspace changes, pushes the branch, and opens a GitHub PR.",
-  "taskTypes": ["pr.open"],
+  "taskTypes": ["pull_request.open"],
   "inputs": ["code.change.result"],
   "outputs": ["pr.opened"],
   "requires": ["github.write", "workspace.write", "shell.exec"],

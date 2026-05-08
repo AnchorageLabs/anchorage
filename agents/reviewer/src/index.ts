@@ -24,11 +24,11 @@ async function main(): Promise<number> {
   const task = parseTask(rawTask);
   if (!task.ok) return task.exitCode;
 
-  if (task.value.task.type !== "pr.review") {
+  if (task.value.task.type !== "review.run") {
     emit(task.value, "agent.failed", "error", "Unsupported task type", {
       error: {
         code: "unsupported_task_type",
-        message: `reviewer only supports pr.review, got ${task.value.task.type}`,
+        message: `reviewer only supports review.run, got ${task.value.task.type}`,
       },
     });
     return ExitCode.UnsupportedTaskType;

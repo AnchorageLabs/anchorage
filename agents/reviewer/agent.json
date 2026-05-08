@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "protocolVersion": "0.1",
   "description": "Reviews PR diffs for scope, safety, and quality using Bedrock.",
-  "taskTypes": ["pr.review"],
+  "taskTypes": ["review.run"],
   "inputs": ["pr.opened"],
   "outputs": ["pr.review.result"],
   "requires": ["github.read", "llm.review"],
