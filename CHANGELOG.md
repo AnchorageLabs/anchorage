@@ -29,6 +29,32 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-08 — Add deploy and smoke-test reference agents.
+
+**Intent:** Add deploy and smoke-test reference agents.
+
+**Files touched:**
+- AGENTS.md
+- CHANGELOG.md
+- agents/README.md
+- agents/deploy-watch/agent.json
+- agents/deploy-watch/package.json
+- agents/deploy-watch/src/index.ts
+- agents/deploy-watch/tsconfig.json
+- agents/smoke-test-runner/agent.json
+- agents/smoke-test-runner/package.json
+- agents/smoke-test-runner/src/index.ts
+- agents/smoke-test-runner/tsconfig.json
+- examples/README.md
+- examples/tasks/deploy-watch.json
+- examples/tasks/smoke-test-run.json
+- pnpm-lock.yaml
+
+**Reason:** issue #34; ADR-0006
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-08 — Add deterministic PR opener title and body templates.
 
 **Intent:** Add deterministic PR opener title and body templates.

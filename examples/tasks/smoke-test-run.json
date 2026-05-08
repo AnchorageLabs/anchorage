@@ -1,0 +1,42 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_smoke_test_run",
+    "type": "smoke_test.run",
+    "createdAt": "2026-05-08T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_smoke_test_run",
+    "attempt": 1,
+    "correlationId": "corr_example_smoke_test_run"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "smoke-test-runner"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "checks": [
+      {
+        "name": "node version available",
+        "type": "shell",
+        "command": "node",
+        "args": ["--version"]
+      }
+    ]
+  },
+  "capabilities": ["network.http", "shell.exec"],
+  "policy": {
+    "maxDurationSeconds": 300
+  },
+  "context": {
+    "parentTaskId": "task_example_deploy_watch",
+    "priorArtifacts": []
+  }
+}

@@ -1,6 +1,6 @@
 # AGENTS.md — AnchorageLabs/anchorage
 
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-08
 **Visibility:** public
 **Maintainers:** Valentin Torassa, Sol Soletti
 
@@ -87,6 +87,7 @@ General agent policy lives in `anchorage-internal/coding-agent-operating-policy.
 - Public-repo discipline: assume external eyes. No internal jargon in PR descriptions, no references to private repos in user-facing docs (READMEs, error messages, generated output).
 - Apache-2.0 only. License headers are not required on every file but new dependencies must be Apache-2.0-compatible.
 - Substantive changes to anything under `protocol/` are arch-sensitive and require an ADR per the ship-ritual Phase 3 (see §8).
+- Reference agents should use the standard v0.1 task types in `protocol/SPEC.md` and include runnable example envelopes under `examples/tasks/`.
 
 ## §7. Issue & branch conventions
 
