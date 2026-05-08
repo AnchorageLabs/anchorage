@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-08 — Add deterministic PR opener title and body templates.
+
+**Intent:** Add deterministic PR opener title and body templates.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/src/index.ts
+- examples/tasks/pr-open.json
+
+**Reason:** issue #33
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-08 — Align PR agent task types with protocol v0.1.
 
 **Intent:** Align PR agent task types with protocol v0.1.
