@@ -17,7 +17,6 @@ type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
 
 const agentVersion = "0.1.0";
-const maxPrTitleLength = 72;
 let eventSequence = 0;
 
 async function main(): Promise<number> {
@@ -25,11 +24,11 @@ async function main(): Promise<number> {
   const task = parseTask(rawTask);
   if (!task.ok) return task.exitCode;
 
-  if (task.value.task.type !== "pull_request.open") {
+  if (task.value.task.type !== "pr.open") {
     emit(task.value, "agent.failed", "error", "Unsupported task type", {
       error: {
         code: "unsupported_task_type",
-        message: `pr-opener only supports pull_request.open, got ${task.value.task.type}`,
+        message: `pr-opener only supports pr.open, got ${task.value.task.type}`,
       },
     });
     return ExitCode.UnsupportedTaskType;
@@ -122,7 +121,7 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const prTitle = buildPrTitle(codeChangeResult);
+  const prTitle = summary || `PR for ${branchName}`;
   const prBody = buildPrBody(codeChangeResult);
 
   emit(task.value, "tool.requested", "info", "Creating GitHub PR", {
@@ -334,19 +333,40 @@ function parseCodeChangeResult(
       changedFiles: value.changedFiles.filter(isString),
       summary: typeof value.summary === "string" ? value.summary : "",
       planId: typeof value.planId === "string" ? value.planId : null,
-      validation: readStringList(value.validation),
-      risk: typeof value.risk === "string" ? value.risk : "Not specified.",
-      artifacts: readArtifactList(value.artifacts),
       issueNumber: extractIssueNumber(value),
+      issueUrl: extractIssueUrl(value),
     },
   };
 }
 
-function buildPrTitle(codeChange: CodeChangeInput): string {
-  const source = codeChange.summary || `Open changes from ${codeChange.branchName}`;
-  const normalized = source.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxPrTitleLength) return normalized;
-  return `${normalized.slice(0, maxPrTitleLength - 3).trimEnd()}...`;
+function extractIssueNumber(value: JsonObject): null | number {
+  // Direct field
+  if (typeof value.issueNumber === "number" && Number.isInteger(value.issueNumber)) {
+    return value.issueNumber;
+  }
+  // Nested in issue object (from implementation.plan shape)
+  if (isObject(value.issue) && typeof value.issue.issueNumber === "number") {
+    return value.issue.issueNumber;
+  }
+  // Extract from planId: format is plan_<runId>_<issueNumber>
+  if (typeof value.planId === "string") {
+    const match = value.planId.match(/_(\d+)$/);
+    if (match?.[1]) {
+      const n = Number(match[1]);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function extractIssueUrl(value: JsonObject): null | string {
+  if (typeof value.issueUrl === "string" && value.issueUrl.startsWith("http")) {
+    return value.issueUrl;
+  }
+  if (isObject(value.issue) && typeof value.issue.url === "string") {
+    return value.issue.url;
+  }
+  return null;
 }
 
 function buildPrBody(codeChange: CodeChangeInput): string {
@@ -360,32 +380,14 @@ function buildPrBody(codeChange: CodeChangeInput): string {
   }
   lines.push("");
 
-  lines.push("## Validation");
-  lines.push("");
-  if (codeChange.validation.length > 0) {
-    for (const item of codeChange.validation) lines.push(`- ${item}`);
-  } else {
-    lines.push("- Not run by pr-opener.");
+  if (codeChange.changedFiles.length > 0) {
+    lines.push("## Changed Files");
+    lines.push("");
+    for (const file of codeChange.changedFiles) {
+      lines.push(`- \`${file}\``);
+    }
+    lines.push("");
   }
-  lines.push("");
-
-  lines.push("## Risk");
-  lines.push("");
-  lines.push(codeChange.risk);
-  lines.push("");
-
-  lines.push("## Artifacts");
-  lines.push("");
-  if (codeChange.artifacts.length > 0) {
-    for (const artifact of codeChange.artifacts) lines.push(`- ${artifact}`);
-  } else if (codeChange.changedFiles.length > 0) {
-    lines.push(
-      `- Changed files: ${codeChange.changedFiles.map((file) => `\`${file}\``).join(", ")}`,
-    );
-  } else {
-    lines.push("- No artifact references provided.");
-  }
-  lines.push("");
 
   if (codeChange.planId) {
     lines.push(`**Plan ID:** \`${codeChange.planId}\``);
@@ -400,43 +402,6 @@ function buildPrBody(codeChange: CodeChangeInput): string {
   lines.push("---");
   lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
   return lines.join("\n");
-}
-
-function readStringList(value: JsonValue | undefined): string[] {
-  if (typeof value === "string" && value.trim().length > 0) return [value.trim()];
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter(isString)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function readArtifactList(value: JsonValue | undefined): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (typeof item === "string" && item.trim().length > 0) return [item.trim()];
-    if (!isObject(item)) return [];
-    const type = typeof item.artifactType === "string" ? item.artifactType : "artifact";
-    const uri = typeof item.uri === "string" ? item.uri : "";
-    return uri ? [`${type}: ${uri}`] : [];
-  });
-}
-
-function extractIssueNumber(value: JsonObject): null | number {
-  if (typeof value.issueNumber === "number" && Number.isInteger(value.issueNumber)) {
-    return value.issueNumber;
-  }
-  if (isObject(value.issue) && typeof value.issue.issueNumber === "number") {
-    return value.issue.issueNumber;
-  }
-  if (typeof value.planId === "string") {
-    const match = value.planId.match(/_(\d+)$/);
-    if (match?.[1]) {
-      const issueNumber = Number(match[1]);
-      if (Number.isInteger(issueNumber) && issueNumber > 0) return issueNumber;
-    }
-  }
-  return null;
 }
 
 async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
@@ -542,10 +507,8 @@ interface CodeChangeInput {
   changedFiles: string[];
   summary: string;
   planId: null | string;
-  validation: string[];
-  risk: string;
-  artifacts: string[];
   issueNumber: null | number;
+  issueUrl: null | string;
 }
 
 interface CommandResult {

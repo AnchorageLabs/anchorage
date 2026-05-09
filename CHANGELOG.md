@@ -29,75 +29,17 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-05-09 — Fix smoke-test-runner to execute shell commands via sh -c with workspace cwd.
+### 2026-05-07 — pr-opener adds Closes #N to PR body for automatic issue closing.
 
-**Intent:** Shell checks now run correctly in the target workspace directory instead of failing with ENOENT when commands contain spaces, env vars, or shell operators like &&.
-
-**Files touched:**
-- CHANGELOG.md
-- agents/smoke-test-runner/src/index.ts
-
-**Reason:** issue #34
-
-**Author:** Sol Soletti
-
-### 2026-05-08 — Add deploy and smoke-test reference agents.
-
-**Intent:** Add deploy and smoke-test reference agents.
-
-**Files touched:**
-- AGENTS.md
-- CHANGELOG.md
-- agents/README.md
-- agents/deploy-watch/agent.json
-- agents/deploy-watch/package.json
-- agents/deploy-watch/src/index.ts
-- agents/deploy-watch/tsconfig.json
-- agents/smoke-test-runner/agent.json
-- agents/smoke-test-runner/package.json
-- agents/smoke-test-runner/src/index.ts
-- agents/smoke-test-runner/tsconfig.json
-- examples/README.md
-- examples/tasks/deploy-watch.json
-- examples/tasks/smoke-test-run.json
-- pnpm-lock.yaml
-
-**Reason:** issue #34; ADR-0006
-
-**Author:** Sol Soletti
-
-
-### 2026-05-08 — Add deterministic PR opener title and body templates.
-
-**Intent:** Add deterministic PR opener title and body templates.
+**Intent:** PRs opened by the pr-opener agent now include a GitHub-idiomatic `Closes #N` reference so merging the PR automatically closes the source issue.
 
 **Files touched:**
 - CHANGELOG.md
 - agents/pr-opener/src/index.ts
-- examples/tasks/pr-open.json
 
-**Reason:** issue #33
-
-**Author:** Sol Soletti
-
-
-### 2026-05-08 — Align PR agent task types with protocol v0.1.
-
-**Intent:** Align PR agent task types with protocol v0.1.
-
-**Files touched:**
-- CHANGELOG.md
-- agents/pr-opener/agent.json
-- agents/pr-opener/src/index.ts
-- agents/reviewer/agent.json
-- agents/reviewer/src/index.ts
-- examples/tasks/pr-open.json
-- examples/tasks/pr-review.json
-
-**Reason:** issue #32
+**Reason:** issue #30
 
 **Author:** Sol Soletti
-
 
 ### 2026-05-06 — Add coder agent wrapper for implementation plans.
 
