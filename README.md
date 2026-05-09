@@ -1,8 +1,8 @@
 # anchorage
 
-Open-core orchestration platform for end-to-end software automation.
+Open-core protocol, SDK, runner, and reference agents for end-to-end software automation.
 
-> **Status: pre-v0 scaffold.** APIs, packages, and layout are not stable. Expect everything to move. Production users: not yet.
+> **Status: pre-v0 reference implementation.** The protocol, runner, and reference agents are runnable, but APIs, packages, and layout are not stable. Production users: not yet.
 
 This monorepo holds the public pieces of the AnchorageLabs stack:
 
@@ -17,6 +17,16 @@ This monorepo holds the public pieces of the AnchorageLabs stack:
 | [`examples/`](examples/) | End-to-end worked examples |
 
 The proprietary orchestrator (the "mainframe") that consumes this protocol lives in a private repo and is not part of this monorepo. The protocol itself, the SDK, and the runner are open source so anyone can build agents that target an Anchorage-compatible orchestrator.
+
+## Current reference surface
+
+- Protocol v0.1 draft in [`protocol/SPEC.md`](protocol/SPEC.md).
+- TypeScript validation helpers in [`sdk/typescript/`](sdk/typescript/).
+- CLI runner in [`cli/anchorage-runner/`](cli/anchorage-runner/).
+- Reference agents in [`agents/`](agents/): issue reading, planning, coding, local tests, PR opening, review, merge preparation, deployment observation, and smoke testing.
+- Runnable task envelopes in [`examples/tasks/`](examples/tasks/).
+
+This repo does not sequence workflows, persist durable run state, receive GitHub webhooks, or implement private deployment infrastructure. Those responsibilities belong to an orchestrator that consumes the public protocol.
 
 ## License
 

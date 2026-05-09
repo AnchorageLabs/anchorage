@@ -2,15 +2,20 @@
 
 Worked examples: end-to-end flows demonstrating how the pieces fit.
 
-> Status: scaffold. See `AGENTS.md` and `SOUL.md` at the repo root for project-wide context.
+> Status: runnable pre-v0 task envelopes for the public reference agents. See `AGENTS.md` and `SOUL.md` at the repo root for project-wide context.
+
+Build once before running examples:
+
+```bash
+pnpm install
+pnpm -r build
+```
 
 ## issue-reader
 
 Reads a real GitHub issue through the reference runner. Requires a token with `repo` read scope in `GH_TOKEN` or `GITHUB_TOKEN`.
 
 ```bash
-pnpm install
-pnpm -r build
 GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
   run issue-reader < examples/tasks/issue-read.json
 ```
@@ -22,8 +27,6 @@ The example task targets `AnchorageLabs/anchorage#1`. Edit `examples/tasks/issue
 Turns an issue summary into an implementation plan artifact for the next coder agent. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_PLANNER_MODEL` to override the default `us.anthropic.claude-sonnet-4-6` inference profile.
 
 ```bash
-pnpm install
-pnpm -r build
 node cli/anchorage-runner/dist/index.js \
   run planner < examples/tasks/plan-create.json
 ```
@@ -35,8 +38,6 @@ The planner also accepts a prior local `issue.summary` artifact through `context
 Applies an implementation plan by calling Bedrock with Opus 4.7 and writing returned file edits into a target workspace. Requires Bedrock auth via `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials; optionally set `AWS_REGION` and `ANCHORAGE_CODER_MODEL` to override the default `us.anthropic.claude-opus-4-7` inference profile.
 
 ```bash
-pnpm install
-pnpm -r build
 node cli/anchorage-runner/dist/index.js \
   run coder < examples/tasks/code-change.json
 ```
@@ -48,10 +49,35 @@ The example targets the repo root through `input.workspacePath: "../.."` because
 Runs configured local test commands in a workspace and writes a `test.report` artifact.
 
 ```bash
-pnpm install
-pnpm -r build
 node cli/anchorage-runner/dist/index.js \
   run tester < examples/tasks/test-run.json
+```
+
+## pr-opener
+
+Commits changed files from a `code.change.result`, pushes the branch, and opens a GitHub PR. Uses the standard `pull_request.open` task type and requires GitHub write access plus a real git worktree.
+
+```bash
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
+  run pr-opener < examples/tasks/pr-open.json
+```
+
+## reviewer
+
+Reviews a PR diff with Bedrock and posts a GitHub PR comment when granted GitHub write access. Uses the standard `review.run` task type.
+
+```bash
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
+  run reviewer < examples/tasks/pr-review.json
+```
+
+## merge-gate
+
+Checks PR state and merges when configured gates pass. Uses the standard `merge.prepare` task type.
+
+```bash
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
+  run merge-gate < examples/tasks/merge-prepare.json
 ```
 
 ## deploy-watch
@@ -59,8 +85,6 @@ node cli/anchorage-runner/dist/index.js \
 Records an input-driven deployment status without referencing private deployment infrastructure.
 
 ```bash
-pnpm install
-pnpm -r build
 node cli/anchorage-runner/dist/index.js \
   run deploy-watch < examples/tasks/deploy-watch.json
 ```
@@ -70,8 +94,10 @@ node cli/anchorage-runner/dist/index.js \
 Runs configured HTTP or shell smoke checks and writes a `smoke_test.report` artifact.
 
 ```bash
-pnpm install
-pnpm -r build
 node cli/anchorage-runner/dist/index.js \
   run smoke-test-runner < examples/tasks/smoke-test-run.json
 ```
+
+## Out of scope for examples
+
+The examples invoke one agent at a time. Durable workflow sequencing, retry policy, CI-failure routing, webhook handling, and run ledger persistence are orchestrator responsibilities and are not implemented in this public repo.
