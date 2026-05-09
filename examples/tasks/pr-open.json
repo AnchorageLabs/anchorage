@@ -29,7 +29,11 @@
       "branchName": "feature/issue-1-agent-context-docs",
       "changedFiles": ["AGENTS.md", "ARCHITECTURE.md"],
       "summary": "Add agent-facing repository context docs",
-      "editedFiles": ["AGENTS.md", "ARCHITECTURE.md"]
+      "editedFiles": ["AGENTS.md", "ARCHITECTURE.md"],
+      "validation": ["pnpm check"],
+      "risk": "Documentation-only change.",
+      "artifacts": ["code.change.result: file:///tmp/anchorage/code-change-result.json"],
+      "issueNumber": 1
     }
   },
   "capabilities": ["github.write", "workspace.write", "shell.exec"],
