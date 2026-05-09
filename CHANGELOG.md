@@ -59,6 +59,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-08 — Align pr-opener runtime task type with its manifest.
+
+**Intent:** Let `pr-opener` run through the reference runner with the standard `pull_request.open` task type instead of passing manifest validation and failing inside the agent.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/src/index.ts
+
+**Reason:** issue #42
+
+**Author:** Valentin Torassa
+
 ### 2026-05-07 — pr-opener adds Closes #N to PR body for automatic issue closing.
 
 **Intent:** PRs opened by the pr-opener agent now include a GitHub-idiomatic `Closes #N` reference so merging the PR automatically closes the source issue.
