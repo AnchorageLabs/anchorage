@@ -1,0 +1,12 @@
+{
+  "name": "tester",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Runs configured local test commands and emits a test report artifact.",
+  "taskTypes": ["test.run"],
+  "inputs": ["test.plan"],
+  "outputs": ["test.report"],
+  "requires": ["workspace.read", "shell.exec"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}

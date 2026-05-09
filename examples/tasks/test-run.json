@@ -1,0 +1,41 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_test_run",
+    "type": "test.run",
+    "createdAt": "2026-05-08T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_test_run",
+    "attempt": 1,
+    "correlationId": "corr_example_test_run"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "tester"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "workspacePath": ".",
+    "commands": [
+      {
+        "name": "node version available",
+        "command": "node --version"
+      }
+    ]
+  },
+  "capabilities": ["workspace.read", "shell.exec"],
+  "policy": {
+    "maxDurationSeconds": 300
+  },
+  "context": {
+    "parentTaskId": "task_example_code_change",
+    "priorArtifacts": []
+  }
+}
