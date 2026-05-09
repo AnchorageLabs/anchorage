@@ -1,0 +1,39 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_ci_watch",
+    "type": "ci.watch",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_ci_watch",
+    "attempt": 1,
+    "correlationId": "corr_example_ci_watch"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "ci-watcher"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "pr": {
+      "prNumber": 7
+    },
+    "pollIntervalMs": 10000,
+    "maxPolls": 30
+  },
+  "capabilities": ["github.read"],
+  "policy": {
+    "maxDurationSeconds": 600
+  },
+  "context": {
+    "parentTaskId": "task_example_pr_open",
+    "priorArtifacts": []
+  }
+}

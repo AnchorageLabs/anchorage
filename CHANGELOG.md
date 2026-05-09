@@ -43,6 +43,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-09 — Add ci-watcher reference agent for CI observation.
+
+**Intent:** Let the public agent chain observe GitHub PR checks/statuses and emit structured CI failure context without encoding orchestrator routing decisions.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/ci-watcher/agent.json
+- agents/ci-watcher/package.json
+- agents/ci-watcher/src/index.ts
+- agents/ci-watcher/tsconfig.json
+- examples/README.md
+- examples/tasks/ci-watch.json
+- pnpm-lock.yaml
+
+**Reason:** issue #46; ADR-0011
+
+**Author:** Valentin Torassa
+
 ### 2026-05-08 — Add tester agent for local test reports.
 
 **Intent:** Let the public agent chain validate code changes before PR creation by running configured workspace test commands and emitting a protocol-compatible `test.report` artifact.

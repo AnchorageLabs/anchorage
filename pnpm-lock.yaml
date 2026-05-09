@@ -18,6 +18,19 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.17)
 
+  agents/ci-watcher:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+      '@octokit/rest':
+        specifier: ^21.1.1
+        version: 21.1.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   agents/coder:
     dependencies:
       '@anchorage/sdk':

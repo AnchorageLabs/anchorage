@@ -80,6 +80,15 @@ GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
   run merge-gate < examples/tasks/merge-prepare.json
 ```
 
+## ci-watcher
+
+Watches GitHub checks/statuses for a PR and writes a `ci.report` artifact. The agent reports `passed`, `failed`, or `timed_out`; routing a failed result back to `code.change` is an orchestrator responsibility.
+
+```bash
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
+  run ci-watcher < examples/tasks/ci-watch.json
+```
+
 ## deploy-watch
 
 Records an input-driven deployment status without referencing private deployment infrastructure.
