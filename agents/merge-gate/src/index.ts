@@ -93,25 +93,42 @@ async function main(): Promise<number> {
   const pollIntervalMs = Number(process.env.ANCHORAGE_MERGE_GATE_POLL_INTERVAL_MS) || 10000;
   const maxPolls = Number(process.env.ANCHORAGE_MERGE_GATE_MAX_POLLS) || 30;
 
-  emit(task.value, "tool.requested", "info", "Checking CI status", {
-    tool: "github.checks.combined",
-    input: {
-      owner: pr.owner,
-      repo: pr.repo,
-      ref: pr.headSha,
-    },
-  });
+  // Prefer a prior ci.report artifact from ci-watcher before polling GitHub.
+  const priorCiReport = await readPriorCiReport(task.value);
 
-  const ciResult = await pollCiStatus(octokit, pr, pollIntervalMs, maxPolls);
-
-  emit(task.value, "tool.result", "info", `CI status: ${ciResult.status}`, {
-    tool: "github.checks.combined",
-    success: ciResult.status === "success",
-    output: {
-      status: ciResult.status,
-      pollCount: ciResult.pollCount,
-    },
-  });
+  let ciResult: CiResult;
+  if (priorCiReport) {
+    const mappedStatus = mapCiReportStatus(priorCiReport.status);
+    emit(task.value, "tool.result", "info", `CI status from prior ci.report: ${mappedStatus}`, {
+      tool: "ci.report.artifact",
+      success: mappedStatus === "success",
+      output: {
+        source: "ci.report",
+        status: mappedStatus,
+        originalStatus: priorCiReport.status,
+        uri: priorCiReport.uri,
+      },
+    });
+    ciResult = { status: mappedStatus, pollCount: 0 };
+  } else {
+    emit(task.value, "tool.requested", "info", "Checking CI status", {
+      tool: "github.checks.combined",
+      input: {
+        owner: pr.owner,
+        repo: pr.repo,
+        ref: pr.headSha,
+      },
+    });
+    ciResult = await pollCiStatus(octokit, pr, pollIntervalMs, maxPolls);
+    emit(task.value, "tool.result", "info", `CI status: ${ciResult.status}`, {
+      tool: "github.checks.combined",
+      success: ciResult.status === "success",
+      output: {
+        status: ciResult.status,
+        pollCount: ciResult.pollCount,
+      },
+    });
+  }
 
   if (ciResult.status === "failure") {
     const artifact = await writeArtifact(task.value, {
@@ -471,6 +488,38 @@ async function attemptMerge(
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `Merge failed for PR #${pr.prNumber}: ${message}` };
   }
+}
+
+interface CiReportArtifact {
+  status: string;
+  uri: string;
+}
+
+async function readPriorCiReport(task: TaskEnvelope): Promise<CiReportArtifact | null> {
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === "ci.report");
+  if (!artifact?.uri.startsWith("file://")) return null;
+
+  try {
+    const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    const parsed = JSON.parse(raw);
+    if (isObject(parsed) && isString((parsed as Record<string, unknown>).status)) {
+      return {
+        status: (parsed as Record<string, unknown>).status as string,
+        uri: artifact.uri,
+      };
+    }
+  } catch {
+    // Fall through to GitHub polling if the artifact can't be read.
+  }
+
+  return null;
+}
+
+function mapCiReportStatus(ciReportStatus: string): "success" | "failure" | "pending" {
+  if (ciReportStatus === "passed") return "success";
+  if (ciReportStatus === "failed" || ciReportStatus === "timed_out") return "failure";
+  // Unknown status — treat conservatively as pending so the fallback poll runs if needed.
+  return "pending";
 }
 
 async function writeArtifact(task: TaskEnvelope, data: MergeArtifact) {

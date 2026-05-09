@@ -48,6 +48,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-09 — Let merge-gate consume ci.report artifacts from ci-watcher.
+
+**Intent:** Complete the `ci.watch → merge.prepare` public-agent handoff by letting `merge-gate` accept a prior `ci.report` artifact so CI observation and merge readiness compose cleanly without polling GitHub CI a second time.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/merge-gate/src/index.ts
+- examples/README.md
+- examples/tasks/merge-prepare.json
+
+**Reason:** issue #55
+
+**Author:** Valentin Torassa
 ### 2026-05-09 — Refresh public docs for the implemented reference pipeline.
 
 **Intent:** Make the public README, agent docs, and examples match the current runnable pre-v0 reference-agent surface instead of scaffold-era status.

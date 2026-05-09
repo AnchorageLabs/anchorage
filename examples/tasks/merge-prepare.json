@@ -37,6 +37,12 @@
   },
   "context": {
     "parentTaskId": "task_envy_pr_review",
-    "priorArtifacts": []
+    "priorArtifacts": [
+      {
+        "artifactType": "ci.report",
+        "uri": "file:///tmp/anchorage-agent-artifacts/run_example/ci-report.json",
+        "mediaType": "application/json"
+      }
+    ]
   }
 }

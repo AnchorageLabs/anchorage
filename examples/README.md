@@ -73,7 +73,7 @@ GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
 
 ## merge-gate
 
-Checks PR state and merges when configured gates pass. Uses the standard `merge.prepare` task type.
+Checks PR state and merges when configured gates pass. Uses the standard `merge.prepare` task type. When a `ci.report` artifact from `ci-watcher` is present in `context.priorArtifacts`, the agent uses that result directly and skips polling GitHub CI a second time.
 
 ```bash
 GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
