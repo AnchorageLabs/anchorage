@@ -41,14 +41,15 @@ async function main(): Promise<number> {
 
   const { workspacePath, codeChangeResult, owner, name: repoName, baseBranch } = input.value;
   const { branchName, changedFiles, summary } = codeChangeResult;
+  const stagePaths = validateStagePaths(changedFiles);
+  if (!stagePaths.ok) return fail(task.value, stagePaths);
 
-  // git add -A
-  emit(task.value, "tool.requested", "info", "Staging all workspace changes", {
+  emit(task.value, "tool.requested", "info", "Staging code-change files", {
     tool: "git.add",
-    input: { cwd: workspacePath, args: ["-A"] },
+    input: { cwd: workspacePath, args: ["--", ...stagePaths.value] },
   });
 
-  const addResult = await runGit(workspacePath, ["add", "-A"]);
+  const addResult = await runGit(workspacePath, ["add", "--", ...stagePaths.value]);
 
   emit(task.value, "tool.result", "info", "git add completed", {
     tool: "git.add",
@@ -339,6 +340,44 @@ function parseCodeChangeResult(
   };
 }
 
+function validateStagePaths(
+  changedFiles: string[],
+): { ok: true; value: string[] } | PrOpenerFailure {
+  const stagePaths = unique(changedFiles.map((file) => file.trim()).filter(isString));
+  if (stagePaths.length === 0) {
+    return failure(
+      "no_changed_files",
+      "code.change.result changedFiles must include at least one file to stage.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  for (const file of stagePaths) {
+    if (isUnsafeStagePath(file)) {
+      return failure(
+        "unsafe_changed_file_path",
+        `code.change.result changedFiles contains an unsafe path: ${file}`,
+        ExitCode.InvalidInput,
+      );
+    }
+  }
+
+  return { ok: true, value: stagePaths };
+}
+
+function isUnsafeStagePath(file: string): boolean {
+  if (file.includes("\0") || path.isAbsolute(file)) return true;
+
+  const normalized = path.posix.normalize(file.replaceAll("\\", "/"));
+  return (
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized === ".git" ||
+    normalized.startsWith(".git/")
+  );
+}
+
 function extractIssueNumber(value: JsonObject): null | number {
   // Direct field
   if (typeof value.issueNumber === "number" && Number.isInteger(value.issueNumber)) {
@@ -460,6 +499,10 @@ function isObject(value: unknown): value is JsonObject {
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function emit(

@@ -59,6 +59,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-08 — Make pr-opener stage only code-change files.
+
+**Intent:** Prevent local test artifacts or unrelated workspace files from being committed when `pr-opener` turns a code-change result into a pull request.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/src/index.ts
+
+**Reason:** issue #44
+
+**Author:** Valentin Torassa
+
 ### 2026-05-08 — Align pr-opener runtime task type with its manifest.
 
 **Intent:** Let `pr-opener` run through the reference runner with the standard `pull_request.open` task type instead of passing manifest validation and failing inside the agent.
