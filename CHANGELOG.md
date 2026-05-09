@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-08 — Align PR agent task types with protocol v0.1.
+
+**Intent:** Align PR agent task types with protocol v0.1.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/agent.json
+- agents/pr-opener/src/index.ts
+- agents/reviewer/agent.json
+- agents/reviewer/src/index.ts
+- examples/tasks/pr-open.json
+- examples/tasks/pr-review.json
+
+**Reason:** issue #32
+
+**Author:** Sol Soletti
+
+
 ### 2026-05-06 — Add coder agent wrapper for implementation plans.
 
 **Intent:** Let the local agent chain move from a planner artifact into actual workspace changes by delegating `code.change` to Bedrock Opus 4.7 and applying structured file edits.

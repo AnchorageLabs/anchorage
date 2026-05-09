@@ -24,11 +24,11 @@ async function main(): Promise<number> {
   const task = parseTask(rawTask);
   if (!task.ok) return task.exitCode;
 
-  if (task.value.task.type !== "pr.open") {
+  if (task.value.task.type !== "pull_request.open") {
     emit(task.value, "agent.failed", "error", "Unsupported task type", {
       error: {
         code: "unsupported_task_type",
-        message: `pr-opener only supports pr.open, got ${task.value.task.type}`,
+        message: `pr-opener only supports pull_request.open, got ${task.value.task.type}`,
       },
     });
     return ExitCode.UnsupportedTaskType;
