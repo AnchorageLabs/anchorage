@@ -42,3 +42,25 @@ node cli/anchorage-runner/dist/index.js \
 ```
 
 The example targets the repo root through `input.workspacePath: "../.."` because agents execute from their own package directories.
+
+## deploy-watch
+
+Records an input-driven deployment status without referencing private deployment infrastructure.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run deploy-watch < examples/tasks/deploy-watch.json
+```
+
+## smoke-test-runner
+
+Runs configured HTTP or shell smoke checks and writes a `smoke_test.report` artifact.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run smoke-test-runner < examples/tasks/smoke-test-run.json
+```

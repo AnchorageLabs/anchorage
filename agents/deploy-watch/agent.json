@@ -1,0 +1,12 @@
+{
+  "name": "deploy-watch",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Records an input-driven deployment status without private infrastructure coupling.",
+  "taskTypes": ["deploy.watch"],
+  "inputs": ["deployment.status"],
+  "outputs": ["deployment.record"],
+  "requires": [],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

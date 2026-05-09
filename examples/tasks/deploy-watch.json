@@ -1,0 +1,41 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_deploy_watch",
+    "type": "deploy.watch",
+    "createdAt": "2026-05-08T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_deploy_watch",
+    "attempt": 1,
+    "correlationId": "corr_example_deploy_watch"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "deploy-watch"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "deployment": {
+      "id": "deployment_example_1",
+      "environment": "local",
+      "status": "deployed",
+      "url": "http://127.0.0.1:3000",
+      "sha": "0000000000000000000000000000000000000000"
+    }
+  },
+  "capabilities": [],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": "task_example_merge_prepare",
+    "priorArtifacts": []
+  }
+}

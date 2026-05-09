@@ -31,6 +31,16 @@ importers:
         specifier: ^22.10.2
         version: 22.19.17
 
+  agents/deploy-watch:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   agents/issue-reader:
     dependencies:
       '@anchorage/sdk':
@@ -94,6 +104,16 @@ importers:
       '@octokit/rest':
         specifier: ^21.1.1
         version: 21.1.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
+  agents/smoke-test-runner:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

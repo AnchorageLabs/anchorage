@@ -1,0 +1,12 @@
+{
+  "name": "smoke-test-runner",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Runs input-driven HTTP or shell smoke checks and emits a report artifact.",
+  "taskTypes": ["smoke_test.run"],
+  "inputs": ["smoke_test.plan"],
+  "outputs": ["smoke_test.report"],
+  "requires": ["network.http", "shell.exec"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}
