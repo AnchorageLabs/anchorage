@@ -43,6 +43,17 @@ node cli/anchorage-runner/dist/index.js \
 
 The example targets the repo root through `input.workspacePath: "../.."` because agents execute from their own package directories.
 
+## tester
+
+Runs configured local test commands in a workspace and writes a `test.report` artifact.
+
+```bash
+pnpm install
+pnpm -r build
+node cli/anchorage-runner/dist/index.js \
+  run tester < examples/tasks/test-run.json
+```
+
 ## deploy-watch
 
 Records an input-driven deployment status without referencing private deployment infrastructure.

@@ -119,6 +119,16 @@ importers:
         specifier: ^22.10.2
         version: 22.19.17
 
+  agents/tester:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   cli/anchorage-runner:
     dependencies:
       '@anchorage/sdk':

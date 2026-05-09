@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-08 — Add tester agent for local test reports.
+
+**Intent:** Let the public agent chain validate code changes before PR creation by running configured workspace test commands and emitting a protocol-compatible `test.report` artifact.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/tester/agent.json
+- agents/tester/package.json
+- agents/tester/src/index.ts
+- agents/tester/tsconfig.json
+- examples/README.md
+- examples/tasks/test-run.json
+
+**Reason:** issue #38; ADR-0007
+
+**Author:** Valentin Torassa
+
 ### 2026-05-07 — pr-opener adds Closes #N to PR body for automatic issue closing.
 
 **Intent:** PRs opened by the pr-opener agent now include a GitHub-idiomatic `Closes #N` reference so merging the PR automatically closes the source issue.
