@@ -37,13 +37,19 @@ async function main(): Promise<number> {
   const checks = parseChecks(task.value.input.checks);
   if (!checks.ok) return fail(task.value, checks);
 
+  const workspacePath =
+    typeof task.value.input.workspacePath === "string" && task.value.input.workspacePath.trim()
+      ? task.value.input.workspacePath.trim()
+      : undefined;
+
   const results: SmokeCheckResult[] = [];
   for (const check of checks.value) {
     emit(task.value, "tool.requested", "info", `Running smoke check ${check.name}`, {
       tool: check.type === "http" ? "http.fetch" : "shell.exec",
       input: sanitizeCheckForEvent(check),
     });
-    const result = check.type === "http" ? await runHttpCheck(check) : await runShellCheck(check);
+    const result =
+      check.type === "http" ? await runHttpCheck(check) : await runShellCheck(check, workspacePath);
     results.push(result);
     emit(
       task.value,
@@ -177,23 +183,29 @@ async function runHttpCheck(check: HttpCheck): Promise<SmokeCheckResult> {
   }
 }
 
-async function runShellCheck(check: ShellCheck): Promise<SmokeCheckResult> {
+async function runShellCheck(
+  check: ShellCheck,
+  workspacePath: string | undefined,
+): Promise<SmokeCheckResult> {
   const startedAt = Date.now();
-  const result = await runCommand(check.command, check.args);
+  const result = await runCommand("sh", ["-c", check.command], workspacePath);
   return {
     name: check.name,
     type: check.type,
     passed: result.exitCode === 0,
     durationMs: Date.now() - startedAt,
     exitCode: result.exitCode,
-    stdout: result.stdout.slice(0, 1000),
-    stderr: result.stderr.slice(0, 1000),
+    stdout: result.stdout.slice(0, 4000),
+    stderr: result.stderr.slice(0, 4000),
   };
 }
 
-async function runCommand(command: string, args: string[]): Promise<CommandResult> {
+async function runCommand(command: string, args: string[], cwd?: string): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd,
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

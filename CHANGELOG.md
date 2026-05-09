@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — Fix smoke-test-runner to execute shell commands via sh -c with workspace cwd.
+
+**Intent:** Shell checks now run correctly in the target workspace directory instead of failing with ENOENT when commands contain spaces, env vars, or shell operators like &&.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/smoke-test-runner/src/index.ts
+
+**Reason:** issue #34
+
+**Author:** Sol Soletti
+
 ### 2026-05-08 — Add deploy and smoke-test reference agents.
 
 **Intent:** Add deploy and smoke-test reference agents.
