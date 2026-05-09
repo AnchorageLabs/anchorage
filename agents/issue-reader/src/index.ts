@@ -150,6 +150,21 @@ async function readIssue(
       issue_number: issueNumber,
     });
     const issue = response.data;
+
+    if ("pull_request" in issue) {
+      const message = `#${issueNumber} is a pull request, not an issue. Use a real issue number.`;
+      emit(task, "tool.result", "error", `Issue #${issueNumber} is a pull request`, {
+        tool: "github.issues.get",
+        success: false,
+        output: {
+          code: "not_an_issue",
+          message,
+        },
+      });
+
+      return failure("not_an_issue", message, ExitCode.InvalidInput);
+    }
+
     const summary = {
       issueNumber: issue.number,
       title: issue.title,

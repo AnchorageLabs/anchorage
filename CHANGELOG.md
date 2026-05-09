@@ -47,6 +47,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-08 — Reject pull requests in issue-reader issue reads.
+
+**Intent:** Prevent `issue-reader` from treating pull requests as source issues when GitHub returns a PR-shaped item from the Issues API, so downstream agents do not plan against already-merged PRs.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/issue-reader/src/index.ts
+
+**Reason:** issue #40
+
+**Author:** Valentin Torassa
+
 ### 2026-05-07 — pr-opener adds Closes #N to PR body for automatic issue closing.
 
 **Intent:** PRs opened by the pr-opener agent now include a GitHub-idiomatic `Closes #N` reference so merging the PR automatically closes the source issue.
