@@ -1,0 +1,45 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_issue_close",
+    "type": "issue.close",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_issue_close",
+    "attempt": 1,
+    "correlationId": "corr_example_issue_close"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "issue-closer"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "issue": {
+      "issueNumber": 9
+    },
+    "summary": {
+      "text": "Workflow completed successfully.",
+      "prUrl": "https://github.com/AnchorageLabs/envy/pull/12",
+      "commitSha": "8c6562e89957338174725af26c6591f50595450b",
+      "testReportUri": "file:///tmp/anchorage-agent-artifacts/run_example/test-report.json",
+      "ciReportUri": "file:///tmp/anchorage-agent-artifacts/run_example/ci-report.json",
+      "artifacts": ["file:///tmp/anchorage-agent-artifacts/run_example/merge-completed.json"]
+    }
+  },
+  "capabilities": ["github.write"],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": "task_example_merge_prepare",
+    "priorArtifacts": []
+  }
+}

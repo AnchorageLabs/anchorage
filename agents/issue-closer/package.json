@@ -1,0 +1,22 @@
+{
+  "name": "@anchorage/agent-issue-closer",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "issue-closer": "./dist/index.js"
+  },
+  "files": ["agent.json", "dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anchorage/sdk": "workspace:*",
+    "@octokit/rest": "^21.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2"
+  }
+}
