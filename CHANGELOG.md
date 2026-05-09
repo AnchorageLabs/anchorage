@@ -61,6 +61,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** issue #55
 
 **Author:** Valentin Torassa
+
+### 2026-05-09 — Add PR title policy and structured body template to pr-opener.
+
+**Intent:** Make generated PRs consistently reviewable by enforcing a concise title (max 72 chars, derived deterministically from the code-change summary or issue number) and a structured body with Summary, Validation, Risk, Artifacts sections and a `Closes #N` line.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/src/index.ts
+- examples/tasks/pr-open.json
+
+**Reason:** issue #33
+
+**Author:** Sol Soletti
 ### 2026-05-09 — Refresh public docs for the implemented reference pipeline.
 
 **Intent:** Make the public README, agent docs, and examples match the current runnable pre-v0 reference-agent surface instead of scaffold-era status.

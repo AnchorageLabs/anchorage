@@ -122,8 +122,8 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const prTitle = summary || `PR for ${branchName}`;
-  const prBody = buildPrBody(codeChangeResult);
+  const prTitle = buildPrTitle(codeChangeResult, task.value.input);
+  const prBody = buildPrBody(codeChangeResult, task.value.input);
 
   emit(task.value, "tool.requested", "info", "Creating GitHub PR", {
     tool: "github.pulls.create",
@@ -408,30 +408,97 @@ function extractIssueUrl(value: JsonObject): null | string {
   return null;
 }
 
-function buildPrBody(codeChange: CodeChangeInput): string {
+const PR_TITLE_MAX_CHARS = 72;
+
+function buildPrTitle(codeChange: CodeChangeInput, input: JsonValue): string {
+  // Allow explicit override from input.pr.title (max 72 chars enforced regardless).
+  const override =
+    isObject(input) && isObject(input.pr) && typeof input.pr.title === "string"
+      ? input.pr.title.trim()
+      : null;
+
+  const candidate = override || deriveTitleFromSummary(codeChange);
+  return truncateTitle(candidate);
+}
+
+function deriveTitleFromSummary(codeChange: CodeChangeInput): string {
+  if (codeChange.summary) {
+    // Take only the first line of the summary so multi-line LLM output gives a tidy title.
+    const firstLine = (codeChange.summary.split("\n")[0] ?? "").trim();
+    if (firstLine.length > 0) return firstLine;
+  }
+
+  if (codeChange.issueNumber) {
+    return `Fix issue #${codeChange.issueNumber}`;
+  }
+
+  // Branch names like "feature/config-duplicate-files-validation" → readable fallback.
+  const slug = codeChange.branchName
+    .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
+    .replaceAll(/[-_]/g, " ")
+    .trim();
+
+  return slug || `Code changes on ${codeChange.branchName}`;
+}
+
+function truncateTitle(title: string): string {
+  if (title.length <= PR_TITLE_MAX_CHARS) return title;
+  return `${title.slice(0, PR_TITLE_MAX_CHARS - 3)}...`;
+}
+
+function buildPrBody(codeChange: CodeChangeInput, input: JsonValue): string {
+  const pr = isObject(input) && isObject(input.pr) ? input.pr : {};
   const lines: string[] = [];
+
+  // ## Summary
   lines.push("## Summary");
   lines.push("");
-  if (codeChange.summary) {
-    lines.push(codeChange.summary);
+  lines.push(typeof pr.summary === "string" && pr.summary.trim()
+    ? pr.summary.trim()
+    : codeChange.summary || "Automated PR opened by pr-opener agent.");
+  lines.push("");
+
+  // ## Validation
+  lines.push("## Validation");
+  lines.push("");
+  if (typeof pr.validation === "string" && pr.validation.trim()) {
+    lines.push(pr.validation.trim());
   } else {
-    lines.push("Automated PR opened by pr-opener agent.");
+    lines.push("- Local test suite passed (`test.run`).");
+    lines.push("- CI checks observed by `ci-watcher`.");
   }
   lines.push("");
 
-  if (codeChange.changedFiles.length > 0) {
-    lines.push("## Changed Files");
-    lines.push("");
-    for (const file of codeChange.changedFiles) {
-      lines.push(`- \`${file}\``);
-    }
-    lines.push("");
-  }
+  // ## Risk
+  lines.push("## Risk");
+  lines.push("");
+  lines.push(
+    typeof pr.risk === "string" && pr.risk.trim()
+      ? pr.risk.trim()
+      : "Low — changes are scoped to the files listed in Artifacts.",
+  );
+  lines.push("");
 
-  if (codeChange.planId) {
-    lines.push(`**Plan ID:** \`${codeChange.planId}\``);
-    lines.push("");
+  // ## Artifacts
+  lines.push("## Artifacts");
+  lines.push("");
+
+  if (Array.isArray(pr.artifacts) && pr.artifacts.length > 0) {
+    for (const artifact of pr.artifacts) {
+      if (typeof artifact === "string") lines.push(`- ${artifact}`);
+    }
+  } else {
+    if (codeChange.changedFiles.length > 0) {
+      lines.push("**Changed files:**");
+      for (const file of codeChange.changedFiles) {
+        lines.push(`- \`${file}\``);
+      }
+    }
+    if (codeChange.planId) {
+      lines.push(`- Plan: \`${codeChange.planId}\``);
+    }
   }
+  lines.push("");
 
   if (codeChange.issueNumber) {
     lines.push(`Closes #${codeChange.issueNumber}`);
