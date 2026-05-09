@@ -1,0 +1,12 @@
+{
+  "name": "ci-watcher",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Watches GitHub PR checks/statuses and emits structured CI results.",
+  "taskTypes": ["ci.watch"],
+  "inputs": ["pull_request"],
+  "outputs": ["ci.report"],
+  "requires": ["github.read"],
+  "binary": "./dist/index.js",
+  "timeout": 600
+}
