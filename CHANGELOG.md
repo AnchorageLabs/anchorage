@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — Refresh public docs for the implemented reference pipeline.
+
+**Intent:** Make the public README, agent docs, and examples match the current runnable pre-v0 reference-agent surface instead of scaffold-era status.
+
+**Files touched:**
+- README.md
+- agents/README.md
+- examples/README.md
+- CHANGELOG.md
+
+**Reason:** issue #51
+
+**Author:** Valentin Torassa
+
 ### 2026-05-08 — Add tester agent for local test reports.
 
 **Intent:** Let the public agent chain validate code changes before PR creation by running configured workspace test commands and emitting a protocol-compatible `test.report` artifact.
