@@ -11,6 +11,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -40,7 +41,7 @@ async function main(): Promise<number> {
   if (!input.ok) return fail(task.value, input);
 
   const { workspacePath, codeChangeResult, owner, name: repoName, baseBranch } = input.value;
-  const { branchName, changedFiles, summary } = codeChangeResult;
+  const { branchName, changedFiles } = codeChangeResult;
   const stagePaths = validateStagePaths(changedFiles);
   if (!stagePaths.ok) return fail(task.value, stagePaths);
 
@@ -50,22 +51,19 @@ async function main(): Promise<number> {
   });
 
   const addResult = await runGit(workspacePath, ["add", "--", ...stagePaths.value]);
-
   emit(task.value, "tool.result", "info", "git add completed", {
     tool: "git.add",
     success: addResult.exitCode === 0,
     output: { exitCode: addResult.exitCode, stderr: addResult.stderr },
   });
 
-  // git commit
-  const commitMessage = summary || "Apply code changes";
+  const commitMessage = codeChangeResult.summary || "Apply code changes";
   emit(task.value, "tool.requested", "info", "Committing changes", {
     tool: "git.commit",
     input: { cwd: workspacePath, message: commitMessage },
   });
 
   const commitResult = await runGit(workspacePath, ["commit", "-m", commitMessage]);
-
   const commitSuccess = commitResult.exitCode === 0;
   const nothingToCommit = !commitSuccess && commitResult.stdout.includes("nothing to commit");
 
@@ -80,7 +78,6 @@ async function main(): Promise<number> {
     },
   });
 
-  // git push -u origin <branchName>
   emit(task.value, "tool.requested", "info", `Pushing branch ${branchName}`, {
     tool: "git.push",
     input: { cwd: workspacePath, remote: "origin", branch: branchName },
@@ -95,10 +92,7 @@ async function main(): Promise<number> {
       error: { code: "git_push_failed", message: pushResult.stderr || pushResult.stdout },
     });
     emit(task.value, "agent.failed", "error", "Failed to push branch", {
-      error: {
-        code: "git_push_failed",
-        message: pushResult.stderr || pushResult.stdout,
-      },
+      error: { code: "git_push_failed", message: pushResult.stderr || pushResult.stdout },
     });
     return ExitCode.ExternalDependencyFailure;
   }
@@ -106,13 +100,9 @@ async function main(): Promise<number> {
   emit(task.value, "tool.result", "info", "git push completed", {
     tool: "git.push",
     success: true,
-    output: {
-      exitCode: pushResult.exitCode,
-      stderr: pushResult.stderr.slice(0, 500),
-    },
+    output: { exitCode: pushResult.exitCode, stderr: pushResult.stderr.slice(0, 500) },
   });
 
-  // Create PR via Octokit
   const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
   if (!token) {
     const msg = "Set GH_TOKEN or GITHUB_TOKEN to create a GitHub PR.";
@@ -122,18 +112,11 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const prTitle = buildPrTitle(codeChangeResult, task.value.input);
-  const prBody = buildPrBody(codeChangeResult, task.value.input);
+  const prContent = await generatePrContent(task.value, input.value);
 
   emit(task.value, "tool.requested", "info", "Creating GitHub PR", {
     tool: "github.pulls.create",
-    input: {
-      owner,
-      repo: repoName,
-      head: branchName,
-      base: baseBranch,
-      title: prTitle,
-    },
+    input: { owner, repo: repoName, head: branchName, base: baseBranch, title: prContent.title },
   });
 
   let prNumber: number;
@@ -146,8 +129,8 @@ async function main(): Promise<number> {
       repo: repoName,
       head: branchName,
       base: baseBranch,
-      title: prTitle,
-      body: prBody,
+      title: prContent.title,
+      body: prContent.body,
     });
     prNumber = response.data.number;
     prUrl = response.data.html_url;
@@ -175,15 +158,13 @@ async function main(): Promise<number> {
     prUrl,
     branchName,
     baseBranch,
-    title: prTitle,
+    title: prContent.title,
     changedFiles,
   };
 
   emit(task.value, "agent.output", "info", "PR opened", output);
-
   const artifact = await writeResultArtifact(task.value, output);
   emit(task.value, "artifact.created", "info", "PR opened artifact created", artifact);
-
   emit(task.value, "agent.completed", "info", "pr-opener completed successfully", {
     prNumber,
     prUrl,
@@ -192,6 +173,239 @@ async function main(): Promise<number> {
 
   return ExitCode.Success;
 }
+
+// ── PR content generation via LLM ────────────────────────────────────────────
+
+async function generatePrContent(
+  task: TaskEnvelope,
+  input: PrOpenerInput,
+): Promise<{ title: string; body: string }> {
+  if (!hasBedrockAuth()) {
+    return fallbackPrContent(input);
+  }
+
+  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
+  const model =
+    process.env.ANCHORAGE_PR_OPENER_MODEL ??
+    process.env.ANCHORAGE_PLANNER_MODEL ??
+    "us.anthropic.claude-sonnet-4-6";
+
+  emit(task, "tool.requested", "info", "Generating PR title and body via LLM", {
+    tool: "bedrock.converse",
+    input: { provider: "aws-bedrock", region, model },
+  });
+
+  let response: unknown;
+  try {
+    const client = new BedrockRuntimeClient({ region });
+    response = await client.send(
+      new ConverseCommand({
+        modelId: model,
+        system: [{ text: prContentSystemPrompt() }],
+        messages: [{ role: "user", content: [{ text: prContentUserPrompt(input) }] }],
+        inferenceConfig: { maxTokens: 1200, temperature: 0.2 },
+      }),
+    );
+  } catch {
+    emit(task, "tool.result", "info", "LLM PR content failed, using fallback", {
+      tool: "bedrock.converse",
+      success: false,
+    });
+    return fallbackPrContent(input);
+  }
+
+  const text = extractBedrockText(response);
+  if (!text) return fallbackPrContent(input);
+
+  const parsed = parsePrContentJson(text);
+  if (!parsed) return fallbackPrContent(input);
+
+  emit(task, "tool.result", "info", "LLM PR content generated", {
+    tool: "bedrock.converse",
+    success: true,
+    output: { titleLength: parsed.title.length },
+  });
+
+  return assemblePrContent(parsed, input.codeChangeResult);
+}
+
+function prContentSystemPrompt(): string {
+  return `You are a senior engineer writing a GitHub pull request for a teammate to review.
+Return only strict JSON. Do not wrap it in markdown.
+The JSON shape must be:
+{
+  "title": string,
+  "summary": string,
+  "why": string,
+  "what": string,
+  "how": string,
+  "notes": string
+}
+Rules:
+- title: imperative mood, max 60 chars, no trailing period. Example: "Add secret manager token support to restore"
+- summary: one sentence describing the change, max 120 chars
+- why: one concise paragraph — the problem or gap this change addresses
+- what: one concise paragraph — what changed (components, files, behaviour)
+- how: one concise paragraph — the implementation approach and key decisions
+- notes: risks, caveats, follow-ups worth flagging. Empty string if none.`;
+}
+
+function prContentUserPrompt(input: PrOpenerInput): string {
+  const { codeChangeResult, plan } = input;
+  return JSON.stringify(
+    {
+      task: "Write a pull request title and body for this code change.",
+      issueNumber: codeChangeResult.issueNumber,
+      issueTitle: readString(plan, "issue", "title"),
+      issueBody: readString(plan, "issue", "body"),
+      goal: typeof plan?.goal === "string" ? plan.goal : null,
+      implementationSummary: codeChangeResult.summary,
+      changedFiles: codeChangeResult.changedFiles,
+      risks: Array.isArray(plan?.risks) ? plan.risks : [],
+    },
+    null,
+    2,
+  );
+}
+
+function readString(obj: JsonObject | null, ...keys: string[]): string | null {
+  let current: JsonValue | undefined = obj as JsonValue;
+  for (const key of keys) {
+    if (!isObject(current)) return null;
+    current = current[key];
+  }
+  return typeof current === "string" ? current : null;
+}
+
+function parsePrContentJson(text: string): PrContentRaw | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    if (typeof parsed.title !== "string" || typeof parsed.why !== "string") return null;
+    return parsed as PrContentRaw;
+  } catch {
+    return null;
+  }
+}
+
+function assemblePrContent(
+  content: PrContentRaw,
+  codeChange: CodeChangeInput,
+): { title: string; body: string } {
+  const lines: string[] = [];
+
+  lines.push("## Summary");
+  lines.push("");
+  lines.push(content.summary?.trim() || content.why?.trim() || "See below.");
+  lines.push("");
+
+  lines.push("## Why");
+  lines.push("");
+  lines.push(content.why?.trim() || "Resolves the issue.");
+  lines.push("");
+
+  lines.push("## What");
+  lines.push("");
+  lines.push(content.what?.trim() || changedFilesList(codeChange.changedFiles));
+  lines.push("");
+
+  lines.push("## How");
+  lines.push("");
+  lines.push(content.how?.trim() || codeChange.summary || "See changed files.");
+  lines.push("");
+
+  if (content.notes?.trim()) {
+    lines.push("## Notes");
+    lines.push("");
+    lines.push(content.notes.trim());
+    lines.push("");
+  }
+
+  if (codeChange.issueNumber) {
+    lines.push(`Closes #${codeChange.issueNumber}`);
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
+
+  return { title: content.title.trim(), body: lines.join("\n") };
+}
+
+function fallbackPrContent(input: PrOpenerInput): { title: string; body: string } {
+  const { codeChangeResult } = input;
+  const title = buildFallbackTitle(codeChangeResult);
+  const lines: string[] = [];
+
+  lines.push("## Summary");
+  lines.push("");
+  lines.push(codeChangeResult.summary || "Automated PR opened by pr-opener agent.");
+  lines.push("");
+
+  lines.push("## What");
+  lines.push("");
+  lines.push(changedFilesList(codeChangeResult.changedFiles));
+  lines.push("");
+
+  if (codeChangeResult.issueNumber) {
+    lines.push(`Closes #${codeChangeResult.issueNumber}`);
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
+
+  return { title, body: lines.join("\n") };
+}
+
+function buildFallbackTitle(codeChange: CodeChangeInput): string {
+  if (codeChange.summary) {
+    const first = (codeChange.summary.split("\n")[0] ?? "").trim();
+    if (first.length > 0 && first.length <= 60) return first;
+  }
+  if (codeChange.issueNumber) return `Fix issue #${codeChange.issueNumber}`;
+  return codeChange.branchName
+    .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
+    .replaceAll(/[-_]/g, " ")
+    .trim() || `Code changes on ${codeChange.branchName}`;
+}
+
+function changedFilesList(files: string[]): string {
+  if (files.length === 0) return "No files changed.";
+  return files.map((f) => `- \`${f}\``).join("\n");
+}
+
+function hasBedrockAuth(): boolean {
+  return Boolean(
+    process.env.AWS_BEARER_TOKEN_BEDROCK ||
+      process.env.AWS_ACCESS_KEY_ID ||
+      process.env.AWS_PROFILE ||
+      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+  );
+}
+
+function extractBedrockText(value: unknown): null | string {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const output = v.output as Record<string, unknown> | undefined;
+  const message = output?.message as Record<string, unknown> | undefined;
+  if (!Array.isArray(message?.content)) return null;
+  const text = (message.content as unknown[])
+    .map((b) =>
+      typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null,
+    )
+    .filter((t): t is string => typeof t === "string")
+    .join("\n")
+    .trim();
+  return text || null;
+}
+
+// ── Input resolution ──────────────────────────────────────────────────────────
 
 async function readStdin(): Promise<string> {
   return readFileSync(0, "utf8");
@@ -209,9 +423,7 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   const result = validateTaskEnvelope(parsed);
   if (!result.ok) {
     console.error("Invalid task envelope.");
-    for (const validationError of result.errors) {
-      console.error(JSON.stringify(validationError));
-    }
+    for (const validationError of result.errors) console.error(JSON.stringify(validationError));
     return { ok: false, exitCode: ExitCode.InvalidInput };
   }
 
@@ -247,21 +459,20 @@ async function resolvePrOpenerInput(
     );
   }
 
-  const owner = task.repository.owner;
-  const repoName = task.repository.name;
-  const baseBranch = task.repository.defaultBranch ?? "main";
-
   const codeChangeResult = resolveCodeChangeResult(task);
   if (!codeChangeResult.ok) return codeChangeResult;
+
+  const plan = await readPlanArtifact(task);
 
   return {
     ok: true,
     value: {
       workspacePath,
-      owner,
-      name: repoName,
-      baseBranch,
+      owner: task.repository.owner,
+      name: task.repository.name,
+      baseBranch: task.repository.defaultBranch ?? "main",
       codeChangeResult: codeChangeResult.value,
+      plan,
     },
   };
 }
@@ -287,7 +498,6 @@ function resolveCodeChangeResult(
       ExitCode.InvalidInput,
     );
   }
-
   if (!artifact.uri.startsWith("file://")) {
     return failure(
       "unsupported_artifact_uri",
@@ -340,6 +550,20 @@ function parseCodeChangeResult(
   };
 }
 
+async function readPlanArtifact(task: TaskEnvelope): Promise<JsonObject | null> {
+  const artifact = task.context?.priorArtifacts?.find(
+    (a) => a.artifactType === "implementation.plan",
+  );
+  if (!artifact?.uri.startsWith("file://")) return null;
+  try {
+    const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    const parsed = JSON.parse(raw);
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function validateStagePaths(
   changedFiles: string[],
 ): { ok: true; value: string[] } | PrOpenerFailure {
@@ -351,7 +575,6 @@ function validateStagePaths(
       ExitCode.InvalidInput,
     );
   }
-
   for (const file of stagePaths) {
     if (isUnsafeStagePath(file)) {
       return failure(
@@ -361,13 +584,11 @@ function validateStagePaths(
       );
     }
   }
-
   return { ok: true, value: stagePaths };
 }
 
 function isUnsafeStagePath(file: string): boolean {
   if (file.includes("\0") || path.isAbsolute(file)) return true;
-
   const normalized = path.posix.normalize(file.replaceAll("\\", "/"));
   return (
     normalized === "." ||
@@ -379,15 +600,10 @@ function isUnsafeStagePath(file: string): boolean {
 }
 
 function extractIssueNumber(value: JsonObject): null | number {
-  // Direct field
-  if (typeof value.issueNumber === "number" && Number.isInteger(value.issueNumber)) {
+  if (typeof value.issueNumber === "number" && Number.isInteger(value.issueNumber))
     return value.issueNumber;
-  }
-  // Nested in issue object (from implementation.plan shape)
-  if (isObject(value.issue) && typeof value.issue.issueNumber === "number") {
+  if (isObject(value.issue) && typeof value.issue.issueNumber === "number")
     return value.issue.issueNumber;
-  }
-  // Extract from planId: format is plan_<runId>_<issueNumber>
   if (typeof value.planId === "string") {
     const match = value.planId.match(/_(\d+)$/);
     if (match?.[1]) {
@@ -399,123 +615,17 @@ function extractIssueNumber(value: JsonObject): null | number {
 }
 
 function extractIssueUrl(value: JsonObject): null | string {
-  if (typeof value.issueUrl === "string" && value.issueUrl.startsWith("http")) {
+  if (typeof value.issueUrl === "string" && value.issueUrl.startsWith("http"))
     return value.issueUrl;
-  }
-  if (isObject(value.issue) && typeof value.issue.url === "string") {
-    return value.issue.url;
-  }
+  if (isObject(value.issue) && typeof value.issue.url === "string") return value.issue.url;
   return null;
 }
 
-const PR_TITLE_MAX_CHARS = 72;
-
-function buildPrTitle(codeChange: CodeChangeInput, input: JsonValue): string {
-  // Allow explicit override from input.pr.title (max 72 chars enforced regardless).
-  const override =
-    isObject(input) && isObject(input.pr) && typeof input.pr.title === "string"
-      ? input.pr.title.trim()
-      : null;
-
-  const candidate = override || deriveTitleFromSummary(codeChange);
-  return truncateTitle(candidate);
-}
-
-function deriveTitleFromSummary(codeChange: CodeChangeInput): string {
-  if (codeChange.summary) {
-    // Take only the first line of the summary so multi-line LLM output gives a tidy title.
-    const firstLine = (codeChange.summary.split("\n")[0] ?? "").trim();
-    if (firstLine.length > 0) return firstLine;
-  }
-
-  if (codeChange.issueNumber) {
-    return `Fix issue #${codeChange.issueNumber}`;
-  }
-
-  // Branch names like "feature/config-duplicate-files-validation" → readable fallback.
-  const slug = codeChange.branchName
-    .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
-    .replaceAll(/[-_]/g, " ")
-    .trim();
-
-  return slug || `Code changes on ${codeChange.branchName}`;
-}
-
-function truncateTitle(title: string): string {
-  if (title.length <= PR_TITLE_MAX_CHARS) return title;
-  return `${title.slice(0, PR_TITLE_MAX_CHARS - 3)}...`;
-}
-
-function buildPrBody(codeChange: CodeChangeInput, input: JsonValue): string {
-  const pr = isObject(input) && isObject(input.pr) ? input.pr : {};
-  const lines: string[] = [];
-
-  // ## Summary
-  lines.push("## Summary");
-  lines.push("");
-  lines.push(typeof pr.summary === "string" && pr.summary.trim()
-    ? pr.summary.trim()
-    : codeChange.summary || "Automated PR opened by pr-opener agent.");
-  lines.push("");
-
-  // ## Validation
-  lines.push("## Validation");
-  lines.push("");
-  if (typeof pr.validation === "string" && pr.validation.trim()) {
-    lines.push(pr.validation.trim());
-  } else {
-    lines.push("- Local test suite passed (`test.run`).");
-    lines.push("- CI checks observed by `ci-watcher`.");
-  }
-  lines.push("");
-
-  // ## Risk
-  lines.push("## Risk");
-  lines.push("");
-  lines.push(
-    typeof pr.risk === "string" && pr.risk.trim()
-      ? pr.risk.trim()
-      : "Low — changes are scoped to the files listed in Artifacts.",
-  );
-  lines.push("");
-
-  // ## Artifacts
-  lines.push("## Artifacts");
-  lines.push("");
-
-  if (Array.isArray(pr.artifacts) && pr.artifacts.length > 0) {
-    for (const artifact of pr.artifacts) {
-      if (typeof artifact === "string") lines.push(`- ${artifact}`);
-    }
-  } else {
-    if (codeChange.changedFiles.length > 0) {
-      lines.push("**Changed files:**");
-      for (const file of codeChange.changedFiles) {
-        lines.push(`- \`${file}\``);
-      }
-    }
-    if (codeChange.planId) {
-      lines.push(`- Plan: \`${codeChange.planId}\``);
-    }
-  }
-  lines.push("");
-
-  if (codeChange.issueNumber) {
-    lines.push(`Closes #${codeChange.issueNumber}`);
-    lines.push("");
-  }
-
-  lines.push("---");
-  lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
-  return lines.join("\n");
-}
+// ── Git / artifact helpers ────────────────────────────────────────────────────
 
 async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn("git", args, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -548,6 +658,8 @@ async function writeResultArtifact(task: TaskEnvelope, result: PrOpenedResult) {
     sizeBytes: Buffer.byteLength(content),
   };
 }
+
+// ── Util ──────────────────────────────────────────────────────────────────────
 
 function fail(task: TaskEnvelope, failureValue: PrOpenerFailure): number {
   emit(task, "agent.failed", "error", failureValue.message, {
@@ -590,9 +702,10 @@ function emit(
     message,
     data,
   };
-
   writeSync(1, `${JSON.stringify(event)}\n`);
 }
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface AgentFailure {
   ok: false;
@@ -610,6 +723,7 @@ interface PrOpenerInput {
   name: string;
   baseBranch: string;
   codeChangeResult: CodeChangeInput;
+  plan: JsonObject | null;
 }
 
 interface CodeChangeInput {
@@ -619,6 +733,15 @@ interface CodeChangeInput {
   planId: null | string;
   issueNumber: null | number;
   issueUrl: null | string;
+}
+
+interface PrContentRaw {
+  title: string;
+  summary: string;
+  why: string;
+  what: string;
+  how: string;
+  notes: string;
 }
 
 interface CommandResult {

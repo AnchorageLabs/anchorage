@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — pr-opener generates PR title and body via LLM.
+
+**Intent:** Replace static title/body derivation in pr-opener with a Bedrock LLM call that reads the implementation plan and code-change context to produce a concise imperative title (≤60 chars) and a structured body with Summary, Why, What, How, and Notes sections. Falls back to static derivation when Bedrock auth is unavailable.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/package.json
+- agents/pr-opener/src/index.ts
+
+**Reason:** feedback — PR titles were too verbose and body lacked Why/What/How structure
+
+**Author:** Sol Soletti
+
 ### 2026-05-09 — Fix coder agent to handle large LLM responses.
 
 **Intent:** Let the coder handle feature-sized issues without failing when Bedrock returns a large JSON response. Raises the default output token budget to 120 000 (overridable via `ANCHORAGE_CODER_MAX_TOKENS`), adds up to two automatic retries on malformed JSON, and fails fast with a clear message when the response is truncated at the token limit instead of surfacing a confusing JSON parse error.
