@@ -1,0 +1,12 @@
+{
+  "name": "issue-closer",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Closes a GitHub issue with a concise workflow summary comment.",
+  "taskTypes": ["issue.close"],
+  "inputs": ["issue", "workflow.summary"],
+  "outputs": ["issue.closed"],
+  "requires": ["github.write"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

@@ -16,10 +16,10 @@ Implemented reference agents:
 - `merge-gate`: checks review/CI state and merges approved PRs.
 - `deploy-watch`: records input-driven deployment status as `deployment.record`.
 - `smoke-test-runner`: runs input-driven HTTP or shell smoke checks.
+- `issue-closer`: closes the originating GitHub issue and posts a concise workflow summary comment.
 
 ## Current gaps
 
-- `issue-closer` for `issue.close` is not implemented yet.
 - `issue-triage` for `issue.triage` is not implemented yet.
 
 Agents observe or act on one task and emit protocol events. Workflow routing, retries, loop limits, durable state, and webhook handling are orchestrator responsibilities and are intentionally outside this public repo.

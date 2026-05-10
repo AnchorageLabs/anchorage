@@ -89,6 +89,17 @@ GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
   run ci-watcher < examples/tasks/ci-watch.json
 ```
 
+## issue-closer
+
+Closes a GitHub issue and posts a concise workflow summary comment. Requires a token with issue write access.
+
+```bash
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
+  run issue-closer < examples/tasks/issue-close.json
+```
+
+The example targets `AnchorageLabs/envy#9`. Edit `examples/tasks/issue-close.json` to point at any accessible issue and populate the `summary` fields with artifact links from a completed run.
+
 ## deploy-watch
 
 Records an input-driven deployment status without referencing private deployment infrastructure.

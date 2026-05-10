@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — Add issue-closer reference agent for issue.close.
+
+**Intent:** Complete the standard v0.1 lifecycle task types in the public reference chain by adding an `issue-closer` agent that closes the originating GitHub issue and posts a concise workflow summary comment with artifact links.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/issue-closer/agent.json
+- agents/issue-closer/package.json
+- agents/issue-closer/tsconfig.json
+- agents/issue-closer/src/index.ts
+- agents/issue-closer/README.md
+- examples/README.md
+- examples/tasks/issue-close.json
+
+**Reason:** issue #48
+
+**Author:** Valentin Torassa
+
 ### 2026-05-09 — Refresh public docs for the implemented reference pipeline.
 
 **Intent:** Make the public README, agent docs, and examples match the current runnable pre-v0 reference-agent surface instead of scaffold-era status.
