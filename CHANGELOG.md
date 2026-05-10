@@ -29,6 +29,34 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-10 — Restore CI for Dependabot dependency updates.
+
+**Intent:** Keep automated dependency updates mergeable by formatting the v0 integration fixtures and agent sources, fixing the shared LLM adapter type errors, and making the Docker build include the root TypeScript config plus all built agent packages.
+
+**Files touched:**
+- CHANGELOG.md
+- Dockerfile
+- agents/coder/src/index.ts
+- agents/issue-closer/src/index.ts
+- agents/issue-reader/src/index.ts
+- agents/issue-triage/src/index.ts
+- agents/llm/src/index.ts
+- agents/pr-opener/src/index.ts
+- protocol/test-cases/integration/envelopes/01-issue-read.json
+- protocol/test-cases/integration/envelopes/02-plan-create.json
+- protocol/test-cases/integration/envelopes/03-code-change.json
+- protocol/test-cases/integration/envelopes/04-test-run.json
+- protocol/test-cases/integration/envelopes/05-pr-open.json
+- protocol/test-cases/integration/envelopes/06-ci-watch.json
+- protocol/test-cases/integration/envelopes/07-review-run.json
+- protocol/test-cases/integration/envelopes/08-merge-prepare.json
+- protocol/test-cases/integration/envelopes/09-issue-close.json
+- sdk/typescript/tests/integration.test.ts
+
+**Reason:** Dependabot PRs #69-#76 all failed CI on formatting and Docker build checks; ADR-0020.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — Add provider-portable LLM adapter for reference agents.
 
 **Intent:** Let the LLM-backed planner, coder, and reviewer run against direct Anthropic, OpenAI, OpenAI-compatible, Kimi/Moonshot, or Bedrock credentials through one shared adapter instead of hard-wiring each agent to Bedrock. Preserves the coder retry loop and `max_tokens` truncation handling introduced in #59.

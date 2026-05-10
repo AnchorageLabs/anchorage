@@ -45,7 +45,7 @@ export type LlmResult<T> = { ok: true; value: T } | { ok: false; message: string
 
 export function resolveLlmConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
   const provider = resolveProvider();
-  if (!provider.ok) return provider;
+  if (!provider.ok) return { ok: false, message: provider.message };
 
   switch (provider.value) {
     case "anthropic":
@@ -353,7 +353,7 @@ async function requestAnthropicCompletion(
       messages: [{ role: "user", content: request.user }],
     },
   });
-  if (!response.ok) return response;
+  if (!response.ok) return { ok: false, message: response.message };
 
   const value = response.value;
   const content = Array.isArray(value.content) ? value.content : [];
@@ -403,7 +403,7 @@ async function requestChatCompletion(
       temperature: request.temperature,
     },
   });
-  if (!response.ok) return response;
+  if (!response.ok) return { ok: false, message: response.message };
 
   const value = response.value;
   const choices = Array.isArray(value.choices) ? value.choices : [];
