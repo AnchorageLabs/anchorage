@@ -29,6 +29,31 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-10 — Add provider-portable LLM adapter for reference agents.
+
+**Intent:** Let the LLM-backed planner, coder, and reviewer run against direct Anthropic, OpenAI, OpenAI-compatible, Kimi/Moonshot, or Bedrock credentials through one shared adapter instead of hard-wiring each agent to Bedrock. Preserves the coder retry loop and `max_tokens` truncation handling introduced in #59.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/llm/README.md
+- agents/llm/package.json
+- agents/llm/src/index.ts
+- agents/llm/tsconfig.json
+- agents/planner/package.json
+- agents/planner/src/index.ts
+- agents/coder/agent.json
+- agents/coder/package.json
+- agents/coder/src/index.ts
+- agents/reviewer/agent.json
+- agents/reviewer/package.json
+- agents/reviewer/src/index.ts
+- pnpm-lock.yaml
+
+**Reason:** ADR-0014; validated end-to-end on AnchorageLabs/envy#18 with OpenAI gpt-4.1 (envy PR #20, merged 2026-05-10)
+
+**Author:** Valentin Torassa
+
 ### 2026-05-09 — v0 stabilization: docs, spec, and four agent fixes.
 
 **Intent:** Bring docs and the protocol spec up to date with the completed v0 agent surface, and fix four behavioral issues that would break unattended pipeline retries: coder leaving dirty workspaces on failure, pr-opener committing without checking workspace cleanliness, merge-gate blocking silently on `changes_requested`, and issue-reader proceeding blindly on closed issues.
@@ -182,6 +207,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** issue #33
 
 **Author:** Sol Soletti
+
 ### 2026-05-09 — Refresh public docs for the implemented reference pipeline.
 
 **Intent:** Make the public README, agent docs, and examples match the current runnable pre-v0 reference-agent surface instead of scaffold-era status.

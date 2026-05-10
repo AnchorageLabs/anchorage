@@ -5,12 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  type LlmConfig,
+  llmEventInput,
+  requestLlmCompletion,
+  resolveLlmConfig,
+} from "@anchorage/agent-llm";
+import {
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -49,7 +54,7 @@ async function main(): Promise<number> {
     return fail(task.value, f);
   }
 
-  const auth = resolveBedrockConfig();
+  const auth = resolveReviewerLlmConfig();
   if (!auth.ok) return fail(task.value, auth);
 
   emit(task.value, "tool.requested", "info", `Fetching diff for PR #${prInfo.value.prNumber}`, {
@@ -114,12 +119,10 @@ async function main(): Promise<number> {
     },
   });
 
-  emit(task.value, "tool.requested", "info", "Requesting review from Bedrock", {
-    tool: "bedrock.converse",
+  emit(task.value, "tool.requested", "info", "Requesting review from LLM", {
+    tool: auth.value.tool,
     input: {
-      provider: "aws-bedrock",
-      region: auth.value.region,
-      model: auth.value.model,
+      ...llmEventInput(auth.value),
       prNumber: prInfo.value.prNumber,
       filesChanged: filesChanged.length,
     },
@@ -134,20 +137,19 @@ async function main(): Promise<number> {
   });
 
   if (!reviewResult.ok) {
-    emit(task.value, "tool.result", "error", "Bedrock review failed", {
-      tool: "bedrock.converse",
+    emit(task.value, "tool.result", "error", "LLM review failed", {
+      tool: auth.value.tool,
       success: false,
       error: { code: reviewResult.code, message: reviewResult.message },
     });
     return fail(task.value, reviewResult);
   }
 
-  emit(task.value, "tool.result", "info", "Bedrock review received", {
-    tool: "bedrock.converse",
+  emit(task.value, "tool.result", "info", "LLM review received", {
+    tool: auth.value.tool,
     success: true,
     output: {
-      region: auth.value.region,
-      model: auth.value.model,
+      ...llmEventInput(auth.value),
       stopReason: reviewResult.value.stopReason,
       inputTokens: reviewResult.value.inputTokens,
       outputTokens: reviewResult.value.outputTokens,
@@ -389,68 +391,35 @@ function resolveRepo(value: JsonObject, repository: TaskEnvelope["repository"]):
   return null;
 }
 
-function resolveBedrockConfig(): { ok: true; value: BedrockConfig } | ReviewerFailure {
-  if (!hasBedrockAuth()) {
-    return failure(
-      "missing_llm_api_key",
-      "Set AWS_BEARER_TOKEN_BEDROCK or standard AWS credentials so reviewer can call Bedrock.",
-      ExitCode.MissingCapability,
-    );
+function resolveReviewerLlmConfig(): { ok: true; value: LlmConfig } | ReviewerFailure {
+  const config = resolveLlmConfig({
+    role: "reviewer",
+    anthropicModel: "claude-sonnet-4-6",
+    bedrockModel: "us.anthropic.claude-sonnet-4-6",
+    openaiModel: "gpt-4.1",
+  });
+  if (!config.ok) {
+    return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }
 
-  return {
-    ok: true,
-    value: {
-      region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1",
-      model: process.env.ANCHORAGE_REVIEWER_MODEL ?? "us.anthropic.claude-sonnet-4-6",
-    },
-  };
-}
-
-function hasBedrockAuth(): boolean {
-  return Boolean(
-    process.env.AWS_BEARER_TOKEN_BEDROCK ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE ||
-      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
-      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-  );
+  return config;
 }
 
 async function requestReview(
-  config: BedrockConfig,
+  config: LlmConfig,
   pr: PrContext,
-): Promise<{ ok: true; value: BedrockReviewResult } | ReviewerFailure> {
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region: config.region });
-    response = await client.send(
-      new ConverseCommand({
-        modelId: config.model,
-        system: [{ text: reviewerSystemPrompt() }],
-        messages: [{ role: "user", content: [{ text: reviewerUserPrompt(pr) }] }],
-        inferenceConfig: { maxTokens: 4000, temperature: 0.1 },
-      }),
-    );
-  } catch (error) {
-    return failure(
-      "llm_request_failed",
-      error instanceof Error ? error.message : String(error),
-      ExitCode.ExternalDependencyFailure,
-    );
+): Promise<{ ok: true; value: LlmReviewResult } | ReviewerFailure> {
+  const response = await requestLlmCompletion(config, {
+    system: reviewerSystemPrompt(),
+    user: reviewerUserPrompt(pr),
+    maxTokens: 4000,
+    temperature: 0.1,
+  });
+  if (!response.ok) {
+    return failure("llm_request_failed", response.message, ExitCode.ExternalDependencyFailure);
   }
 
-  const parsedResponse = parseBedrockResponse(response);
-  if (!parsedResponse.ok) {
-    return failure(
-      "invalid_llm_response",
-      parsedResponse.message,
-      ExitCode.ExternalDependencyFailure,
-    );
-  }
-
-  const parsedJson = parseReviewJson(parsedResponse.text);
+  const parsedJson = parseReviewJson(response.value.text);
   if (!parsedJson.ok) {
     return failure(
       "invalid_llm_review_json",
@@ -459,7 +428,7 @@ async function requestReview(
     );
   }
 
-  const normalized = normalizeReviewResult(parsedJson.value, parsedResponse);
+  const normalized = normalizeReviewResult(parsedJson.value, response.value);
   if (!normalized.ok) {
     return failure(
       "invalid_llm_review_result",
@@ -515,35 +484,6 @@ function reviewerUserPrompt(pr: PrContext): string {
   );
 }
 
-function parseBedrockResponse(
-  value: unknown,
-):
-  | { ok: true; text: string; stopReason: null | string; inputTokens: number; outputTokens: number }
-  | { ok: false; message: string } {
-  if (!isObject(value)) return { ok: false, message: "Bedrock response was not an object." };
-  const output = isObject(value.output) ? value.output : {};
-  const message = isObject(output.message) ? output.message : {};
-  if (!Array.isArray(message.content)) {
-    return { ok: false, message: "Bedrock response did not include output.message.content[]." };
-  }
-
-  const text = message.content
-    .map((block) => (isObject(block) ? block.text : null))
-    .filter(isString)
-    .join("\n")
-    .trim();
-  if (!text) return { ok: false, message: "Bedrock response did not include text content." };
-
-  const usage = isObject(value.usage) ? value.usage : {};
-  return {
-    ok: true,
-    text,
-    stopReason: typeof value.stopReason === "string" ? value.stopReason : null,
-    inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : 0,
-    outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : 0,
-  };
-}
-
 function parseReviewJson(
   value: string,
 ): { ok: true; value: JsonObject } | { ok: false; message: string } {
@@ -568,7 +508,7 @@ function extractJsonObject(value: string): null | string {
 function normalizeReviewResult(
   value: JsonObject,
   response: { stopReason: null | string; inputTokens: number; outputTokens: number },
-): { ok: true; value: BedrockReviewResult } | { ok: false; message: string } {
+): { ok: true; value: LlmReviewResult } | { ok: false; message: string } {
   const decision = value.decision;
   if (decision !== "approve" && decision !== "request_changes") {
     return {
@@ -709,11 +649,6 @@ interface PrInfo {
   prUrl: null | string;
 }
 
-interface BedrockConfig {
-  region: string;
-  model: string;
-}
-
 interface PrContext {
   prNumber: number;
   prTitle: string;
@@ -728,7 +663,7 @@ type ReviewComment = JsonObject & {
   body: string;
 };
 
-interface BedrockReviewResult {
+interface LlmReviewResult {
   decision: "approve" | "request_changes";
   summary: string;
   comments: ReviewComment[];
