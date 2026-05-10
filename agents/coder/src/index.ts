@@ -74,11 +74,15 @@ async function main(): Promise<number> {
       success: false,
       error: { code: codeResult.code, message: codeResult.message },
     });
+    await resetWorkspace(task.value, input.value.workspacePath);
     return fail(task.value, codeResult);
   }
 
   const applyResult = await applyFileEdits(input.value.workspacePath, codeResult.value.fileEdits);
-  if (!applyResult.ok) return fail(task.value, applyResult);
+  if (!applyResult.ok) {
+    await resetWorkspace(task.value, input.value.workspacePath);
+    return fail(task.value, applyResult);
+  }
 
   const afterStatus = await gitStatus(input.value.workspacePath);
   const changedFiles = changedFilesFromStatus(afterStatus.stdout);
@@ -539,6 +543,20 @@ function safeWorkspacePath(
   const relativePath = path.relative(workspacePath, absolutePath);
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return null;
   return { absolutePath, relativePath };
+}
+
+async function resetWorkspace(task: TaskEnvelope, workspacePath: string): Promise<void> {
+  emit(task, "tool.requested", "info", "Resetting workspace to HEAD", {
+    tool: "git.reset",
+    input: { workspacePath },
+  });
+  const result = await runGit(workspacePath, ["reset", "--hard", "HEAD"]);
+  await runGit(workspacePath, ["clean", "-fd"]);
+  emit(task, "tool.result", result.exitCode === 0 ? "info" : "error", "Workspace reset", {
+    tool: "git.reset",
+    success: result.exitCode === 0,
+    output: { exitCode: result.exitCode, stderr: result.stderr.slice(0, 200) },
+  });
 }
 
 async function ensureBranch(
