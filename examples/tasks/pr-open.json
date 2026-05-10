@@ -30,10 +30,15 @@
       "changedFiles": ["AGENTS.md", "ARCHITECTURE.md"],
       "summary": "Add agent-facing repository context docs",
       "editedFiles": ["AGENTS.md", "ARCHITECTURE.md"],
-      "validation": ["pnpm check"],
-      "risk": "Documentation-only change.",
-      "artifacts": ["code.change.result: file:///tmp/anchorage/code-change-result.json"],
       "issueNumber": 1
+    },
+    "pr": {
+      "validation": "- `pnpm check` passed.\n- No API surface changed.",
+      "risk": "Documentation-only change. No runtime logic modified.",
+      "artifacts": [
+        "code.change.result: `file:///tmp/anchorage/code-change-result.json`",
+        "test.report: `file:///tmp/anchorage/test-report.json`"
+      ]
     }
   },
   "capabilities": ["github.write", "workspace.write", "shell.exec"],
