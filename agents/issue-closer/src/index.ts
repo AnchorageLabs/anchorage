@@ -45,7 +45,7 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const input = parseInput(task.value);
+  const input = await parseInput(task.value);
   if (!input.ok) return fail(task.value, input);
 
   const octokit = new Octokit({ auth: token });
@@ -160,7 +160,9 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   return { ok: true, value: result.value };
 }
 
-function parseInput(task: TaskEnvelope): { ok: true; value: IssueCloseInput } | IssueCloserFailure {
+async function parseInput(
+  task: TaskEnvelope,
+): Promise<{ ok: true; value: IssueCloseInput } | IssueCloserFailure> {
   if (!task.repository) {
     return failure(
       "missing_repository",
@@ -180,22 +182,69 @@ function parseInput(task: TaskEnvelope): { ok: true; value: IssueCloseInput } | 
   }
 
   const summary = isObject(task.input.summary) ? task.input.summary : {};
+  const priorSummary = await resolvePriorSummary(task);
   return {
     ok: true,
     value: {
       owner: task.repository.owner,
       repo: task.repository.name,
       issueNumber,
-      summary: readString(summary.text) ?? readString(task.input.summaryText),
-      prUrl: readString(summary.prUrl) ?? readString(task.input.prUrl),
-      commitSha: readString(summary.commitSha) ?? readString(task.input.commitSha),
-      testReportUri: readString(summary.testReportUri),
-      ciReportUri: readString(summary.ciReportUri),
-      deploymentUri: readString(summary.deploymentUri),
-      smokeTestUri: readString(summary.smokeTestUri),
-      artifacts: readStringArray(summary.artifacts),
+      summary: readString(summary.text) ?? readString(task.input.summaryText) ?? priorSummary.text,
+      prUrl: readString(summary.prUrl) ?? readString(task.input.prUrl) ?? priorSummary.prUrl,
+      commitSha:
+        readString(summary.commitSha) ?? readString(task.input.commitSha) ?? priorSummary.commitSha,
+      testReportUri: readString(summary.testReportUri) ?? priorSummary.testReportUri,
+      ciReportUri: readString(summary.ciReportUri) ?? priorSummary.ciReportUri,
+      deploymentUri: readString(summary.deploymentUri) ?? priorSummary.deploymentUri,
+      smokeTestUri: readString(summary.smokeTestUri) ?? priorSummary.smokeTestUri,
+      artifacts: mergeStrings(readStringArray(summary.artifacts), priorSummary.artifacts),
     },
   };
+}
+
+async function resolvePriorSummary(task: TaskEnvelope): Promise<WorkflowSummaryInput> {
+  const artifacts = task.context?.priorArtifacts ?? [];
+  const summary: WorkflowSummaryInput = {
+    text: null,
+    prUrl: null,
+    commitSha: null,
+    testReportUri: null,
+    ciReportUri: null,
+    deploymentUri: null,
+    smokeTestUri: null,
+    artifacts: artifacts.map((artifact) => artifact.uri),
+  };
+
+  for (const artifact of artifacts) {
+    if (artifact.artifactType === "test.report") summary.testReportUri = artifact.uri;
+    if (artifact.artifactType === "ci.report") summary.ciReportUri = artifact.uri;
+    if (artifact.artifactType === "deployment.record") summary.deploymentUri = artifact.uri;
+    if (artifact.artifactType === "smoke_test.report") summary.smokeTestUri = artifact.uri;
+
+    const data = await readJsonArtifact(artifact.uri);
+    if (!data) continue;
+
+    if (artifact.artifactType === "pr.opened") {
+      summary.prUrl ??= readString(data.prUrl);
+    }
+    if (artifact.artifactType === "merge.completed") {
+      summary.prUrl ??= readString(data.prUrl);
+      summary.commitSha ??= readString(data.sha);
+    }
+  }
+
+  return summary;
+}
+
+async function readJsonArtifact(uri: string): Promise<JsonObject | null> {
+  if (!uri.startsWith("file://")) return null;
+  try {
+    const raw = await fs.readFile(new URL(uri), "utf8");
+    const parsed = JSON.parse(raw);
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildComment(input: IssueCloseInput): null | string {
@@ -268,6 +317,10 @@ function readStringArray(value: JsonValue | undefined): string[] {
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
+function mergeStrings(first: string[], second: string[]): string[] {
+  return Array.from(new Set([...first, ...second]));
+}
+
 function fail(task: TaskEnvelope, failureValue: IssueCloserFailure): number {
   emit(task, "agent.failed", "error", failureValue.message, {
     error: { code: failureValue.code, message: failureValue.message },
@@ -319,6 +372,17 @@ interface IssueCloseInput {
   repo: string;
   issueNumber: number;
   summary: null | string;
+  prUrl: null | string;
+  commitSha: null | string;
+  testReportUri: null | string;
+  ciReportUri: null | string;
+  deploymentUri: null | string;
+  smokeTestUri: null | string;
+  artifacts: string[];
+}
+
+interface WorkflowSummaryInput {
+  text: null | string;
   prUrl: null | string;
   commitSha: null | string;
   testReportUri: null | string;

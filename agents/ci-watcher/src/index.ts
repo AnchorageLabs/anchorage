@@ -46,7 +46,7 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const input = parseInput(task.value);
+  const input = await parseInput(task.value);
   if (!input.ok) return fail(task.value, input);
 
   const octokit = new Octokit({ auth: token });
@@ -141,18 +141,9 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   return { ok: true, value: result.value };
 }
 
-function parseInput(task: TaskEnvelope): { ok: true; value: CiWatchInput } | CiWatcherFailure {
-  const pr = isObject(task.input.pr) ? task.input.pr : task.input;
-  const prNumber = Number(readNumber(pr.prNumber) ?? readNumber(pr.number));
-
-  if (!Number.isInteger(prNumber) || prNumber <= 0) {
-    return failure(
-      "invalid_pr_number",
-      "ci-watcher requires input.pr.prNumber.",
-      ExitCode.InvalidInput,
-    );
-  }
-
+async function parseInput(
+  task: TaskEnvelope,
+): Promise<{ ok: true; value: CiWatchInput } | CiWatcherFailure> {
   if (!task.repository) {
     return failure(
       "missing_repository",
@@ -161,12 +152,15 @@ function parseInput(task: TaskEnvelope): { ok: true; value: CiWatchInput } | CiW
     );
   }
 
+  const prNumber = await resolvePrNumber(task);
+  if (!prNumber.ok) return prNumber;
+
   return {
     ok: true,
     value: {
       owner: task.repository.owner,
       repo: task.repository.name,
-      prNumber,
+      prNumber: prNumber.value,
       pollIntervalMs:
         readPositiveInteger(task.input.pollIntervalMs) ??
         readEnvInteger("ANCHORAGE_CI_WATCH_POLL_INTERVAL_MS") ??
@@ -177,6 +171,56 @@ function parseInput(task: TaskEnvelope): { ok: true; value: CiWatchInput } | CiW
         30,
     },
   };
+}
+
+async function resolvePrNumber(
+  task: TaskEnvelope,
+): Promise<{ ok: true; value: number } | CiWatcherFailure> {
+  const pr = isObject(task.input.pr) ? task.input.pr : task.input;
+  const prNumber = Number(readNumber(pr.prNumber) ?? readNumber(pr.number));
+
+  if (Number.isInteger(prNumber) && prNumber > 0) {
+    return { ok: true, value: prNumber };
+  }
+
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === "pr.opened");
+  if (!artifact) {
+    return failure(
+      "invalid_pr_number",
+      "ci-watcher requires input.pr.prNumber or a prior pr.opened artifact.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  if (artifact.uri.startsWith("file://")) {
+    try {
+      const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+      const parsed = JSON.parse(raw);
+      const parsedPr = isObject(parsed) ? Number(readNumber(parsed.prNumber)) : Number.NaN;
+      if (Number.isInteger(parsedPr) && parsedPr > 0) return { ok: true, value: parsedPr };
+    } catch (error) {
+      return failure(
+        "pr_artifact_read_failed",
+        `Could not read pr.opened artifact: ${(error as Error).message}`,
+        ExitCode.InvalidInput,
+      );
+    }
+
+    return failure(
+      "invalid_pr_artifact",
+      "pr.opened artifact must include a valid prNumber.",
+      ExitCode.InvalidInput,
+    );
+  }
+
+  const urlMatch = artifact.uri.match(/\/pull\/(\d+)/);
+  if (urlMatch?.[1]) return { ok: true, value: Number(urlMatch[1]) };
+
+  return failure(
+    "invalid_pr_artifact",
+    "Could not extract PR number from pr.opened artifact.",
+    ExitCode.InvalidInput,
+  );
 }
 
 async function fetchPrInfo(
