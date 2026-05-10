@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
-import type { FormatsPlugin } from "ajv-formats";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
+import type { FormatsPlugin } from "ajv-formats";
 import {
   agentManifestSchema,
   artifactReferenceSchema,

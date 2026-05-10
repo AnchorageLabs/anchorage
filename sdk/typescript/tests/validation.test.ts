@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { TaskEnvelope } from "../src/index.js";
 import {
   ExitCode,
   eventStreamContextFromTaskEnvelope,
@@ -10,7 +11,6 @@ import {
   validateProtocolEvent,
   validateTaskEnvelope,
 } from "../src/index.js";
-import type { TaskEnvelope } from "../src/index.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 

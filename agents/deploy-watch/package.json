@@ -6,7 +6,11 @@
   "bin": {
     "deploy-watch": "./dist/index.js"
   },
-  "files": ["agent.json", "dist", "README.md"],
+  "files": [
+    "agent.json",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json --noEmit",
@@ -16,6 +20,6 @@
     "@anchorage/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2"
+    "@types/node": "^25.6.2"
   }
 }
