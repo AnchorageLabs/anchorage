@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_integration_test_run",
+    "type": "test.run",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
+  "actor": { "requestedBy": "developer", "agent": "tester" },
+  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "input": {
+    "workspacePath": "/tmp/integration/workspace",
+    "commands": [
+      { "name": "compile", "command": "python3 -m py_compile src/envy/cli.py" },
+      { "name": "unit tests", "command": "python3 -m unittest discover -s tests" }
+    ]
+  },
+  "capabilities": ["workspace.read", "shell.exec"],
+  "policy": { "maxDurationSeconds": 900 },
+  "context": {
+    "parentTaskId": "task_integration_code_change",
+    "priorArtifacts": [
+      { "artifactType": "code.change.result", "uri": "file:///tmp/integration/code-change-result.json", "mediaType": "application/json" }
+    ]
+  }
+}

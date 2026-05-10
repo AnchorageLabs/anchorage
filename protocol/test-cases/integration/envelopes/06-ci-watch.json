@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_integration_ci_watch",
+    "type": "ci.watch",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
+  "actor": { "requestedBy": "developer", "agent": "ci-watcher" },
+  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "input": { "pr": { "prNumber": 1 }, "pollIntervalMs": 10000, "maxPolls": 30 },
+  "capabilities": ["github.read"],
+  "policy": { "maxDurationSeconds": 900 },
+  "context": {
+    "parentTaskId": "task_integration_pr_open",
+    "priorArtifacts": [
+      { "artifactType": "pr.opened", "uri": "file:///tmp/integration/pr-opened.json", "mediaType": "application/json" }
+    ]
+  }
+}
