@@ -10,7 +10,13 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { 
+  resolveLlmConfig, 
+  requestLlmCompletion, 
+  llmEventInput,
+  type LlmConfig,
+  type LlmCompletion
+} from "@anchorage/agent-llm";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -35,11 +41,18 @@ async function main(): Promise<number> {
 
   emit(task.value, "agent.started", "info", "issue-triage started", { agentVersion });
 
-  if (!hasBedrockAuth()) {
+  const llmConfig = resolveLlmConfig({
+    role: "triage",
+    anthropicModel: "claude-3-5-sonnet-latest",
+    bedrockModel: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    openaiModel: "gpt-4o"
+  });
+
+  if (!llmConfig.ok) {
     emit(task.value, "agent.failed", "error", "Missing LLM credentials", {
       error: {
         code: "missing_llm_api_key",
-        message: "Set AWS_BEARER_TOKEN_BEDROCK or standard AWS credentials.",
+        message: llmConfig.message,
       },
     });
     return ExitCode.MissingCapability;
@@ -53,51 +66,31 @@ async function main(): Promise<number> {
     return issue.exitCode;
   }
 
-  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-  const model =
-    process.env.ANCHORAGE_TRIAGE_MODEL ??
-    process.env.ANCHORAGE_PLANNER_MODEL ??
-    "us.anthropic.claude-sonnet-4-6";
-
   emit(task.value, "tool.requested", "info", "Requesting triage decision from LLM", {
-    tool: "bedrock.converse",
-    input: { provider: "aws-bedrock", region, model, issueNumber: issue.value.issueNumber },
+    tool: llmConfig.value.tool,
+    input: llmEventInput(llmConfig.value, { issueNumber: issue.value.issueNumber }),
   });
 
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region });
-    response = await client.send(
-      new ConverseCommand({
-        modelId: model,
-        system: [{ text: triageSystemPrompt() }],
-        messages: [{ role: "user", content: [{ text: triageUserPrompt(issue.value) }] }],
-        inferenceConfig: { maxTokens: 1200, temperature: 0.1 },
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  const completion = await requestLlmCompletion(llmConfig.value, {
+    system: triageSystemPrompt(),
+    user: triageUserPrompt(issue.value),
+    maxTokens: 1200,
+    temperature: 0.1,
+  });
+
+  if (!completion.ok) {
     emit(task.value, "tool.result", "error", "LLM triage request failed", {
-      tool: "bedrock.converse",
+      tool: llmConfig.value.tool,
       success: false,
-      error: { code: "llm_request_failed", message },
+      error: { code: "llm_request_failed", message: completion.message },
     });
-    emit(task.value, "agent.failed", "error", message, {
-      error: { code: "llm_request_failed", message },
-    });
-    return ExitCode.ExternalDependencyFailure;
-  }
-
-  const text = extractBedrockText(response);
-  if (!text) {
-    const msg = "Bedrock response did not include text content.";
-    emit(task.value, "agent.failed", "error", msg, {
-      error: { code: "invalid_llm_response", message: msg },
+    emit(task.value, "agent.failed", "error", completion.message, {
+      error: { code: "llm_request_failed", message: completion.message },
     });
     return ExitCode.ExternalDependencyFailure;
   }
 
-  const rawTriage = parseTriageJson(text);
+  const rawTriage = parseTriageJson(completion.value.text);
   if (!rawTriage.ok) {
     emit(task.value, "agent.failed", "error", rawTriage.message, {
       error: { code: "invalid_llm_triage_json", message: rawTriage.message },
@@ -105,11 +98,18 @@ async function main(): Promise<number> {
     return ExitCode.ExternalDependencyFailure;
   }
 
-  const stopReason = extractStopReason(response);
   emit(task.value, "tool.result", "info", "LLM triage decision received", {
-    tool: "bedrock.converse",
+    tool: llmConfig.value.tool,
     success: true,
-    output: { region, model, stopReason },
+    output: { 
+      provider: llmConfig.value.provider, 
+      model: llmConfig.value.model, 
+      stopReason: completion.value.stopReason,
+      usage: {
+        inputTokens: completion.value.inputTokens,
+        outputTokens: completion.value.outputTokens
+      }
+    },
   });
 
   const str = (v: JsonValue | undefined, fallback: string): string =>
