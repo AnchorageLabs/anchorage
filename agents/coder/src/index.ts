@@ -320,7 +320,7 @@ async function requestCodeChanges(
   plan: ImplementationPlan,
   workspaceContext: WorkspaceContext,
 ): Promise<{ ok: true; value: BedrockCodeResult } | CoderFailure> {
-  const maxTokens = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS ?? 32000);
+  const maxTokens = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS ?? 120000);
   const maxAttempts = Number(process.env.ANCHORAGE_CODER_MAX_ATTEMPTS ?? 2);
   const client = new BedrockRuntimeClient({ region: config.region });
   const userPrompt = coderUserPrompt(plan, workspaceContext);
