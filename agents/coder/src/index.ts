@@ -320,49 +320,71 @@ async function requestCodeChanges(
   plan: ImplementationPlan,
   workspaceContext: WorkspaceContext,
 ): Promise<{ ok: true; value: BedrockCodeResult } | CoderFailure> {
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region: config.region });
-    response = await client.send(
-      new ConverseCommand({
-        modelId: config.model,
-        system: [{ text: coderSystemPrompt() }],
-        messages: [{ role: "user", content: [{ text: coderUserPrompt(plan, workspaceContext) }] }],
-        inferenceConfig: { maxTokens: 12000, temperature: 0.1 },
-      }),
-    );
-  } catch (error) {
-    return failure(
-      "llm_request_failed",
-      error instanceof Error ? error.message : String(error),
-      ExitCode.ExternalDependencyFailure,
-    );
+  const maxTokens = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS ?? 32000);
+  const maxAttempts = Number(process.env.ANCHORAGE_CODER_MAX_ATTEMPTS ?? 2);
+  const client = new BedrockRuntimeClient({ region: config.region });
+  const userPrompt = coderUserPrompt(plan, workspaceContext);
+
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response: unknown;
+    try {
+      response = await client.send(
+        new ConverseCommand({
+          modelId: config.model,
+          system: [{ text: coderSystemPrompt() }],
+          messages: [{ role: "user", content: [{ text: userPrompt }] }],
+          inferenceConfig: { maxTokens, temperature: 0.1 },
+        }),
+      );
+    } catch (error) {
+      return failure(
+        "llm_request_failed",
+        error instanceof Error ? error.message : String(error),
+        ExitCode.ExternalDependencyFailure,
+      );
+    }
+
+    const parsedResponse = parseBedrockResponse(response);
+    if (!parsedResponse.ok) {
+      return failure(
+        "invalid_llm_response",
+        parsedResponse.message,
+        ExitCode.ExternalDependencyFailure,
+      );
+    }
+
+    // If Bedrock stopped because the output hit the token limit the JSON will be
+    // truncated. Fail fast with a clear message rather than a confusing parse error.
+    if (parsedResponse.stopReason === "max_tokens") {
+      return failure(
+        "llm_output_truncated",
+        `Bedrock stopped at max_tokens (${maxTokens}). The feature is too large for one coder call. ` +
+          `Set ANCHORAGE_CODER_MAX_TOKENS to a higher value or break the issue into smaller tasks.`,
+        ExitCode.ExternalDependencyFailure,
+      );
+    }
+
+    const parsedJson = parseCodeJson(parsedResponse.text);
+    if (!parsedJson.ok) {
+      lastError = parsedJson.message;
+      if (attempt < maxAttempts) continue; // retry
+      return failure("invalid_llm_code_json", lastError, ExitCode.ExternalDependencyFailure);
+    }
+
+    const normalized = normalizeCodeResult(parsedJson.value, parsedResponse);
+    if (!normalized.ok) {
+      return failure(
+        "invalid_llm_code_result",
+        normalized.message,
+        ExitCode.ExternalDependencyFailure,
+      );
+    }
+
+    return { ok: true, value: normalized.value };
   }
 
-  const parsedResponse = parseBedrockResponse(response);
-  if (!parsedResponse.ok) {
-    return failure(
-      "invalid_llm_response",
-      parsedResponse.message,
-      ExitCode.ExternalDependencyFailure,
-    );
-  }
-
-  const parsedJson = parseCodeJson(parsedResponse.text);
-  if (!parsedJson.ok) {
-    return failure("invalid_llm_code_json", parsedJson.message, ExitCode.ExternalDependencyFailure);
-  }
-
-  const normalized = normalizeCodeResult(parsedJson.value, parsedResponse);
-  if (!normalized.ok) {
-    return failure(
-      "invalid_llm_code_result",
-      normalized.message,
-      ExitCode.ExternalDependencyFailure,
-    );
-  }
-
-  return { ok: true, value: normalized.value };
+  return failure("invalid_llm_code_json", lastError, ExitCode.ExternalDependencyFailure);
 }
 
 function coderSystemPrompt(): string {

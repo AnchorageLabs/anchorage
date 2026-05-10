@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — Fix coder agent to handle large LLM responses.
+
+**Intent:** Let the coder handle feature-sized issues without failing when Bedrock returns a large JSON response. Raises the default output token budget to 32 000 (overridable via `ANCHORAGE_CODER_MAX_TOKENS`), adds up to two automatic retries on malformed JSON, and fails fast with a clear message when the response is truncated at the token limit instead of surfacing a confusing JSON parse error.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/coder/src/index.ts
+
+**Reason:** observed failure on issue AnchorageLabs/envy#13 — `invalid_llm_code_json` at position 36868
+
+**Author:** Valentin Torassa
+
 ### 2026-05-09 — Add issue-closer reference agent for issue.close.
 
 **Intent:** Complete the standard v0.1 lifecycle task types in the public reference chain by adding an `issue-closer` agent that closes the originating GitHub issue and posts a concise workflow summary comment with artifact links.
