@@ -130,7 +130,7 @@ async function main(): Promise<number> {
     output: { exitCode: pushResult.exitCode, stderr: pushResult.stderr.slice(0, 500) },
   });
 
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
     const msg = "Set GH_TOKEN or GITHUB_TOKEN to create a GitHub PR.";
     emit(task.value, "agent.failed", "error", msg, {

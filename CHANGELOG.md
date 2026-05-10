@@ -29,6 +29,26 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-10 — Fix GitHub token fallback so empty env vars do not block agents.
+
+**Intent:** Allow agents to fall back to `GH_TOKEN` (or `GITHUB_TOKEN`) when the primary variable is forwarded as an empty string by the orchestrator's docker-compose, instead of treating empty as "set" and failing with `missing_github_token`.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/ci-watcher/src/index.ts
+- agents/issue-closer/src/index.ts
+- agents/issue-reader/src/index.ts
+- agents/issue-triage/src/index.ts
+- agents/merge-gate/src/index.ts
+- agents/planner/src/index.ts
+- agents/pr-opener/src/index.ts
+- agents/reviewer/src/index.ts
+- agents/tester/src/index.ts
+
+**Reason:** Live OpenAI run on 2026-05-10 (`run_srv_1778428099606_17` against `AnchorageLabs/envy#17`) failed at `read-issue` because `docker-compose.yml` forwards `GITHUB_TOKEN: "${GITHUB_TOKEN:-}"` as `""` when only `GH_TOKEN` is set in `.env`. JavaScript's `??` short-circuits only on `null`/`undefined`, so the agents never reached the `GH_TOKEN` fallback. Switching to `||` matches the documented operator precedence and the intent of the fallback chain.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — Keep the LLM adapter explicit about runtime globals.
 
 **Intent:** Let dev-dependency updates validate cleanly by making the shared LLM adapter declare its Node and fetch runtime globals explicitly instead of relying on TypeScript's ambient type inference.

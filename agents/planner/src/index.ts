@@ -75,7 +75,7 @@ async function maybePostPlanComment(
   issue: IssueSummary,
   plan: ImplementationPlan,
 ): Promise<void> {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const hasGithubWrite =
     Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
   if (!hasGithubWrite || !token || !task.repository) return;

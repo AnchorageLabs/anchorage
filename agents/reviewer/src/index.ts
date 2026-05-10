@@ -44,7 +44,7 @@ async function main(): Promise<number> {
   const prInfo = await resolvePrInfoAsync(task.value);
   if (!prInfo.ok) return fail(task.value, prInfo);
 
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
     const f = failure(
       "missing_github_token",

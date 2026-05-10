@@ -210,7 +210,7 @@ async function runCommand(command: string, args: string[], cwd: string): Promise
 }
 
 async function maybePostTestComment(task: TaskEnvelope, report: TestReport): Promise<void> {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const hasGithubWrite =
     Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
   if (!hasGithubWrite || !token || !task.repository) return;

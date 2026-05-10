@@ -54,7 +54,7 @@ async function main(): Promise<number> {
     agentVersion,
   });
 
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) {
     emit(task.value, "agent.failed", "error", "Missing GitHub token", {
       error: {
