@@ -15,7 +15,7 @@
   "dependencies": {
     "@anchorage/agent-llm": "workspace:*",
     "@anchorage/sdk": "workspace:*",
-    "@octokit/rest": "^21.1.1"
+    "@octokit/rest": "^22.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2"
