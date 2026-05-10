@@ -90,15 +90,15 @@ describe("integration chain envelopes", () => {
  * which the next step should reference in priorArtifacts.
  */
 const expectedHandoffs: Array<{ producer: string; artifactType: string; consumer: string }> = [
-  { producer: "issue-reader", artifactType: "issue.summary",         consumer: "planner"    },
-  { producer: "planner",      artifactType: "implementation.plan",   consumer: "coder"       },
-  { producer: "coder",        artifactType: "code.change.result",    consumer: "tester"      },
-  { producer: "coder",        artifactType: "code.change.result",    consumer: "pr-opener"   },
-  { producer: "planner",      artifactType: "implementation.plan",   consumer: "pr-opener"   },
-  { producer: "pr-opener",    artifactType: "pr.opened",             consumer: "ci-watcher"  },
-  { producer: "pr-opener",    artifactType: "pr.opened",             consumer: "reviewer"    },
-  { producer: "reviewer",     artifactType: "pr.review.result",      consumer: "merge-gate"  },
-  { producer: "ci-watcher",   artifactType: "ci.report",             consumer: "merge-gate"  },
+  { producer: "issue-reader", artifactType: "issue.summary", consumer: "planner" },
+  { producer: "planner", artifactType: "implementation.plan", consumer: "coder" },
+  { producer: "coder", artifactType: "code.change.result", consumer: "tester" },
+  { producer: "coder", artifactType: "code.change.result", consumer: "pr-opener" },
+  { producer: "planner", artifactType: "implementation.plan", consumer: "pr-opener" },
+  { producer: "pr-opener", artifactType: "pr.opened", consumer: "ci-watcher" },
+  { producer: "pr-opener", artifactType: "pr.opened", consumer: "reviewer" },
+  { producer: "reviewer", artifactType: "pr.review.result", consumer: "merge-gate" },
+  { producer: "ci-watcher", artifactType: "ci.report", consumer: "merge-gate" },
 ];
 
 describe("integration chain handoff coherence", () => {
@@ -178,18 +178,20 @@ describe("error path validation", () => {
   });
 
   it("rejects an envelope missing the run field", () => {
-    const base = readJson(
-      "protocol/test-cases/integration/envelopes/01-issue-read.json",
-    ) as Record<string, unknown>;
+    const base = readJson("protocol/test-cases/integration/envelopes/01-issue-read.json") as Record<
+      string,
+      unknown
+    >;
     const { run: _removed, ...withoutRun } = base;
     const result = validateTaskEnvelope(withoutRun);
     expect(result.ok).toBe(false);
   });
 
   it("rejects an envelope with an invalid protocol version", () => {
-    const base = readJson(
-      "protocol/test-cases/integration/envelopes/01-issue-read.json",
-    ) as Record<string, unknown>;
+    const base = readJson("protocol/test-cases/integration/envelopes/01-issue-read.json") as Record<
+      string,
+      unknown
+    >;
     const result = validateTaskEnvelope({ ...base, protocolVersion: "v0.1" });
     expect(result.ok).toBe(false);
   });
@@ -207,7 +209,11 @@ describe("error path validation", () => {
     ) as Record<string, unknown>;
     const ctx = (base.context ?? {}) as Record<string, unknown>;
     const priorArtifacts = Array.isArray(ctx.priorArtifacts) ? [...ctx.priorArtifacts] : [];
-    priorArtifacts[0] = { artifactType: "issue.summary", uri: "s3://bucket/artifact.json", mediaType: "application/json" };
+    priorArtifacts[0] = {
+      artifactType: "issue.summary",
+      uri: "s3://bucket/artifact.json",
+      mediaType: "application/json",
+    };
     const envelope = { ...base, context: { ...ctx, priorArtifacts } };
     // The envelope schema itself doesn't restrict URI schemes — this is an agent-level
     // concern — so the envelope remains valid. Confirm it parses without error.
