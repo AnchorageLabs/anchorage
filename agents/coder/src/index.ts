@@ -271,8 +271,8 @@ function parseImplementationPlan(
 function resolveCoderLlmConfig(): { ok: true; value: LlmConfig } | CoderFailure {
   const config = resolveLlmConfig({
     role: "coder",
-    anthropicModel: "claude-opus-4-7",
-    bedrockModel: "us.anthropic.claude-opus-4-7",
+    anthropicModel: "claude-sonnet-4-6",
+    bedrockModel: "us.anthropic.claude-sonnet-4-6",
     openaiModel: "gpt-4.1",
   });
   if (!config.ok) {

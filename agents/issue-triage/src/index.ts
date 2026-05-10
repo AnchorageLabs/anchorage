@@ -43,8 +43,8 @@ async function main(): Promise<number> {
 
   const llmConfig = resolveLlmConfig({
     role: "triage",
-    anthropicModel: "claude-3-5-sonnet-latest",
-    bedrockModel: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    anthropicModel: "claude-sonnet-4-6",
+    bedrockModel: "us.anthropic.claude-sonnet-4-6",
     openaiModel: "gpt-4o"
   });
 
