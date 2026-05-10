@@ -1,0 +1,27 @@
+{
+  "name": "@anchorage/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CLI runner for Anchorage agents — validates task envelopes, manifests, and NDJSON protocol events.",
+  "bin": {
+    "anchorage": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target node22 --out-dir dist --clean --banner.js '#!/usr/bin/env node'",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsup src/index.ts --format esm --target node22 --out-dir dist --watch"
+  },
+  "dependencies": {
+    "@anchorage/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

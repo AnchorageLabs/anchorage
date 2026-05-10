@@ -4,3 +4,4 @@ packages:
   - "cli/*"
   - "agents/*"
   - "adapters/*"
+  - "packages/runner"
