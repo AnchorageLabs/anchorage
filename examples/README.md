@@ -100,6 +100,17 @@ GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js \
 
 The example targets `AnchorageLabs/envy#9`. Edit `examples/tasks/issue-close.json` to point at any accessible issue and populate the `summary` fields with artifact links from a completed run.
 
+## issue-triage
+
+Classifies a GitHub issue: scope, type, priority, readiness, and agent-eligibility. Optionally applies labels when granted `github.write`.
+
+```bash
+node cli/anchorage-runner/dist/index.js \
+  run issue-triage < examples/tasks/issue-triage.json
+```
+
+The example reads a prior `issue.summary` artifact. Run `issue-reader` first to produce one.
+
 ## deploy-watch
 
 Records an input-driven deployment status without referencing private deployment infrastructure.

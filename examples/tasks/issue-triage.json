@@ -1,0 +1,39 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_issue_triage",
+    "type": "issue.triage",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_issue_triage",
+    "attempt": 1,
+    "correlationId": "corr_example_issue_triage"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "issue-triage"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
+  "input": {},
+  "capabilities": ["llm.plan"],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": null,
+    "priorArtifacts": [
+      {
+        "artifactType": "issue.summary",
+        "uri": "file:///tmp/anchorage-agent-artifacts/run_example/issue-summary.json",
+        "mediaType": "application/json"
+      }
+    ]
+  }
+}
