@@ -33,12 +33,12 @@ importers:
 
   agents/coder:
     dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.812.0
-        version: 3.1044.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -96,6 +96,16 @@ importers:
         specifier: ^22.10.2
         version: 22.19.17
 
+  agents/llm:
+    dependencies:
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.812.0
+        version: 3.1044.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+
   agents/merge-gate:
     dependencies:
       '@anchorage/sdk':
@@ -111,12 +121,12 @@ importers:
 
   agents/planner:
     dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.812.0
-        version: 3.1044.0
       '@octokit/rest':
         specifier: ^21.1.1
         version: 21.1.1
@@ -143,12 +153,12 @@ importers:
 
   agents/reviewer:
     dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.812.0
-        version: 3.1044.0
       '@octokit/rest':
         specifier: ^21.1.1
         version: 21.1.1

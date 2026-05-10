@@ -6,12 +6,17 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  type LlmConfig,
+  llmEventInput,
+  requestLlmCompletion,
+  resolveLlmConfig,
+} from "@anchorage/agent-llm";
+import {
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -39,7 +44,7 @@ async function main(): Promise<number> {
   const input = await resolveCoderInput(task.value);
   if (!input.ok) return fail(task.value, input);
 
-  const auth = resolveBedrockConfig();
+  const auth = resolveCoderLlmConfig();
   if (!auth.ok) return fail(task.value, auth);
 
   const branchResult = await ensureBranch(
@@ -55,12 +60,10 @@ async function main(): Promise<number> {
     input.value.plan,
   );
 
-  emit(task.value, "tool.requested", "info", "Requesting code changes from Bedrock", {
-    tool: "bedrock.converse",
+  emit(task.value, "tool.requested", "info", "Requesting code changes from LLM", {
+    tool: auth.value.tool,
     input: {
-      provider: "aws-bedrock",
-      region: auth.value.region,
-      model: auth.value.model,
+      ...llmEventInput(auth.value),
       workspacePath: input.value.workspacePath,
       branchName: input.value.plan.branchName,
       contextFiles: workspaceContext.files.map((file) => file.path),
@@ -69,8 +72,8 @@ async function main(): Promise<number> {
 
   const codeResult = await requestCodeChanges(auth.value, input.value.plan, workspaceContext);
   if (!codeResult.ok) {
-    emit(task.value, "tool.result", "error", "Bedrock code generation failed", {
-      tool: "bedrock.converse",
+    emit(task.value, "tool.result", "error", "LLM code generation failed", {
+      tool: auth.value.tool,
       success: false,
       error: { code: codeResult.code, message: codeResult.message },
     });
@@ -87,12 +90,11 @@ async function main(): Promise<number> {
   const afterStatus = await gitStatus(input.value.workspacePath);
   const changedFiles = changedFilesFromStatus(afterStatus.stdout);
 
-  emit(task.value, "tool.result", "info", "Bedrock code changes applied", {
-    tool: "bedrock.converse",
+  emit(task.value, "tool.result", "info", "LLM code changes applied", {
+    tool: auth.value.tool,
     success: true,
     output: {
-      region: auth.value.region,
-      model: auth.value.model,
+      ...llmEventInput(auth.value),
       stopReason: codeResult.value.stopReason,
       inputTokens: codeResult.value.inputTokens,
       outputTokens: codeResult.value.outputTokens,
@@ -266,33 +268,18 @@ function parseImplementationPlan(
   };
 }
 
-function resolveBedrockConfig(): { ok: true; value: BedrockConfig } | CoderFailure {
-  if (!hasBedrockAuth()) {
-    return failure(
-      "missing_llm_api_key",
-      "Set AWS_BEARER_TOKEN_BEDROCK or standard AWS credentials so coder can call Bedrock.",
-      ExitCode.MissingCapability,
-    );
+function resolveCoderLlmConfig(): { ok: true; value: LlmConfig } | CoderFailure {
+  const config = resolveLlmConfig({
+    role: "coder",
+    anthropicModel: "claude-opus-4-7",
+    bedrockModel: "us.anthropic.claude-opus-4-7",
+    openaiModel: "gpt-4.1",
+  });
+  if (!config.ok) {
+    return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }
 
-  return {
-    ok: true,
-    value: {
-      region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1",
-      model: process.env.ANCHORAGE_CODER_MODEL ?? "us.anthropic.claude-opus-4-7",
-    },
-  };
-}
-
-function hasBedrockAuth(): boolean {
-  return Boolean(
-    process.env.AWS_BEARER_TOKEN_BEDROCK ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE ||
-      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
-      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-  );
+  return config;
 }
 
 async function collectWorkspaceContext(
@@ -320,63 +307,47 @@ async function collectWorkspaceContext(
 }
 
 async function requestCodeChanges(
-  config: BedrockConfig,
+  config: LlmConfig,
   plan: ImplementationPlan,
   workspaceContext: WorkspaceContext,
-): Promise<{ ok: true; value: BedrockCodeResult } | CoderFailure> {
+): Promise<{ ok: true; value: LlmCodeResult } | CoderFailure> {
   const maxTokens = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS ?? 120000);
   const maxAttempts = Number(process.env.ANCHORAGE_CODER_MAX_ATTEMPTS ?? 2);
-  const client = new BedrockRuntimeClient({ region: config.region });
   const userPrompt = coderUserPrompt(plan, workspaceContext);
 
   let lastError = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let response: unknown;
-    try {
-      response = await client.send(
-        new ConverseCommand({
-          modelId: config.model,
-          system: [{ text: coderSystemPrompt() }],
-          messages: [{ role: "user", content: [{ text: userPrompt }] }],
-          inferenceConfig: { maxTokens, temperature: 0.1 },
-        }),
-      );
-    } catch (error) {
-      return failure(
-        "llm_request_failed",
-        error instanceof Error ? error.message : String(error),
-        ExitCode.ExternalDependencyFailure,
-      );
+    const response = await requestLlmCompletion(config, {
+      system: coderSystemPrompt(),
+      user: userPrompt,
+      maxTokens,
+      temperature: 0.1,
+    });
+    if (!response.ok) {
+      return failure("llm_request_failed", response.message, ExitCode.ExternalDependencyFailure);
     }
 
-    const parsedResponse = parseBedrockResponse(response);
-    if (!parsedResponse.ok) {
-      return failure(
-        "invalid_llm_response",
-        parsedResponse.message,
-        ExitCode.ExternalDependencyFailure,
-      );
-    }
-
-    // If Bedrock stopped because the output hit the token limit the JSON will be
+    // If the provider stopped because the output hit the token limit the JSON will be
     // truncated. Fail fast with a clear message rather than a confusing parse error.
-    if (parsedResponse.stopReason === "max_tokens") {
+    // Anthropic + Bedrock report "max_tokens"; OpenAI reports "length".
+    const stopReason = response.value.stopReason;
+    if (stopReason === "max_tokens" || stopReason === "length") {
       return failure(
         "llm_output_truncated",
-        `Bedrock stopped at max_tokens (${maxTokens}). The feature is too large for one coder call. ` +
+        `${config.provider} stopped at the output token limit (${maxTokens}). The feature is too large for one coder call. ` +
           `Set ANCHORAGE_CODER_MAX_TOKENS to a higher value or break the issue into smaller tasks.`,
         ExitCode.ExternalDependencyFailure,
       );
     }
 
-    const parsedJson = parseCodeJson(parsedResponse.text);
+    const parsedJson = parseCodeJson(response.value.text);
     if (!parsedJson.ok) {
       lastError = parsedJson.message;
       if (attempt < maxAttempts) continue; // retry
       return failure("invalid_llm_code_json", lastError, ExitCode.ExternalDependencyFailure);
     }
 
-    const normalized = normalizeCodeResult(parsedJson.value, parsedResponse);
+    const normalized = normalizeCodeResult(parsedJson.value, response.value);
     if (!normalized.ok) {
       return failure(
         "invalid_llm_code_result",
@@ -426,35 +397,6 @@ function coderUserPrompt(plan: ImplementationPlan, workspaceContext: WorkspaceCo
   );
 }
 
-function parseBedrockResponse(
-  value: unknown,
-):
-  | { ok: true; text: string; stopReason: null | string; inputTokens: number; outputTokens: number }
-  | { ok: false; message: string } {
-  if (!isObject(value)) return { ok: false, message: "Bedrock response was not an object." };
-  const output = isObject(value.output) ? value.output : {};
-  const message = isObject(output.message) ? output.message : {};
-  if (!Array.isArray(message.content)) {
-    return { ok: false, message: "Bedrock response did not include output.message.content[]." };
-  }
-
-  const text = message.content
-    .map((block) => (isObject(block) ? block.text : null))
-    .filter(isString)
-    .join("\n")
-    .trim();
-  if (!text) return { ok: false, message: "Bedrock response did not include text content." };
-
-  const usage = isObject(value.usage) ? value.usage : {};
-  return {
-    ok: true,
-    text,
-    stopReason: typeof value.stopReason === "string" ? value.stopReason : null,
-    inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : 0,
-    outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : 0,
-  };
-}
-
 function parseCodeJson(
   value: string,
 ): { ok: true; value: JsonObject } | { ok: false; message: string } {
@@ -479,7 +421,7 @@ function extractJsonObject(value: string): null | string {
 function normalizeCodeResult(
   value: JsonObject,
   response: { stopReason: null | string; inputTokens: number; outputTokens: number },
-): { ok: true; value: BedrockCodeResult } | { ok: false; message: string } {
+): { ok: true; value: LlmCodeResult } | { ok: false; message: string } {
   if (!Array.isArray(value.fileEdits)) {
     return { ok: false, message: "LLM code JSON must include fileEdits[]." };
   }
@@ -708,11 +650,6 @@ interface CoderInput {
   plan: ImplementationPlan;
 }
 
-interface BedrockConfig {
-  region: string;
-  model: string;
-}
-
 interface CommandResult {
   exitCode: number;
   stdout: string;
@@ -733,7 +670,7 @@ interface FileEdit {
   content: string;
 }
 
-interface BedrockCodeResult {
+interface LlmCodeResult {
   summary: string;
   fileEdits: FileEdit[];
   commandsSuggested: string[];

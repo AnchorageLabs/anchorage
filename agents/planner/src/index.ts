@@ -4,13 +4,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { llmEventInput, requestLlmCompletion, resolveLlmConfig } from "@anchorage/agent-llm";
 import {
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -68,6 +68,76 @@ async function main(): Promise<number> {
   });
 
   return ExitCode.Success;
+}
+
+async function maybePostPlanComment(
+  task: TaskEnvelope,
+  issue: IssueSummary,
+  plan: ImplementationPlan,
+): Promise<void> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const hasGithubWrite =
+    Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
+  if (!hasGithubWrite || !token || !task.repository) return;
+
+  const { owner, name: repo } = task.repository;
+  const body = buildPlanComment(plan);
+
+  emit(task, "tool.requested", "info", `Posting plan comment to issue #${issue.issueNumber}`, {
+    tool: "github.issues.createComment",
+    input: { owner, repo, issue_number: issue.issueNumber },
+  });
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    await octokit.issues.createComment({ owner, repo, issue_number: issue.issueNumber, body });
+    emit(task, "tool.result", "info", "Plan comment posted", {
+      tool: "github.issues.createComment",
+      success: true,
+      output: { issueNumber: issue.issueNumber },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(task, "tool.result", "error", "Plan comment failed (non-fatal)", {
+      tool: "github.issues.createComment",
+      success: false,
+      error: { code: "github_comment_failed", message },
+    });
+    // Non-fatal — plan artifact is already written.
+  }
+}
+
+function buildPlanComment(plan: ImplementationPlan): string {
+  const lines: string[] = [];
+  lines.push("## Anchorage Plan");
+  lines.push("");
+  lines.push(`**Goal:** ${plan.goal}`);
+  lines.push(`**Branch:** \`${plan.branchName}\``);
+  lines.push(`**Plan ID:** \`${plan.planId}\``);
+  lines.push("");
+  lines.push("### Steps");
+  lines.push("");
+  for (const step of plan.implementationSteps) {
+    lines.push(`- ${step}`);
+  }
+  lines.push("");
+  lines.push("### Acceptance criteria");
+  lines.push("");
+  for (const criterion of plan.acceptanceCriteria) {
+    lines.push(`- ${criterion}`);
+  }
+  if (plan.risks.length > 0) {
+    lines.push("");
+    lines.push("### Risks");
+    lines.push("");
+    for (const risk of plan.risks) {
+      lines.push(`- ${risk}`);
+    }
+  }
+  lines.push("");
+  lines.push("---");
+  lines.push("*Posted by [planner](https://github.com/AnchorageLabs/anchorage) agent.*");
+  return lines.join("\n");
 }
 
 async function readStdin(): Promise<string> {
@@ -184,79 +254,51 @@ async function createPlan(
   task: TaskEnvelope,
   issue: IssueSummary,
 ): Promise<{ ok: true; value: ImplementationPlan } | PlannerFailure> {
-  if (!hasBedrockAuth()) {
-    return failure(
-      "missing_llm_api_key",
-      "Set AWS_BEARER_TOKEN_BEDROCK or standard AWS credentials so planner can call Bedrock.",
-      ExitCode.MissingCapability,
-    );
+  const config = resolveLlmConfig({
+    role: "planner",
+    anthropicModel: "claude-sonnet-4-6",
+    bedrockModel: "us.anthropic.claude-sonnet-4-6",
+    openaiModel: "gpt-4.1",
+  });
+  if (!config.ok) {
+    return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }
 
-  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-  const model = process.env.ANCHORAGE_PLANNER_MODEL ?? "us.anthropic.claude-sonnet-4-6";
   emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
-    tool: "bedrock.converse",
-    input: { provider: "aws-bedrock", region, model, issueNumber: issue.issueNumber },
+    tool: config.value.tool,
+    input: llmEventInput(config.value, { issueNumber: issue.issueNumber }),
   });
 
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region });
-    response = await client.send(
-      new ConverseCommand({
-        modelId: model,
-        system: [{ text: plannerSystemPrompt() }],
-        messages: [{ role: "user", content: [{ text: plannerUserPrompt(issue) }] }],
-        inferenceConfig: { maxTokens: 2400, temperature: 0.2 },
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    emitLlmFailure(task, message);
-    return failure("llm_request_failed", message, ExitCode.ExternalDependencyFailure);
+  const response = await requestLlmCompletion(config.value, {
+    system: plannerSystemPrompt(),
+    user: plannerUserPrompt(issue),
+    maxTokens: 2400,
+    temperature: 0.2,
+  });
+  if (!response.ok) {
+    emitLlmFailure(task, config.value.tool, response.message);
+    return failure("llm_request_failed", response.message, ExitCode.ExternalDependencyFailure);
   }
 
-  const parsedResponse = parseBedrockResponse(response);
-  if (!parsedResponse.ok) {
-    emitLlmFailure(task, parsedResponse.message);
-    return failure(
-      "invalid_llm_response",
-      parsedResponse.message,
-      ExitCode.ExternalDependencyFailure,
-    );
-  }
-
-  const rawPlan = parsePlanJson(parsedResponse.text);
+  const rawPlan = parsePlanJson(response.value.text);
   if (!rawPlan.ok) {
-    emitLlmFailure(task, rawPlan.message);
+    emitLlmFailure(task, config.value.tool, rawPlan.message);
     return failure("invalid_llm_plan_json", rawPlan.message, ExitCode.ExternalDependencyFailure);
   }
 
   const plan = normalizePlan(task, issue, rawPlan.value);
   emit(task, "tool.result", "info", "LLM implementation plan received", {
-    tool: "bedrock.converse",
+    tool: config.value.tool,
     success: true,
     output: {
-      region,
-      model,
-      stopReason: parsedResponse.stopReason,
-      inputTokens: parsedResponse.inputTokens,
-      outputTokens: parsedResponse.outputTokens,
+      ...llmEventInput(config.value),
+      stopReason: response.value.stopReason,
+      inputTokens: response.value.inputTokens,
+      outputTokens: response.value.outputTokens,
     },
   });
 
   return { ok: true, value: plan };
-}
-
-function hasBedrockAuth(): boolean {
-  return Boolean(
-    process.env.AWS_BEARER_TOKEN_BEDROCK ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE ||
-      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
-      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-  );
 }
 
 function plannerSystemPrompt(): string {
@@ -304,35 +346,6 @@ function plannerUserPrompt(issue: IssueSummary): string {
     null,
     2,
   );
-}
-
-function parseBedrockResponse(
-  value: unknown,
-):
-  | { ok: true; text: string; stopReason: null | string; inputTokens: number; outputTokens: number }
-  | { ok: false; message: string } {
-  if (!isObject(value)) return { ok: false, message: "Bedrock response was not an object." };
-  const output = isObject(value.output) ? value.output : {};
-  const message = isObject(output.message) ? output.message : {};
-  if (!Array.isArray(message.content)) {
-    return { ok: false, message: "Bedrock response did not include output.message.content[]." };
-  }
-
-  const text = message.content
-    .map((block) => (isObject(block) ? block.text : null))
-    .filter(isString)
-    .join("\n")
-    .trim();
-  if (!text) return { ok: false, message: "Bedrock response did not include text content." };
-
-  const usage = isObject(value.usage) ? value.usage : {};
-  return {
-    ok: true,
-    text,
-    stopReason: typeof value.stopReason === "string" ? value.stopReason : null,
-    inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : 0,
-    outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : 0,
-  };
 }
 
 function parsePlanJson(
@@ -406,82 +419,12 @@ function stringArrayValue(value: JsonValue | undefined): string[] {
     .filter(isString);
 }
 
-function emitLlmFailure(task: TaskEnvelope, message: string): void {
+function emitLlmFailure(task: TaskEnvelope, tool: string, message: string): void {
   emit(task, "tool.result", "error", "LLM implementation plan failed", {
-    tool: "bedrock.converse",
+    tool,
     success: false,
     error: { code: "llm_plan_failed", message },
   });
-}
-
-async function maybePostPlanComment(
-  task: TaskEnvelope,
-  issue: IssueSummary,
-  plan: ImplementationPlan,
-): Promise<void> {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  const hasGithubWrite =
-    Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
-  if (!hasGithubWrite || !token || !task.repository) return;
-
-  const { owner, name: repo } = task.repository;
-  const body = buildPlanComment(plan);
-
-  emit(task, "tool.requested", "info", `Posting plan comment to issue #${issue.issueNumber}`, {
-    tool: "github.issues.createComment",
-    input: { owner, repo, issue_number: issue.issueNumber },
-  });
-
-  try {
-    const octokit = new Octokit({ auth: token });
-    await octokit.issues.createComment({ owner, repo, issue_number: issue.issueNumber, body });
-    emit(task, "tool.result", "info", "Plan comment posted", {
-      tool: "github.issues.createComment",
-      success: true,
-      output: { issueNumber: issue.issueNumber },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    emit(task, "tool.result", "error", "Plan comment failed (non-fatal)", {
-      tool: "github.issues.createComment",
-      success: false,
-      error: { code: "github_comment_failed", message },
-    });
-    // Non-fatal — plan artifact is already written.
-  }
-}
-
-function buildPlanComment(plan: ImplementationPlan): string {
-  const lines: string[] = [];
-  lines.push("## Anchorage Plan");
-  lines.push("");
-  lines.push(`**Goal:** ${plan.goal}`);
-  lines.push(`**Branch:** \`${plan.branchName}\``);
-  lines.push(`**Plan ID:** \`${plan.planId}\``);
-  lines.push("");
-  lines.push("### Steps");
-  lines.push("");
-  for (const step of plan.implementationSteps) {
-    lines.push(`- ${step}`);
-  }
-  lines.push("");
-  lines.push("### Acceptance criteria");
-  lines.push("");
-  for (const criterion of plan.acceptanceCriteria) {
-    lines.push(`- ${criterion}`);
-  }
-  if (plan.risks.length > 0) {
-    lines.push("");
-    lines.push("### Risks");
-    lines.push("");
-    for (const risk of plan.risks) {
-      lines.push(`- ${risk}`);
-    }
-  }
-  lines.push("");
-  lines.push("---");
-  lines.push("*Posted by [planner](https://github.com/AnchorageLabs/anchorage) agent.*");
-  return lines.join("\n");
 }
 
 async function writePlanArtifact(task: TaskEnvelope, plan: ImplementationPlan) {

@@ -2,7 +2,7 @@
   "name": "coder",
   "version": "0.1.0",
   "protocolVersion": "0.1",
-  "description": "Applies implementation plans by calling Bedrock and writing workspace changes.",
+  "description": "Applies implementation plans by calling a configured LLM provider and writing workspace changes.",
   "taskTypes": ["code.change"],
   "inputs": ["implementation.plan"],
   "outputs": ["code.change.result"],

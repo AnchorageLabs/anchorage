@@ -2,7 +2,7 @@
   "name": "reviewer",
   "version": "0.1.0",
   "protocolVersion": "0.1",
-  "description": "Reviews PR diffs for scope, safety, and quality using Bedrock.",
+  "description": "Reviews PR diffs for scope, safety, and quality using a configured LLM provider.",
   "taskTypes": ["review.run"],
   "inputs": ["pr.opened"],
   "outputs": ["pr.review.result"],
