@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-10 — Keep the LLM adapter explicit about runtime globals.
+
+**Intent:** Let dev-dependency updates validate cleanly by making the shared LLM adapter declare its Node and fetch runtime globals explicitly instead of relying on TypeScript's ambient type inference.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/llm/tsconfig.json
+
+**Reason:** Dependabot PR #74 failed after TypeScript/@types updates because `agents/llm` did not explicitly declare Node and fetch globals.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — Restore CI for Dependabot dependency updates.
 
 **Intent:** Keep automated dependency updates mergeable by formatting the v0 integration fixtures and agent sources, fixing the shared LLM adapter type errors, and making the Docker build include the root TypeScript config plus all built agent packages.
