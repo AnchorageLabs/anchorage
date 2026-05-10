@@ -11,6 +11,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -99,6 +100,9 @@ async function main(): Promise<number> {
   );
   const artifact = await writeArtifact(task.value, report);
   emit(task.value, "artifact.created", "info", "Test report artifact created", artifact);
+
+  // Post test summary to the source issue when github.write is granted.
+  await maybePostTestComment(task.value, report);
 
   if (!report.passed) {
     emit(task.value, "agent.failed", "error", "One or more test commands failed", {
@@ -203,6 +207,110 @@ async function runCommand(command: string, args: string[], cwd: string): Promise
       });
     });
   });
+}
+
+async function maybePostTestComment(task: TaskEnvelope, report: TestReport): Promise<void> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const hasGithubWrite =
+    Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
+  if (!hasGithubWrite || !token || !task.repository) return;
+
+  // Resolve issue number from prior code.change.result artifact or input.
+  const issueNumber = await resolveIssueNumber(task);
+  if (!issueNumber) return;
+
+  const { owner, name: repo } = task.repository;
+  const body = buildTestComment(report);
+
+  emit(task, "tool.requested", "info", `Posting test summary to issue #${issueNumber}`, {
+    tool: "github.issues.createComment",
+    input: { owner, repo, issue_number: issueNumber },
+  });
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    emit(task, "tool.result", "info", "Test comment posted", {
+      tool: "github.issues.createComment",
+      success: true,
+      output: { issueNumber },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(task, "tool.result", "error", "Test comment failed (non-fatal)", {
+      tool: "github.issues.createComment",
+      success: false,
+      error: { code: "github_comment_failed", message },
+    });
+    // Non-fatal.
+  }
+}
+
+async function resolveIssueNumber(task: TaskEnvelope): Promise<null | number> {
+  // Try prior code.change.result artifact.
+  const artifact = task.context?.priorArtifacts?.find(
+    (a) => a.artifactType === "code.change.result",
+  );
+  if (artifact?.uri.startsWith("file://")) {
+    try {
+      const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.issueNumber === "number" && parsed.issueNumber > 0) {
+        return parsed.issueNumber;
+      }
+      // Try planId extraction: plan_run_envy_N_timestamp_N
+      if (typeof parsed?.planId === "string") {
+        const match = (parsed.planId as string).match(/_(\d+)$/);
+        if (match?.[1]) return Number(match[1]);
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return null;
+}
+
+function buildTestComment(report: TestReport): string {
+  const icon = report.passed ? "✅" : "❌";
+  const status = report.passed ? "All tests passed" : "Tests failed";
+  const lines: string[] = [];
+  lines.push(`## ${icon} Anchorage Test Report — ${status}`);
+  lines.push("");
+  lines.push(`Ran ${report.results.length} command(s) at ${report.checkedAt}.`);
+  lines.push("");
+  lines.push("| Command | Status | Duration |");
+  lines.push("|---|---|---|");
+  for (const r of report.results) {
+    const s = r.passed ? "✅ passed" : "❌ failed";
+    lines.push(`| \`${r.name}\` | ${s} | ${r.durationMs}ms |`);
+  }
+  const failed = report.results.filter((r) => !r.passed);
+  if (failed.length > 0) {
+    lines.push("");
+    lines.push("### Failures");
+    lines.push("");
+    for (const r of failed) {
+      lines.push(`<details><summary><code>${r.name}</code></summary>`);
+      lines.push("");
+      if (r.stderr) {
+        lines.push("**stderr:**");
+        lines.push("```");
+        lines.push(r.stderr.slice(0, 1500));
+        lines.push("```");
+      }
+      if (r.stdout) {
+        lines.push("**stdout:**");
+        lines.push("```");
+        lines.push(r.stdout.slice(0, 1500));
+        lines.push("```");
+      }
+      lines.push("</details>");
+      lines.push("");
+    }
+  }
+  lines.push("---");
+  lines.push("*Posted by [tester](https://github.com/AnchorageLabs/anchorage) agent.*");
+  return lines.join("\n");
 }
 
 async function writeArtifact(task: TaskEnvelope, report: TestReport) {

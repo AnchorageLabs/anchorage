@@ -11,6 +11,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -56,6 +57,9 @@ async function main(): Promise<number> {
 
   const artifact = await writePlanArtifact(task.value, plan);
   emit(task.value, "artifact.created", "info", "Implementation plan artifact created", artifact);
+
+  // Post a plan summary comment to the source issue when github.write is granted.
+  await maybePostPlanComment(task.value, issue.value, plan);
 
   emit(task.value, "agent.completed", "info", "planner completed successfully", {
     issueNumber: issue.value.issueNumber,
@@ -408,6 +412,76 @@ function emitLlmFailure(task: TaskEnvelope, message: string): void {
     success: false,
     error: { code: "llm_plan_failed", message },
   });
+}
+
+async function maybePostPlanComment(
+  task: TaskEnvelope,
+  issue: IssueSummary,
+  plan: ImplementationPlan,
+): Promise<void> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const hasGithubWrite =
+    Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
+  if (!hasGithubWrite || !token || !task.repository) return;
+
+  const { owner, name: repo } = task.repository;
+  const body = buildPlanComment(plan);
+
+  emit(task, "tool.requested", "info", `Posting plan comment to issue #${issue.issueNumber}`, {
+    tool: "github.issues.createComment",
+    input: { owner, repo, issue_number: issue.issueNumber },
+  });
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    await octokit.issues.createComment({ owner, repo, issue_number: issue.issueNumber, body });
+    emit(task, "tool.result", "info", "Plan comment posted", {
+      tool: "github.issues.createComment",
+      success: true,
+      output: { issueNumber: issue.issueNumber },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(task, "tool.result", "error", "Plan comment failed (non-fatal)", {
+      tool: "github.issues.createComment",
+      success: false,
+      error: { code: "github_comment_failed", message },
+    });
+    // Non-fatal — plan artifact is already written.
+  }
+}
+
+function buildPlanComment(plan: ImplementationPlan): string {
+  const lines: string[] = [];
+  lines.push("## Anchorage Plan");
+  lines.push("");
+  lines.push(`**Goal:** ${plan.goal}`);
+  lines.push(`**Branch:** \`${plan.branchName}\``);
+  lines.push(`**Plan ID:** \`${plan.planId}\``);
+  lines.push("");
+  lines.push("### Steps");
+  lines.push("");
+  for (const step of plan.implementationSteps) {
+    lines.push(`- ${step}`);
+  }
+  lines.push("");
+  lines.push("### Acceptance criteria");
+  lines.push("");
+  for (const criterion of plan.acceptanceCriteria) {
+    lines.push(`- ${criterion}`);
+  }
+  if (plan.risks.length > 0) {
+    lines.push("");
+    lines.push("### Risks");
+    lines.push("");
+    for (const risk of plan.risks) {
+      lines.push(`- ${risk}`);
+    }
+  }
+  lines.push("");
+  lines.push("---");
+  lines.push("*Posted by [planner](https://github.com/AnchorageLabs/anchorage) agent.*");
+  return lines.join("\n");
 }
 
 async function writePlanArtifact(task: TaskEnvelope, plan: ImplementationPlan) {
