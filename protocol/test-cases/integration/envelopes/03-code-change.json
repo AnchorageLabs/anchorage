@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_integration_code_change",
+    "type": "code.change",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
+  "actor": { "requestedBy": "developer", "agent": "coder" },
+  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "input": { "workspacePath": "/tmp/integration/workspace" },
+  "capabilities": ["workspace.read", "workspace.write", "llm.code", "shell.exec"],
+  "policy": { "maxDurationSeconds": 900 },
+  "context": {
+    "parentTaskId": "task_integration_plan_create",
+    "priorArtifacts": [
+      { "artifactType": "implementation.plan", "uri": "file:///tmp/integration/implementation-plan.json", "mediaType": "application/json" }
+    ]
+  }
+}

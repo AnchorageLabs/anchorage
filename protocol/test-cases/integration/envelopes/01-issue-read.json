@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_integration_issue_read",
+    "type": "issue.read",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
+  "actor": { "requestedBy": "developer", "agent": "issue-reader" },
+  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "input": { "issueNumber": 1 },
+  "capabilities": ["github.read"],
+  "policy": { "maxDurationSeconds": 900 },
+  "context": { "parentTaskId": null, "priorArtifacts": [] }
+}

@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_integration_issue_close",
+    "type": "issue.close",
+    "createdAt": "2026-05-09T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
+  "actor": { "requestedBy": "developer", "agent": "issue-closer" },
+  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "input": { "issue": { "issueNumber": 1 } },
+  "capabilities": ["github.write"],
+  "policy": { "maxDurationSeconds": 120 },
+  "context": {
+    "parentTaskId": "task_integration_merge_prepare",
+    "priorArtifacts": []
+  }
+}

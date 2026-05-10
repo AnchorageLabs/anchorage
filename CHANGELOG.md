@@ -74,6 +74,27 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** issue #54
 
 **Author:** Sol Soletti
+
+### 2026-05-09 — Add integration fixtures and tests for the reference agent chain.
+
+**Intent:** Give contributors a single deterministic command to validate protocol handoffs across the full reference-agent chain without requiring external APIs, GitHub tokens, or Bedrock credentials.
+
+**Files touched:**
+- CHANGELOG.md
+- protocol/test-cases/integration/envelopes/01-issue-read.json
+- protocol/test-cases/integration/envelopes/02-plan-create.json
+- protocol/test-cases/integration/envelopes/03-code-change.json
+- protocol/test-cases/integration/envelopes/04-test-run.json
+- protocol/test-cases/integration/envelopes/05-pr-open.json
+- protocol/test-cases/integration/envelopes/06-ci-watch.json
+- protocol/test-cases/integration/envelopes/07-review-run.json
+- protocol/test-cases/integration/envelopes/08-merge-prepare.json
+- protocol/test-cases/integration/envelopes/09-issue-close.json
+- sdk/typescript/tests/integration.test.ts
+
+**Reason:** issue #50
+
+**Author:** Valentin Torassa
 ### 2026-05-09 — pr-opener generates PR title and body via LLM.
 
 **Intent:** Replace static title/body derivation in pr-opener with a Bedrock LLM call that reads the implementation plan and code-change context to produce a concise imperative title (≤60 chars) and a structured body with Summary, Why, What, How, and Notes sections. Falls back to static derivation when Bedrock auth is unavailable.
