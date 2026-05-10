@@ -8,15 +8,28 @@
   },
   "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
   "actor": { "requestedBy": "developer", "agent": "merge-gate" },
-  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
   "input": {},
   "capabilities": ["github.read", "github.write"],
   "policy": { "maxDurationSeconds": 900 },
   "context": {
     "parentTaskId": "task_integration_review_run",
     "priorArtifacts": [
-      { "artifactType": "pr.review.result", "uri": "file:///tmp/integration/pr-review-result.json", "mediaType": "application/json" },
-      { "artifactType": "ci.report",        "uri": "file:///tmp/integration/ci-report.json",         "mediaType": "application/json" }
+      {
+        "artifactType": "pr.review.result",
+        "uri": "file:///tmp/integration/pr-review-result.json",
+        "mediaType": "application/json"
+      },
+      {
+        "artifactType": "ci.report",
+        "uri": "file:///tmp/integration/ci-report.json",
+        "mediaType": "application/json"
+      }
     ]
   }
 }
