@@ -132,7 +132,7 @@ async function main(): Promise<number> {
   };
 
   // Optionally apply labels when github.write is granted and a token is available.
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const hasGithubWrite =
     Array.isArray(task.value.capabilities) && task.value.capabilities.includes("github.write");
 

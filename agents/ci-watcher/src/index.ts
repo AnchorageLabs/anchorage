@@ -35,7 +35,7 @@ async function main(): Promise<number> {
 
   emit(task.value, "agent.started", "info", "ci-watcher started", { agentVersion });
 
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) {
     emit(task.value, "agent.failed", "error", "Missing GitHub token", {
       error: {

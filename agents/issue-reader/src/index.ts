@@ -124,7 +124,7 @@ async function readIssue(
     );
   }
 
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) {
     return failure(
       "missing_github_token",
