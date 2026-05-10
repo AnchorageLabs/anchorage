@@ -212,7 +212,9 @@ function buildComment(input: IssueCloseInput): null | string {
     ["CI report", input.ciReportUri],
     ["Deployment", input.deploymentUri],
     ["Smoke test", input.smokeTestUri],
-  ].filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
+  ].filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0,
+  );
 
   if (details.length > 0) {
     lines.push("## Links");

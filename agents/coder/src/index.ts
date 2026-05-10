@@ -334,8 +334,7 @@ async function requestCodeChanges(
     if (stopReason === "max_tokens" || stopReason === "length") {
       return failure(
         "llm_output_truncated",
-        `${config.provider} stopped at the output token limit (${maxTokens}). The feature is too large for one coder call. ` +
-          `Set ANCHORAGE_CODER_MAX_TOKENS to a higher value or break the issue into smaller tasks.`,
+        `${config.provider} stopped at the output token limit (${maxTokens}). The feature is too large for one coder call. Set ANCHORAGE_CODER_MAX_TOKENS to a higher value or break the issue into smaller tasks.`,
         ExitCode.ExternalDependencyFailure,
       );
     }
