@@ -74,7 +74,7 @@ jobs:
       - name: Show event stream
         run: cat .anchorage/events.ndjson
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: issue-reader-${{ github.event.issue.number || inputs.issue_number }}
           path: |
