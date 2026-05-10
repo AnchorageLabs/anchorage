@@ -156,7 +156,7 @@ function normalizeProvider(value: string): null | LlmProvider {
 }
 
 function resolveAnthropicConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANCHORAGE_LLM_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
   if (!apiKey) {
     return {
       ok: false,
@@ -170,8 +170,8 @@ function resolveAnthropicConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig>
       provider: "anthropic",
       apiKey,
       baseUrl: trimTrailingSlash(
-        process.env.ANTHROPIC_BASE_URL ??
-          process.env.ANCHORAGE_LLM_BASE_URL ??
+        process.env.ANTHROPIC_BASE_URL ||
+          process.env.ANCHORAGE_LLM_BASE_URL ||
           "https://api.anthropic.com/v1",
       ),
       model: normalizeAnthropicModel(resolveModel(defaults, defaults.anthropicModel)),
@@ -192,7 +192,7 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
     ok: true,
     value: {
       provider: "aws-bedrock",
-      region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1",
+      region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1",
       model: resolveModel(defaults, defaults.bedrockModel),
       tool: "bedrock.converse",
     },
@@ -200,7 +200,7 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
 }
 
 function resolveOpenAiConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
-  const apiKey = process.env.OPENAI_API_KEY ?? process.env.ANCHORAGE_LLM_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
   if (!apiKey) {
     return {
       ok: false,
@@ -214,11 +214,11 @@ function resolveOpenAiConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
       provider: "openai",
       apiKey,
       baseUrl: trimTrailingSlash(
-        process.env.OPENAI_BASE_URL ??
-          process.env.ANCHORAGE_LLM_BASE_URL ??
+        process.env.OPENAI_BASE_URL ||
+          process.env.ANCHORAGE_LLM_BASE_URL ||
           "https://api.openai.com/v1",
       ),
-      model: resolveModel(defaults, defaults.openaiModel ?? "gpt-4.1"),
+      model: resolveModel(defaults, defaults.openaiModel || "gpt-4.1"),
       tool: "openai.chat.completions",
     },
   };
@@ -228,7 +228,7 @@ function resolveOpenAiCompatibleConfig(
   defaults: LlmRoleDefaults,
   provider: "openai-compatible",
 ): LlmResult<LlmConfig> {
-  const apiKey = process.env.ANCHORAGE_LLM_API_KEY ?? process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ANCHORAGE_LLM_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return {
       ok: false,
@@ -236,7 +236,7 @@ function resolveOpenAiCompatibleConfig(
     };
   }
 
-  const baseUrl = process.env.ANCHORAGE_LLM_BASE_URL ?? process.env.OPENAI_BASE_URL;
+  const baseUrl = process.env.ANCHORAGE_LLM_BASE_URL || process.env.OPENAI_BASE_URL;
   if (!baseUrl) {
     return {
       ok: false,
@@ -269,7 +269,7 @@ function resolveMoonshotConfig(
   provider: "kimi" | "moonshot",
 ): LlmResult<LlmConfig> {
   const apiKey =
-    process.env.MOONSHOT_API_KEY ?? process.env.KIMI_API_KEY ?? process.env.ANCHORAGE_LLM_API_KEY;
+    process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
   if (!apiKey) {
     return {
       ok: false,
@@ -291,9 +291,9 @@ function resolveMoonshotConfig(
       provider,
       apiKey,
       baseUrl: trimTrailingSlash(
-        process.env.MOONSHOT_BASE_URL ??
-          process.env.KIMI_BASE_URL ??
-          process.env.ANCHORAGE_LLM_BASE_URL ??
+        process.env.MOONSHOT_BASE_URL ||
+          process.env.KIMI_BASE_URL ||
+          process.env.ANCHORAGE_LLM_BASE_URL ||
           "https://api.moonshot.ai/v1",
       ),
       model,

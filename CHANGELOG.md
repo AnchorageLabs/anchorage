@@ -49,6 +49,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-10 — Fix LLM adapter env-var fallbacks so empty strings do not break baseUrl resolution.
+
+**Intent:** Allow the shared LLM adapter to fall back to the next variable in each provider chain (API key, baseUrl, region, model) when the primary variable is forwarded as an empty string by the orchestrator's docker-compose, instead of treating empty as "set" and producing `baseUrl=""` (which makes `fetch("/chat/completions")` throw `Failed to parse URL`).
+
+**Files touched:**
+- CHANGELOG.md
+- agents/llm/src/index.ts
+
+**Reason:** Live OpenAI run on 2026-05-10 (`run_srv_1778428099606_17` against `AnchorageLabs/envy#17`) failed at `create-plan` with `Failed to parse URL from /chat/completions` because `OPENAI_BASE_URL=""` was forwarded by docker-compose and `??` short-circuited on it instead of falling through to the next candidate. Same root-cause class as the agent token fallback fix in the same release.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — Keep the LLM adapter explicit about runtime globals.
 
 **Intent:** Let dev-dependency updates validate cleanly by making the shared LLM adapter declare its Node and fetch runtime globals explicitly instead of relying on TypeScript's ambient type inference.
