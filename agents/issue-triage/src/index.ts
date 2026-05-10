@@ -54,7 +54,10 @@ async function main(): Promise<number> {
   }
 
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-  const model = process.env.ANCHORAGE_TRIAGE_MODEL ?? process.env.ANCHORAGE_PLANNER_MODEL ?? "us.anthropic.claude-sonnet-4-6";
+  const model =
+    process.env.ANCHORAGE_TRIAGE_MODEL ??
+    process.env.ANCHORAGE_PLANNER_MODEL ??
+    "us.anthropic.claude-sonnet-4-6";
 
   emit(task.value, "tool.requested", "info", "Requesting triage decision from LLM", {
     tool: "bedrock.converse",
@@ -88,7 +91,9 @@ async function main(): Promise<number> {
   const text = extractBedrockText(response);
   if (!text) {
     const msg = "Bedrock response did not include text content.";
-    emit(task.value, "agent.failed", "error", msg, { error: { code: "invalid_llm_response", message: msg } });
+    emit(task.value, "agent.failed", "error", msg, {
+      error: { code: "invalid_llm_response", message: msg },
+    });
     return ExitCode.ExternalDependencyFailure;
   }
 
@@ -129,15 +134,20 @@ async function main(): Promise<number> {
   // Optionally apply labels when github.write is granted and a token is available.
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   const hasGithubWrite =
-    Array.isArray(task.value.capabilities) &&
-    task.value.capabilities.includes("github.write");
+    Array.isArray(task.value.capabilities) && task.value.capabilities.includes("github.write");
 
   if (hasGithubWrite && token && task.value.repository && triageResult.suggestedLabels.length > 0) {
     await applyLabels(task.value, token, triageResult);
   } else if (triageResult.suggestedLabels.length > 0) {
-    emit(task.value, "agent.output", "info", "Label application skipped (no github.write capability)", {
-      suggestedLabels: triageResult.suggestedLabels,
-    });
+    emit(
+      task.value,
+      "agent.output",
+      "info",
+      "Label application skipped (no github.write capability)",
+      {
+        suggestedLabels: triageResult.suggestedLabels,
+      },
+    );
   }
 
   emit(task.value, "agent.output", "info", "Triage decision produced", triageResult);
@@ -215,11 +225,7 @@ function parseTriageJson(
 
 // ── GitHub label application ──────────────────────────────────────────────────
 
-async function applyLabels(
-  task: TaskEnvelope,
-  token: string,
-  triage: TriageResult,
-): Promise<void> {
+async function applyLabels(task: TaskEnvelope, token: string, triage: TriageResult): Promise<void> {
   if (!task.repository) return;
   const { owner, name: repo } = task.repository;
   const octokit = new Octokit({ auth: token });
@@ -266,9 +272,7 @@ async function resolveIssueSummary(
   const direct = parseIssueSummary(task.input.issue ?? task.input);
   if (direct.ok) return direct;
 
-  const artifact = task.context?.priorArtifacts?.find(
-    (a) => a.artifactType === "issue.summary",
-  );
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === "issue.summary");
   if (!artifact?.uri.startsWith("file://")) {
     return failure(
       "missing_issue_summary",
@@ -281,7 +285,11 @@ async function resolveIssueSummary(
     const raw = await fs.readFile(new URL(artifact.uri), "utf8");
     const parsed = parseIssueSummary(JSON.parse(raw));
     if (!parsed.ok) {
-      return failure("invalid_issue_summary", "issue.summary artifact shape is invalid.", ExitCode.InvalidInput);
+      return failure(
+        "invalid_issue_summary",
+        "issue.summary artifact shape is invalid.",
+        ExitCode.InvalidInput,
+      );
     }
     return parsed;
   } catch (error) {
@@ -356,11 +364,15 @@ function extractBedrockText(value: unknown): null | string {
   const output = v.output as Record<string, unknown> | undefined;
   const message = output?.message as Record<string, unknown> | undefined;
   if (!Array.isArray(message?.content)) return null;
-  return (message.content as unknown[])
-    .map((b) => (typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null))
-    .filter((t): t is string => typeof t === "string")
-    .join("\n")
-    .trim() || null;
+  return (
+    (message.content as unknown[])
+      .map((b) =>
+        typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null,
+      )
+      .filter((t): t is string => typeof t === "string")
+      .join("\n")
+      .trim() || null
+  );
 }
 
 function extractStopReason(value: unknown): null | string {
@@ -451,7 +463,9 @@ type TriageResult = ProtocolEvent["data"] & {
 };
 
 main()
-  .then((exitCode) => { process.exitCode = exitCode; })
+  .then((exitCode) => {
+    process.exitCode = exitCode;
+  })
   .catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = ExitCode.GenericFailure;

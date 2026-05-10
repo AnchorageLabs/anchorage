@@ -9,7 +9,7 @@ RUN npm install -g pnpm@9.15.9
 WORKDIR /app
 
 # Copy workspace configuration
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 
 # Copy protocol package (dependency for SDK)
 COPY protocol ./protocol
@@ -37,7 +37,6 @@ RUN npm install -g pnpm@9.15.9
 WORKDIR /app
 
 # Copy built artifacts and node_modules from base
-COPY --from=base /app/dist ./dist
 COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app/package.json ./package.json
 COPY --from=base /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
@@ -51,6 +50,9 @@ COPY --from=base /app/sdk/typescript/package.json ./sdk/typescript/package.json
 
 COPY --from=base /app/cli/anchorage-runner/dist ./cli/anchorage-runner/dist
 COPY --from=base /app/cli/anchorage-runner/package.json ./cli/anchorage-runner/package.json
+
+COPY --from=base /app/agents/llm/dist ./agents/llm/dist
+COPY --from=base /app/agents/llm/package.json ./agents/llm/package.json
 
 # Copy all agent built outputs
 COPY --from=base /app/agents/issue-reader/dist ./agents/issue-reader/dist
@@ -96,6 +98,10 @@ COPY --from=base /app/agents/smoke-test-runner/agent.json ./agents/smoke-test-ru
 COPY --from=base /app/agents/issue-closer/dist ./agents/issue-closer/dist
 COPY --from=base /app/agents/issue-closer/package.json ./agents/issue-closer/package.json
 COPY --from=base /app/agents/issue-closer/agent.json ./agents/issue-closer/agent.json
+
+COPY --from=base /app/agents/issue-triage/dist ./agents/issue-triage/dist
+COPY --from=base /app/agents/issue-triage/package.json ./agents/issue-triage/package.json
+COPY --from=base /app/agents/issue-triage/agent.json ./agents/issue-triage/agent.json
 
 # Set environment
 ENV NODE_ENV=production

@@ -57,13 +57,19 @@ async function main(): Promise<number> {
     });
 
   if (unrelatedDirty.length > 0) {
-    emit(task.value, "agent.output", "warn" as ProtocolEvent["level"], "Workspace has untracked changes outside changedFiles", {
-      warning: {
-        code: "workspace_dirty",
-        message: `${unrelatedDirty.length} file(s) outside changedFiles are dirty. They will not be staged.`,
-        files: unrelatedDirty.slice(0, 10),
+    emit(
+      task.value,
+      "agent.output",
+      "warn" as ProtocolEvent["level"],
+      "Workspace has untracked changes outside changedFiles",
+      {
+        warning: {
+          code: "workspace_dirty",
+          message: `${unrelatedDirty.length} file(s) outside changedFiles are dirty. They will not be staged.`,
+          files: unrelatedDirty.slice(0, 10),
+        },
       },
-    });
+    );
   }
 
   emit(task.value, "tool.requested", "info", "Staging code-change files", {
@@ -388,10 +394,12 @@ function buildFallbackTitle(codeChange: CodeChangeInput): string {
     if (first.length > 0 && first.length <= 60) return first;
   }
   if (codeChange.issueNumber) return `Fix issue #${codeChange.issueNumber}`;
-  return codeChange.branchName
-    .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
-    .replaceAll(/[-_]/g, " ")
-    .trim() || `Code changes on ${codeChange.branchName}`;
+  return (
+    codeChange.branchName
+      .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
+      .replaceAll(/[-_]/g, " ")
+      .trim() || `Code changes on ${codeChange.branchName}`
+  );
 }
 
 function changedFilesList(files: string[]): string {
@@ -417,9 +425,7 @@ function extractBedrockText(value: unknown): null | string {
   const message = output?.message as Record<string, unknown> | undefined;
   if (!Array.isArray(message?.content)) return null;
   const text = (message.content as unknown[])
-    .map((b) =>
-      typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null,
-    )
+    .map((b) => (typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null))
     .filter((t): t is string => typeof t === "string")
     .join("\n")
     .trim();
