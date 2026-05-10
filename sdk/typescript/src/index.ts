@@ -1,15 +1,15 @@
-export { ExitCode, terminalEventTypeForExitCode } from "./exit-codes.js";
-export {
-  isTerminalEventType,
-  lifecycleEventTypes,
-  terminalEventTypes,
-} from "./events/event-types.js";
+export type { EventStreamValidationContext } from "./events/event-stream.js";
 export {
   eventStreamContextFromTaskEnvelope,
   parseNdjsonEvents,
   validateEventStream,
 } from "./events/event-stream.js";
-export type { EventStreamValidationContext } from "./events/event-stream.js";
+export {
+  isTerminalEventType,
+  lifecycleEventTypes,
+  terminalEventTypes,
+} from "./events/event-types.js";
+export { ExitCode, terminalEventTypeForExitCode } from "./exit-codes.js";
 export {
   agentManifestSchema,
   artifactReferenceSchema,

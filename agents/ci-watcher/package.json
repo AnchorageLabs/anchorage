@@ -6,7 +6,11 @@
   "bin": {
     "ci-watcher": "./dist/index.js"
   },
-  "files": ["agent.json", "dist", "README.md"],
+  "files": [
+    "agent.json",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json --noEmit",

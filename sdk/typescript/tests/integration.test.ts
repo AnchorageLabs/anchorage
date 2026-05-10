@@ -109,18 +109,17 @@ describe("integration chain handoff coherence", () => {
     if (agent) envelopesByAgent[agent] = envelope;
   }
 
-  it.each(expectedHandoffs)(
-    "$producer → $consumer via $artifactType",
-    ({ artifactType, consumer }) => {
-      const consumerEnvelope = envelopesByAgent[consumer] as {
-        context?: { priorArtifacts?: Array<{ artifactType: string }> };
-      };
-      expect(consumerEnvelope).toBeDefined();
-      const priorTypes =
-        consumerEnvelope?.context?.priorArtifacts?.map((a) => a.artifactType) ?? [];
-      expect(priorTypes).toContain(artifactType);
-    },
-  );
+  it.each(expectedHandoffs)("$producer → $consumer via $artifactType", ({
+    artifactType,
+    consumer,
+  }) => {
+    const consumerEnvelope = envelopesByAgent[consumer] as {
+      context?: { priorArtifacts?: Array<{ artifactType: string }> };
+    };
+    expect(consumerEnvelope).toBeDefined();
+    const priorTypes = consumerEnvelope?.context?.priorArtifacts?.map((a) => a.artifactType) ?? [];
+    expect(priorTypes).toContain(artifactType);
+  });
 });
 
 // ── 3. Example task envelopes ─────────────────────────────────────────────────

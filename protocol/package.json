@@ -3,7 +3,12 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "files": ["SPEC.md", "schemas", "test-cases", "README.md"],
+  "files": [
+    "SPEC.md",
+    "schemas",
+    "test-cases",
+    "README.md"
+  ],
   "scripts": {
     "build": "node --check scripts/validate-test-cases.mjs",
     "test": "node scripts/validate-test-cases.mjs",

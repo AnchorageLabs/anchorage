@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import addFormats from "ajv-formats";
 import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schemasDir = path.join(root, "schemas");
