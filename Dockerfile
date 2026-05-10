@@ -42,8 +42,7 @@ COPY --from=base /app/package.json ./package.json
 COPY --from=base /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
 # Copy each package's built output and package.json
-COPY --from=base /app/protocol/dist ./protocol/dist
-COPY --from=base /app/protocol/package.json ./protocol/package.json
+COPY --from=base /app/protocol ./protocol
 
 COPY --from=base /app/sdk/typescript/dist ./sdk/typescript/dist
 COPY --from=base /app/sdk/typescript/package.json ./sdk/typescript/package.json

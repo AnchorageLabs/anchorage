@@ -36,6 +36,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Files touched:**
 - CHANGELOG.md
 - Dockerfile
+- agents/coder/src/index.ts
 - agents/issue-closer/src/index.ts
 - agents/issue-reader/src/index.ts
 - agents/issue-triage/src/index.ts
