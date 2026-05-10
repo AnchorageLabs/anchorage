@@ -1,6 +1,6 @@
 # AGENTS.md — AnchorageLabs/anchorage
 
-**Last updated:** 2026-05-08
+**Last updated:** 2026-05-09
 **Visibility:** public
 **Maintainers:** Valentin Torassa, Sol Soletti
 
@@ -33,7 +33,7 @@ The shape of the code. Module boundaries, key abstractions, why those boundaries
 Cite file paths. Not a tour — a map.
 -->
 
-Monorepo, seven top-level modules. The split exists so the protocol spec can move at a different cadence than implementations, and so adapters live next to (not inside) the SDK.
+Monorepo, eight top-level modules. The split exists so the protocol spec can move at a different cadence than implementations, and so adapters live next to (not inside) the SDK.
 
 - `protocol/` — wire-format spec (the contract; changes here are ADR-gated).
 - `sdk/typescript/` — TypeScript implementation of the protocol.
@@ -42,8 +42,24 @@ Monorepo, seven top-level modules. The split exists so the protocol spec can mov
 - `adapters/mcp/` — Model Context Protocol adapter.
 - `adapters/a2a/` — Agent-to-Agent adapter.
 - `examples/` — end-to-end worked examples.
+- `docs/` — user-facing documentation (manual pipeline recipe, how-tos).
 
-Detailed protocol/architecture docs live in `anchorage-internal/protocol-specv0.1.md` and `anchorage-internal/architecturev0.1.md` (private). Public spec ships under `protocol/` once stabilized.
+**Implemented reference agents (all v0.1 task types covered):**
+
+| Agent | Task type | Notes |
+|---|---|---|
+| `issue-triage` | `issue.triage` | LLM classification; optional GitHub label writes |
+| `issue-reader` | `issue.read` | GitHub API; rejects PRs and warns on closed issues |
+| `planner` | `plan.create` | Bedrock Sonnet; posts plan comment when `github.write` granted |
+| `coder` | `code.change` | Bedrock Opus; resets workspace on failure |
+| `tester` | `test.run` | Shell commands; posts test summary when `github.write` granted |
+| `pr-opener` | `pull_request.open` | Bedrock-generated title+body; verifies clean branch |
+| `ci-watcher` | `ci.watch` | GitHub checks/statuses polling |
+| `reviewer` | `review.run` | Bedrock Sonnet; posts PR review comment |
+| `merge-gate` | `merge.prepare` | Consumes `ci.report`; surfaces review context on block |
+| `deploy-watch` | `deploy.watch` | Input-driven status record |
+| `smoke-test-runner` | `smoke_test.run` | HTTP/shell smoke checks |
+| `issue-closer` | `issue.close` | GitHub API; posts workflow summary comment |
 
 ## §4. How to run / develop
 
@@ -54,10 +70,19 @@ Should be copy-pasteable. If a command requires setup (env vars, accounts), say 
 
 ```bash
 # install
+corepack pnpm install
+
 # build
+corepack pnpm -r build
+
 # test
-# run
+corepack pnpm -r test
+
+# run a single agent
+GH_TOKEN=$(gh auth token) node cli/anchorage-runner/dist/index.js run issue-reader < examples/tasks/issue-read.json
 ```
+
+Full pipeline recipe: `docs/manual-pipeline.md`.
 
 ## §5. Public/private repo boundary
 
@@ -119,6 +144,7 @@ Before committing a substantive change:
 - Org-level: `anchorage-internal/AGENTS.md`
 - Architecture: `anchorage-internal/architecturev0.1.md`
 - Protocol: `anchorage-internal/protocol-specv0.1.md`
+- Manual pipeline recipe: `docs/manual-pipeline.md`
 - Coding policy: `anchorage-internal/coding-agent-operating-policy.md`
 - This repo's north star: `SOUL.md`
 - This repo's history: `CHANGELOG.md`

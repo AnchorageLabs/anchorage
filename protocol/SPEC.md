@@ -1,9 +1,9 @@
 # Anchorage Protocol Specification v0.1
 
-> **Status:** Draft
+> **Status:** Implemented — all v0.1 task types have public reference agents in `agents/`.
 > **Version:** 0.1
-> **Last updated:** 2026-04-28
-> **Last reviewed:** 2026-05-02 by Valen + Sol
+> **Last updated:** 2026-05-09
+> **Last reviewed:** 2026-05-09 by Valen + Sol
 > **License:** Apache-2.0
 > **Scope:** CLI ABI, task envelope, NDJSON event schema, exit codes, adapter mapping
 > **Non-goals:** orchestrator internals, billing, UI, model gateway, sandbox implementation
@@ -314,22 +314,22 @@ Agent discovery and registry are deferred to v0.2. For v0.1, agents are register
 
 ## 9. Standard v0.1 Task Types
 
-These task types map to the lifecycle workflow defined in AGENTS.md &sect;6.
+These task types map to the lifecycle workflow defined in AGENTS.md &sect;6. All types have reference implementations in `agents/`.
 
-| Task Type | Purpose | Expected Output |
-|---|---|---|
-| `issue.read` | Read a GitHub issue and extract structured metadata, labels, body, and context. | `issue.summary` artifact. |
-| `issue.triage` | Classify, deduplicate, and scope an issue. Assign labels and priority. | Triage decision in `agent.output`. |
-| `plan.create` | Produce a design/implementation plan from a triaged issue. Post as issue comment. | `plan` artifact (Markdown). |
-| `code.change` | Implement code changes in a sandboxed worktree according to a plan. | `patch` or `commit` artifact. |
-| `test.run` | Execute test suites (generated and existing) against the code change. | `test.report` artifact. |
-| `pull_request.open` | Create a pull request from the working branch to the target branch. | `pr.url` artifact. |
-| `ci.watch` | Monitor CI pipeline status on a PR. Report pass/fail. On failure, emit details for retry. | CI status in `agent.output`. |
-| `review.run` | Run automated review: security, scope, style. Post review comments. | `review.report` artifact. |
-| `merge.prepare` | Verify all gates pass and prepare the PR for merge. | Merge readiness in `agent.output`. |
-| `deploy.watch` | Monitor a deployment triggered by merge. Report rollout status. | `deployment.record` artifact. |
-| `smoke_test.run` | Execute smoke tests against the deployed environment. | `smoke_test.report` artifact. |
-| `issue.close` | Close the originating issue with a summary comment linking all artifacts. | Confirmation in `agent.output`. |
+| Task Type | Purpose | Expected Output | Reference Agent |
+|---|---|---|---|
+| `issue.triage` | Classify, deduplicate, and scope an issue. Assign labels and priority. | `issue.triage.result` artifact. | `issue-triage` |
+| `issue.read` | Read a GitHub issue and extract structured metadata, labels, body, and context. | `issue.summary` artifact. | `issue-reader` |
+| `plan.create` | Produce a design/implementation plan from a triaged issue. Post as issue comment. | `implementation.plan` artifact. | `planner` |
+| `code.change` | Implement code changes in a sandboxed worktree according to a plan. | `code.change.result` artifact. | `coder` |
+| `test.run` | Execute test suites (generated and existing) against the code change. | `test.report` artifact. | `tester` |
+| `pull_request.open` | Create a pull request from the working branch to the target branch. | `pr.opened` artifact. | `pr-opener` |
+| `ci.watch` | Monitor CI pipeline status on a PR. Report pass/fail. On failure, emit details for retry. | `ci.report` artifact. | `ci-watcher` |
+| `review.run` | Run automated review: security, scope, style. Post review comments. | `pr.review.result` artifact. | `reviewer` |
+| `merge.prepare` | Verify all gates pass and prepare the PR for merge. | `merge.completed` artifact. | `merge-gate` |
+| `deploy.watch` | Monitor a deployment triggered by merge. Report rollout status. | `deployment.record` artifact. | `deploy-watch` |
+| `smoke_test.run` | Execute smoke tests against the deployed environment. | `smoke_test.report` artifact. | `smoke-test-runner` |
+| `issue.close` | Close the originating issue with a summary comment linking all artifacts. | `issue.closed` artifact. | `issue-closer` |
 
 Custom task types SHOULD use a namespace prefix (e.g., `mycompany.lint.run`). The `anchorage.*` namespace is reserved.
 

@@ -45,6 +45,27 @@ async function main(): Promise<number> {
   const stagePaths = validateStagePaths(changedFiles);
   if (!stagePaths.ok) return fail(task.value, stagePaths);
 
+  // Verify there are no uncommitted conflicting changes outside the staged files.
+  const statusBeforeAdd = await runGit(workspacePath, ["status", "--porcelain"]);
+  const unrelatedDirty = statusBeforeAdd.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => {
+      const filePath = l.slice(3).trim();
+      return !stagePaths.value.some((sp) => filePath.startsWith(sp) || sp.startsWith(filePath));
+    });
+
+  if (unrelatedDirty.length > 0) {
+    emit(task.value, "agent.output", "warn" as ProtocolEvent["level"], "Workspace has untracked changes outside changedFiles", {
+      warning: {
+        code: "workspace_dirty",
+        message: `${unrelatedDirty.length} file(s) outside changedFiles are dirty. They will not be staged.`,
+        files: unrelatedDirty.slice(0, 10),
+      },
+    });
+  }
+
   emit(task.value, "tool.requested", "info", "Staging code-change files", {
     tool: "git.add",
     input: { cwd: workspacePath, args: ["--", ...stagePaths.value] },

@@ -67,11 +67,27 @@ async function main(): Promise<number> {
 
   const reviewDecision = await resolveReviewDecision(task.value);
   if (reviewDecision !== "approve") {
+    const reviewSummary = await resolveReviewSummary(task.value);
+    const isChangesRequested = reviewDecision === "changes_requested";
     emit(task.value, "agent.failed", "error", "Review not approved", {
       error: {
         code: "review_not_approved",
         message: `Review decision is "${reviewDecision}", not "approve". Cannot merge.`,
       },
+      context: isString(reviewSummary)
+        ? {
+            decision: reviewDecision,
+            nextStep: isChangesRequested
+              ? "Address the reviewer's feedback in a new code.change task, then re-run the pipeline from pr-opener onwards."
+              : `Review is in state "${reviewDecision}". Resolve the review before retrying merge.`,
+            reviewSummary,
+          }
+        : {
+            decision: reviewDecision,
+            nextStep: isChangesRequested
+              ? "Address the reviewer's feedback in a new code.change task, then re-run the pipeline from pr-opener onwards."
+              : `Review is in state "${reviewDecision}". Resolve the review before retrying merge.`,
+          },
     });
     return ExitCode.PolicyDenied;
   }
@@ -279,6 +295,21 @@ async function resolveReviewDecision(task: TaskEnvelope): Promise<string> {
   }
 
   return "unknown";
+}
+
+async function resolveReviewSummary(task: TaskEnvelope): Promise<null | string> {
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === "pr.review.result");
+  if (!artifact?.uri.startsWith("file://")) return null;
+  try {
+    const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    const parsed = JSON.parse(raw);
+    if (isObject(parsed) && isString((parsed as Record<string, unknown>).summary)) {
+      return (parsed as Record<string, unknown>).summary as string;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 async function resolvePrInfo(

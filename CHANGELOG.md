@@ -29,6 +29,23 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — v0 stabilization: docs, spec, and four agent fixes.
+
+**Intent:** Bring docs and the protocol spec up to date with the completed v0 agent surface, and fix four behavioral issues that would break unattended pipeline retries: coder leaving dirty workspaces on failure, pr-opener committing without checking workspace cleanliness, merge-gate blocking silently on `changes_requested`, and issue-reader proceeding blindly on closed issues.
+
+**Files touched:**
+- CHANGELOG.md
+- AGENTS.md
+- protocol/SPEC.md
+- agents/coder/src/index.ts
+- agents/issue-reader/src/index.ts
+- agents/pr-opener/src/index.ts
+- agents/merge-gate/src/index.ts
+
+**Reason:** post-v0 stabilization pass — observed failure modes during envy#9, #10, #13 pipeline runs
+
+**Author:** Valentin Torassa
+
 ### 2026-05-09 — Add issue-triage reference agent for issue.triage.
 
 **Intent:** Complete strict coverage of the standard v0.1 lifecycle task types by adding a public reference `issue-triage` agent that classifies scope, type, priority, readiness, and agent-eligibility of an issue via Bedrock and optionally applies GitHub labels.
