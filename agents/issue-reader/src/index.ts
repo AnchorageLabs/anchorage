@@ -179,14 +179,20 @@ async function readIssue(
     };
 
     if (issue.state === "closed") {
-      emit(task, "agent.output", "warn" as ProtocolEvent["level"], `Issue #${issueNumber} is already closed`, {
-        warning: {
-          code: "issue_already_closed",
-          message: `Issue #${issueNumber} is already closed. Downstream agents will work on a resolved issue — verify this is intentional.`,
-          issueNumber,
-          state: issue.state,
+      emit(
+        task,
+        "agent.output",
+        "warn" as ProtocolEvent["level"],
+        `Issue #${issueNumber} is already closed`,
+        {
+          warning: {
+            code: "issue_already_closed",
+            message: `Issue #${issueNumber} is already closed. Downstream agents will work on a resolved issue — verify this is intentional.`,
+            issueNumber,
+            state: issue.state,
+          },
         },
-      });
+      );
     }
 
     emit(task, "tool.result", "info", `Issue #${issueNumber} fetched`, {

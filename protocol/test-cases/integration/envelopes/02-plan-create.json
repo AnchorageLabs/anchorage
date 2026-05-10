@@ -8,14 +8,23 @@
   },
   "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
   "actor": { "requestedBy": "developer", "agent": "planner" },
-  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
   "input": {},
   "capabilities": ["llm.plan"],
   "policy": { "maxDurationSeconds": 900 },
   "context": {
     "parentTaskId": "task_integration_issue_read",
     "priorArtifacts": [
-      { "artifactType": "issue.summary", "uri": "file:///tmp/integration/issue-summary.json", "mediaType": "application/json" }
+      {
+        "artifactType": "issue.summary",
+        "uri": "file:///tmp/integration/issue-summary.json",
+        "mediaType": "application/json"
+      }
     ]
   }
 }

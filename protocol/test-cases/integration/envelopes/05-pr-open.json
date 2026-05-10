@@ -8,15 +8,28 @@
   },
   "run": { "id": "run_integration_chain", "attempt": 1, "correlationId": "corr_integration" },
   "actor": { "requestedBy": "developer", "agent": "pr-opener" },
-  "repository": { "provider": "github", "owner": "AnchorageLabs", "name": "envy", "defaultBranch": "main" },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "envy",
+    "defaultBranch": "main"
+  },
   "input": { "workspacePath": "/tmp/integration/workspace" },
   "capabilities": ["github.write", "workspace.write", "shell.exec"],
   "policy": { "maxDurationSeconds": 900 },
   "context": {
     "parentTaskId": "task_integration_code_change",
     "priorArtifacts": [
-      { "artifactType": "code.change.result",  "uri": "file:///tmp/integration/code-change-result.json",  "mediaType": "application/json" },
-      { "artifactType": "implementation.plan", "uri": "file:///tmp/integration/implementation-plan.json", "mediaType": "application/json" }
+      {
+        "artifactType": "code.change.result",
+        "uri": "file:///tmp/integration/code-change-result.json",
+        "mediaType": "application/json"
+      },
+      {
+        "artifactType": "implementation.plan",
+        "uri": "file:///tmp/integration/implementation-plan.json",
+        "mediaType": "application/json"
+      }
     ]
   }
 }
