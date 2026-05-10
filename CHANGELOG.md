@@ -48,6 +48,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-05-09 — Add GitHub comment outputs to planner and tester.
+
+**Intent:** Let planner and tester post structured GitHub comments so GitHub acts as the v0 workflow UI. Planner posts a plan summary to the source issue; tester posts a test result table to the source issue. Both writes are capability-gated on `github.write` and non-fatal on failure.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/planner/package.json
+- agents/planner/src/index.ts
+- agents/tester/package.json
+- agents/tester/src/index.ts
+
+**Reason:** issue #49
+
+**Author:** Sol Soletti
 ### 2026-05-09 — pr-opener generates PR title and body via LLM.
 
 **Intent:** Replace static title/body derivation in pr-opener with a Bedrock LLM call that reads the implementation plan and code-change context to produce a concise imperative title (≤60 chars) and a structured body with Summary, Why, What, How, and Notes sections. Falls back to static derivation when Bedrock auth is unavailable.
