@@ -62,6 +62,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** issue #49
 
 **Author:** Sol Soletti
+
+### 2026-05-09 — Add reproducible manual v0 pipeline recipe.
+
+**Intent:** Give maintainers and contributors a single copy-pasteable document that reproduces the full public reference-agent pipeline end-to-end against a sandbox issue without the private orchestrator.
+
+**Files touched:**
+- CHANGELOG.md
+- docs/manual-pipeline.md
+
+**Reason:** issue #54
+
+**Author:** Sol Soletti
 ### 2026-05-09 — pr-opener generates PR title and body via LLM.
 
 **Intent:** Replace static title/body derivation in pr-opener with a Bedrock LLM call that reads the implementation plan and code-change context to produce a concise imperative title (≤60 chars) and a structured body with Summary, Why, What, How, and Notes sections. Falls back to static derivation when Bedrock auth is unavailable.
