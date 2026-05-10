@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-09 — Add issue-triage reference agent for issue.triage.
+
+**Intent:** Complete strict coverage of the standard v0.1 lifecycle task types by adding a public reference `issue-triage` agent that classifies scope, type, priority, readiness, and agent-eligibility of an issue via Bedrock and optionally applies GitHub labels.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/issue-triage/agent.json
+- agents/issue-triage/package.json
+- agents/issue-triage/tsconfig.json
+- agents/issue-triage/src/index.ts
+- agents/issue-triage/README.md
+- examples/README.md
+- examples/tasks/issue-triage.json
+
+**Reason:** issue #51
+
+**Author:** Valentin Torassa
+
 ### 2026-05-09 — pr-opener generates PR title and body via LLM.
 
 **Intent:** Replace static title/body derivation in pr-opener with a Bedrock LLM call that reads the implementation plan and code-change context to produce a concise imperative title (≤60 chars) and a structured body with Summary, Why, What, How, and Notes sections. Falls back to static derivation when Bedrock auth is unavailable.

@@ -17,10 +17,11 @@ Implemented reference agents:
 - `deploy-watch`: records input-driven deployment status as `deployment.record`.
 - `smoke-test-runner`: runs input-driven HTTP or shell smoke checks.
 - `issue-closer`: closes the originating GitHub issue and posts a concise workflow summary comment.
+- `issue-triage`: classifies scope, type, priority, readiness, and agent-eligibility of an issue. Optionally applies GitHub labels.
 
 ## Current gaps
 
-- `issue-triage` for `issue.triage` is not implemented yet.
+None — all standard v0.1 lifecycle task types are implemented.
 
 Agents observe or act on one task and emit protocol events. Workflow routing, retries, loop limits, durable state, and webhook handling are orchestrator responsibilities and are intentionally outside this public repo.
 
