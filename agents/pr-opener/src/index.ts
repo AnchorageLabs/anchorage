@@ -110,25 +110,8 @@ async function main(): Promise<number> {
     input: { cwd: workspacePath, remote: "origin", branch: branchName },
   });
 
-  const pushResult = await runGit(workspacePath, ["push", "-u", "origin", branchName]);
-
-  if (pushResult.exitCode !== 0) {
-    emit(task.value, "tool.result", "error", "git push failed", {
-      tool: "git.push",
-      success: false,
-      error: { code: "git_push_failed", message: pushResult.stderr || pushResult.stdout },
-    });
-    emit(task.value, "agent.failed", "error", "Failed to push branch", {
-      error: { code: "git_push_failed", message: pushResult.stderr || pushResult.stdout },
-    });
-    return ExitCode.ExternalDependencyFailure;
-  }
-
-  emit(task.value, "tool.result", "info", "git push completed", {
-    tool: "git.push",
-    success: true,
-    output: { exitCode: pushResult.exitCode, stderr: pushResult.stderr.slice(0, 500) },
-  });
+  const pushResult = await pushWithRebase(task.value, workspacePath, branchName);
+  if (!pushResult.ok) return ExitCode.ExternalDependencyFailure;
 
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
@@ -649,6 +632,78 @@ function extractIssueUrl(value: JsonObject): null | string {
 }
 
 // ── Git / artifact helpers ────────────────────────────────────────────────────
+
+async function pushWithRebase(
+  task: TaskEnvelope,
+  workspacePath: string,
+  branchName: string,
+): Promise<{ ok: boolean }> {
+  const first = await runGit(workspacePath, ["push", "-u", "origin", branchName]);
+  if (first.exitCode === 0) {
+    emit(task, "tool.result", "info", "git push completed", {
+      tool: "git.push",
+      success: true,
+      output: { exitCode: first.exitCode, stderr: first.stderr.slice(0, 500) },
+    });
+    return { ok: true };
+  }
+
+  const rejectedAsNonFastForward = /\[rejected\][^\n]*\((fetch first|non-fast-forward)\)/.test(
+    first.stderr,
+  );
+  if (!rejectedAsNonFastForward) {
+    emit(task, "tool.result", "error", "git push failed", {
+      tool: "git.push",
+      success: false,
+      error: { code: "git_push_failed", message: first.stderr || first.stdout },
+    });
+    emit(task, "agent.failed", "error", "Failed to push branch", {
+      error: { code: "git_push_failed", message: first.stderr || first.stdout },
+    });
+    return { ok: false };
+  }
+
+  emit(task, "tool.result", "warn", "git push rejected; rebasing onto remote and retrying", {
+    tool: "git.push",
+    success: false,
+    output: { stderr: first.stderr.slice(0, 500) },
+  });
+
+  const fetchResult = await runGit(workspacePath, ["fetch", "origin", branchName]);
+  if (fetchResult.exitCode !== 0) {
+    const msg = fetchResult.stderr || fetchResult.stdout;
+    emit(task, "agent.failed", "error", "git fetch failed during push recovery", {
+      error: { code: "git_fetch_failed", message: msg },
+    });
+    return { ok: false };
+  }
+
+  const rebaseResult = await runGit(workspacePath, ["rebase", `origin/${branchName}`]);
+  if (rebaseResult.exitCode !== 0) {
+    await runGit(workspacePath, ["rebase", "--abort"]);
+    const msg = rebaseResult.stderr || rebaseResult.stdout;
+    emit(task, "agent.failed", "error", "git rebase onto origin failed; manual resolution needed", {
+      error: { code: "git_rebase_conflict", message: msg },
+    });
+    return { ok: false };
+  }
+
+  const retry = await runGit(workspacePath, ["push", "-u", "origin", branchName]);
+  if (retry.exitCode !== 0) {
+    const msg = retry.stderr || retry.stdout;
+    emit(task, "agent.failed", "error", "git push failed after rebase", {
+      error: { code: "git_push_failed_after_rebase", message: msg },
+    });
+    return { ok: false };
+  }
+
+  emit(task, "tool.result", "info", "git push completed after rebase", {
+    tool: "git.push",
+    success: true,
+    output: { exitCode: retry.exitCode, stderr: retry.stderr.slice(0, 500) },
+  });
+  return { ok: true };
+}
 
 async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolve) => {

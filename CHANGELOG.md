@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-10 — pr-opener recovers from non-fast-forward push rejections via fetch + rebase.
+
+**Intent:** Let pr-opener finish the workflow when the remote branch has commits the agent does not (typical when a prior run wrote to the same `feat/*` branch). On a `[rejected] (fetch first|non-fast-forward)` response, fetch the remote ref, rebase the local commit on top, and retry the push once. Abort with a clear `git_rebase_conflict` failure on real conflicts so humans can resolve — no silent force-push.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/pr-opener/src/index.ts
+
+**Reason:** Observed on `AnchorageLabs/chary#2` during a live run on 2026-05-10 — pr-opener emitted `git_push_failed` with `! [rejected] feat/git-adapter -> feat/git-adapter (fetch first)` and aborted the workflow before opening the PR.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — Fix GitHub token fallback so empty env vars do not block agents.
 
 **Intent:** Allow agents to fall back to `GH_TOKEN` (or `GITHUB_TOKEN`) when the primary variable is forwarded as an empty string by the orchestrator's docker-compose, instead of treating empty as "set" and failing with `missing_github_token`.
