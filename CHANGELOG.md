@@ -29,6 +29,22 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-05-13 — Restore green CI baseline for current Dependabot action PRs.
+
+**Intent:** Let current GitHub Actions dependency updates validate against a green baseline by fixing Biome lint drift and making Vitest resolve a peer-compatible Vite version during SDK tests.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/issue-reader/src/index.ts
+- agents/issue-triage/src/index.ts
+- agents/merge-gate/src/index.ts
+- package.json
+- pnpm-lock.yaml
+
+**Reason:** Dependabot PRs #84-#87 were blocked on stale red CI; ADR-0020.
+
+**Author:** Valentin Torassa
+
 ### 2026-05-10 — pr-opener recovers from non-fast-forward push rejections via fetch + rebase.
 
 **Intent:** Let pr-opener finish the workflow when the remote branch has commits the agent does not (typical when a prior run wrote to the same `feat/*` branch). On a `[rejected] (fetch first|non-fast-forward)` response, fetch the remote ref, rebase the local commit on top, and retry the push once. Abort with a clear `git_rebase_conflict` failure on real conflicts so humans can resolve — no silent force-push.

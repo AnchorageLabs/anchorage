@@ -12,7 +12,6 @@ import {
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
 
-const agentName = "merge-gate";
 const agentVersion = "0.1.0";
 let eventSequence = 0;
 

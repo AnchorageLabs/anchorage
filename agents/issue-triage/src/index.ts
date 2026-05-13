@@ -4,19 +4,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { llmEventInput, requestLlmCompletion, resolveLlmConfig } from "@anchorage/agent-llm";
 import {
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { 
-  resolveLlmConfig, 
-  requestLlmCompletion, 
-  llmEventInput,
-  type LlmConfig,
-  type LlmCompletion
-} from "@anchorage/agent-llm";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -45,7 +39,7 @@ async function main(): Promise<number> {
     role: "triage",
     anthropicModel: "claude-sonnet-4-6",
     bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4o"
+    openaiModel: "gpt-4o",
   });
 
   if (!llmConfig.ok) {
@@ -101,14 +95,14 @@ async function main(): Promise<number> {
   emit(task.value, "tool.result", "info", "LLM triage decision received", {
     tool: llmConfig.value.tool,
     success: true,
-    output: { 
-      provider: llmConfig.value.provider, 
-      model: llmConfig.value.model, 
+    output: {
+      provider: llmConfig.value.provider,
+      model: llmConfig.value.model,
       stopReason: completion.value.stopReason,
       usage: {
         inputTokens: completion.value.inputTokens,
-        outputTokens: completion.value.outputTokens
-      }
+        outputTokens: completion.value.outputTokens,
+      },
     },
   });
 
@@ -356,40 +350,6 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
     return { ok: false, exitCode: ExitCode.InvalidInput };
   }
   return { ok: true, value: result.value };
-}
-
-function extractBedrockText(value: unknown): null | string {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as Record<string, unknown>;
-  const output = v.output as Record<string, unknown> | undefined;
-  const message = output?.message as Record<string, unknown> | undefined;
-  if (!Array.isArray(message?.content)) return null;
-  return (
-    (message.content as unknown[])
-      .map((b) =>
-        typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null,
-      )
-      .filter((t): t is string => typeof t === "string")
-      .join("\n")
-      .trim() || null
-  );
-}
-
-function extractStopReason(value: unknown): null | string {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as Record<string, unknown>;
-  return typeof v.stopReason === "string" ? v.stopReason : null;
-}
-
-function hasBedrockAuth(): boolean {
-  return Boolean(
-    process.env.AWS_BEARER_TOKEN_BEDROCK ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE ||
-      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
-      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-  );
 }
 
 function failure(code: string, message: string, exitCode: number): TriageFailure {
