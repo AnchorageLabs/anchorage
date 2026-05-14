@@ -374,9 +374,10 @@ function normalizePlan(
   issue: IssueSummary,
   rawPlan: JsonObject,
 ): ImplementationPlan {
-  const branchName = stringValue(
-    rawPlan.branchName,
-    `issue-${issue.issueNumber}-${slugify(issue.title)}`,
+  const branchName = buildBranchName(
+    issue.issueNumber,
+    stringValue(rawPlan.branchName, slugify(issue.title)),
+    task.run.id,
   );
   return {
     planId: `plan_${task.run.id}_${issue.issueNumber}`,
@@ -409,6 +410,18 @@ function normalizePlan(
 
 function stringValue(value: JsonValue | undefined, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function buildBranchName(issueNumber: number, rawBranchName: string, runId: string): string {
+  const prefixMatch = rawBranchName.match(/^(feat|fix|chore|docs|refactor|test)\//);
+  const prefix = prefixMatch?.[1] ?? "fix";
+  const rawSlug = rawBranchName
+    .replace(/^refs\/heads\//, "")
+    .replace(/^(feat|fix|chore|docs|refactor|test)\//, "")
+    .replace(/^issue-\d+[-_/]*/, "");
+  const slug = slugify(rawSlug) || "changes";
+  const runSuffix = slugify(runId).slice(-12) || String(Date.now());
+  return `${prefix}/issue-${issueNumber}-${slug}-${runSuffix}`;
 }
 
 function stringArrayValue(value: JsonValue | undefined): string[] {
