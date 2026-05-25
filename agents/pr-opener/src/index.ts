@@ -669,7 +669,11 @@ async function pushWithRebase(
     output: { stderr: first.stderr.slice(0, 500) },
   });
 
-  const fetchResult = await runGit(workspacePath, ["fetch", "origin", branchName]);
+  const fetchResult = await runGit(workspacePath, [
+    "fetch",
+    "origin",
+    `${branchName}:refs/remotes/origin/${branchName}`,
+  ]);
   if (fetchResult.exitCode !== 0) {
     const msg = fetchResult.stderr || fetchResult.stdout;
     emit(task, "agent.failed", "error", "git fetch failed during push recovery", {
