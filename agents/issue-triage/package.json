@@ -23,6 +23,6 @@
     "@octokit/rest": "^22.0.1"
   },
   "devDependencies": {
-    "@types/node": "^25.9.0"
+    "@types/node": "^25.9.1"
   }
 }
