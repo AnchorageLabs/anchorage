@@ -433,10 +433,12 @@ function stringArrayValue(value: JsonValue | undefined): string[] {
 }
 
 function emitLlmFailure(task: TaskEnvelope, tool: string, message: string): void {
+  // The protocol schema requires tool.result events to carry `output`; the
+  // failure detail lives inside it so the event still validates.
   emit(task, "tool.result", "error", "LLM implementation plan failed", {
     tool,
     success: false,
-    error: { code: "llm_plan_failed", message },
+    output: { error: { code: "llm_plan_failed", message } },
   });
 }
 
