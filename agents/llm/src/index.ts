@@ -31,7 +31,14 @@ export interface LlmRequest {
   system: string;
   user: string;
   maxTokens: number;
-  temperature: number;
+  /**
+   * Sampling temperature. Optional: some models (e.g. Claude Opus 4.8+) have
+   * deprecated the parameter and reject requests that include it. When set, the
+   * adapter sends it but transparently retries without it if the provider
+   * reports the parameter as unsupported — so callers can keep passing a
+   * preferred temperature without breaking on models that no longer accept one.
+   */
+  temperature?: number;
 }
 
 export interface LlmCompletion {
@@ -318,6 +325,28 @@ function roleModelEnvName(role: string): string {
   return `ANCHORAGE_${role.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_MODEL`;
 }
 
+/**
+ * True when a provider error indicates the `temperature` parameter is not
+ * accepted by the target model (deprecated / unsupported / not allowed). Lets
+ * the completion helpers retry once without temperature instead of failing.
+ */
+function isTemperatureUnsupported(message: string): boolean {
+  return (
+    /temperature/i.test(message) &&
+    /(deprecat|unsupported|not\s+supported|not\s+allowed|invalid)/i.test(message)
+  );
+}
+
+/**
+ * Returns the `{ temperature }` fragment to spread into a request body, or an
+ * empty object when temperature should be omitted (caller left it unset, or we
+ * are retrying after the model rejected it).
+ */
+function temperatureBody(request: LlmRequest, include: boolean): { temperature?: number } {
+  if (!include || request.temperature === undefined) return {};
+  return { temperature: request.temperature };
+}
+
 function normalizeAnthropicModel(model: string): string {
   if (model.startsWith("us.anthropic.")) return model.slice("us.anthropic.".length);
   if (model.startsWith("anthropic.")) return model.slice("anthropic.".length);
@@ -339,20 +368,26 @@ async function requestAnthropicCompletion(
   config: LlmConfig,
   request: LlmRequest,
 ): Promise<LlmResult<LlmCompletion>> {
-  const response = await postJson(`${config.baseUrl}/messages`, {
-    headers: {
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-      "x-api-key": config.apiKey ?? "",
-    },
-    body: {
-      model: config.model,
-      max_tokens: request.maxTokens,
-      temperature: request.temperature,
-      system: [anthropicSystemBlock(request.system)],
-      messages: [{ role: "user", content: request.user }],
-    },
-  });
+  const send = (includeTemperature: boolean) =>
+    postJson(`${config.baseUrl}/messages`, {
+      headers: {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": config.apiKey ?? "",
+      },
+      body: {
+        model: config.model,
+        max_tokens: request.maxTokens,
+        ...temperatureBody(request, includeTemperature),
+        system: [anthropicSystemBlock(request.system)],
+        messages: [{ role: "user", content: request.user }],
+      },
+    });
+
+  let response = await send(true);
+  if (!response.ok && request.temperature !== undefined && isTemperatureUnsupported(response.message)) {
+    response = await send(false);
+  }
   if (!response.ok) return { ok: false, message: response.message };
 
   const value = response.value;
@@ -388,21 +423,27 @@ async function requestChatCompletion(
   config: LlmConfig,
   request: LlmRequest,
 ): Promise<LlmResult<LlmCompletion>> {
-  const response = await postJson(`${config.baseUrl}/chat/completions`, {
-    headers: {
-      authorization: `Bearer ${config.apiKey ?? ""}`,
-      "content-type": "application/json",
-    },
-    body: {
-      model: config.model,
-      messages: [
-        { role: "system", content: request.system },
-        { role: "user", content: request.user },
-      ],
-      max_tokens: request.maxTokens,
-      temperature: request.temperature,
-    },
-  });
+  const send = (includeTemperature: boolean) =>
+    postJson(`${config.baseUrl}/chat/completions`, {
+      headers: {
+        authorization: `Bearer ${config.apiKey ?? ""}`,
+        "content-type": "application/json",
+      },
+      body: {
+        model: config.model,
+        messages: [
+          { role: "system", content: request.system },
+          { role: "user", content: request.user },
+        ],
+        max_tokens: request.maxTokens,
+        ...temperatureBody(request, includeTemperature),
+      },
+    });
+
+  let response = await send(true);
+  if (!response.ok && request.temperature !== undefined && isTemperatureUnsupported(response.message)) {
+    response = await send(false);
+  }
   if (!response.ok) return { ok: false, message: response.message };
 
   const value = response.value;
@@ -446,22 +487,39 @@ async function requestBedrockCompletion(
   config: LlmConfig,
   request: LlmRequest,
 ): Promise<LlmResult<LlmCompletion>> {
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region: config.region });
-    response = await client.send(
+  const client = new BedrockRuntimeClient({ region: config.region });
+  const send = (includeTemperature: boolean) =>
+    client.send(
       new ConverseCommand({
         modelId: config.model,
         system: [{ text: request.system }],
         messages: [{ role: "user", content: [{ text: request.user }] }],
-        inferenceConfig: { maxTokens: request.maxTokens, temperature: request.temperature },
+        inferenceConfig: {
+          maxTokens: request.maxTokens,
+          ...(includeTemperature && request.temperature !== undefined
+            ? { temperature: request.temperature }
+            : {}),
+        },
       }),
     );
+
+  let response: unknown;
+  try {
+    response = await send(true);
   } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    const message = error instanceof Error ? error.message : String(error);
+    if (request.temperature !== undefined && isTemperatureUnsupported(message)) {
+      try {
+        response = await send(false);
+      } catch (retryError) {
+        return {
+          ok: false,
+          message: retryError instanceof Error ? retryError.message : String(retryError),
+        };
+      }
+    } else {
+      return { ok: false, message };
+    }
   }
 
   if (!isObject(response)) return { ok: false, message: "Bedrock response was not an object." };

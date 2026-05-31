@@ -25,6 +25,13 @@
     "sha256": {
       "type": "string",
       "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "content": {
+      "description": "Artifact body inlined by the worker while it still has filesystem access. Only present on worker→server artifact events; stripped before the reference appears in task envelopes."
+    },
+    "materializationError": {
+      "type": "string",
+      "description": "Human-readable reason the worker could not inline content. Presence means no filesystem fallback should be attempted."
     }
   }
 }

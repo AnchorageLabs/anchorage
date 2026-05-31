@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -40,78 +39,8 @@ async function main(): Promise<number> {
   const input = await resolvePrOpenerInput(task.value);
   if (!input.ok) return fail(task.value, input);
 
-  const { workspacePath, codeChangeResult, owner, name: repoName, baseBranch } = input.value;
+  const { codeChangeResult, owner, name: repoName, baseBranch } = input.value;
   const { branchName, changedFiles } = codeChangeResult;
-  const stagePaths = validateStagePaths(changedFiles);
-  if (!stagePaths.ok) return fail(task.value, stagePaths);
-
-  // Verify there are no uncommitted conflicting changes outside the staged files.
-  const statusBeforeAdd = await runGit(workspacePath, ["status", "--porcelain"]);
-  const unrelatedDirty = statusBeforeAdd.stdout
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .filter((l) => {
-      const filePath = l.slice(3).trim();
-      return !stagePaths.value.some((sp) => filePath.startsWith(sp) || sp.startsWith(filePath));
-    });
-
-  if (unrelatedDirty.length > 0) {
-    emit(
-      task.value,
-      "agent.output",
-      "warn" as ProtocolEvent["level"],
-      "Workspace has untracked changes outside changedFiles",
-      {
-        warning: {
-          code: "workspace_dirty",
-          message: `${unrelatedDirty.length} file(s) outside changedFiles are dirty. They will not be staged.`,
-          files: unrelatedDirty.slice(0, 10),
-        },
-      },
-    );
-  }
-
-  emit(task.value, "tool.requested", "info", "Staging code-change files", {
-    tool: "git.add",
-    input: { cwd: workspacePath, args: ["--", ...stagePaths.value] },
-  });
-
-  const addResult = await runGit(workspacePath, ["add", "--", ...stagePaths.value]);
-  emit(task.value, "tool.result", "info", "git add completed", {
-    tool: "git.add",
-    success: addResult.exitCode === 0,
-    output: { exitCode: addResult.exitCode, stderr: addResult.stderr },
-  });
-
-  const commitMessage = codeChangeResult.summary || "Apply code changes";
-  emit(task.value, "tool.requested", "info", "Committing changes", {
-    tool: "git.commit",
-    input: { cwd: workspacePath, message: commitMessage },
-  });
-
-  const commitResult = await runGit(workspacePath, ["commit", "-m", commitMessage]);
-  const commitSuccess = commitResult.exitCode === 0;
-  const nothingToCommit = !commitSuccess && commitResult.stdout.includes("nothing to commit");
-
-  emit(task.value, "tool.result", "info", "git commit completed", {
-    tool: "git.commit",
-    success: commitSuccess || nothingToCommit,
-    output: {
-      exitCode: commitResult.exitCode,
-      stdout: commitResult.stdout.slice(0, 500),
-      stderr: commitResult.stderr.slice(0, 500),
-      nothingToCommit,
-    },
-  });
-
-  emit(task.value, "tool.requested", "info", `Pushing branch ${branchName}`, {
-    tool: "git.push",
-    input: { cwd: workspacePath, remote: "origin", branch: branchName },
-  });
-
-  const pushResult = await pushWithRebase(task.value, workspacePath, branchName);
-  if (!pushResult.ok) return ExitCode.ExternalDependencyFailure;
 
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
@@ -120,6 +49,20 @@ async function main(): Promise<number> {
       error: { code: "missing_github_token", message: msg },
     });
     return ExitCode.MissingCapability;
+  }
+
+  // Commit + push are owned by the coder (issue #39); the pr-opener no longer
+  // stages, commits, or pushes. It relies on the branch the coder already
+  // published and only opens the PR. If the branch wasn't pushed there is no
+  // remote head to open a PR from — fail clearly instead of letting the GitHub
+  // API return an opaque "head not found".
+  if (!codeChangeResult.pushed) {
+    const msg =
+      "code.change.result.pushed is not true — the coder did not push the branch, so there is no remote branch to open a PR from.";
+    emit(task.value, "agent.failed", "error", msg, {
+      error: { code: "branch_not_pushed", message: msg },
+    });
+    return ExitCode.ExternalDependencyFailure;
   }
 
   const prContent = await generatePrContent(task.value, input.value);
@@ -149,7 +92,7 @@ async function main(): Promise<number> {
     emit(task.value, "tool.result", "error", "GitHub PR creation failed", {
       tool: "github.pulls.create",
       success: false,
-      error: { code: "github_pr_create_failed", message },
+      output: { error: { code: "github_pr_create_failed", message } },
     });
     emit(task.value, "agent.failed", "error", "Failed to create PR", {
       error: { code: "github_pr_create_failed", message },
@@ -220,6 +163,7 @@ async function generatePrContent(
     emit(task, "tool.result", "info", "LLM PR content failed, using fallback", {
       tool: "bedrock.converse",
       success: false,
+      output: { fallback: true },
     });
     return fallbackPrContent(input);
   }
@@ -556,6 +500,8 @@ function parseCodeChangeResult(
       planId: typeof value.planId === "string" ? value.planId : null,
       issueNumber: extractIssueNumber(value),
       issueUrl: extractIssueUrl(value),
+      pushed: value.pushed === true,
+      commitSha: typeof value.commitSha === "string" ? value.commitSha : null,
     },
   };
 }
@@ -572,41 +518,6 @@ async function readPlanArtifact(task: TaskEnvelope): Promise<JsonObject | null> 
   } catch {
     return null;
   }
-}
-
-function validateStagePaths(
-  changedFiles: string[],
-): { ok: true; value: string[] } | PrOpenerFailure {
-  const stagePaths = unique(changedFiles.map((file) => file.trim()).filter(isString));
-  if (stagePaths.length === 0) {
-    return failure(
-      "no_changed_files",
-      "code.change.result changedFiles must include at least one file to stage.",
-      ExitCode.InvalidInput,
-    );
-  }
-  for (const file of stagePaths) {
-    if (isUnsafeStagePath(file)) {
-      return failure(
-        "unsafe_changed_file_path",
-        `code.change.result changedFiles contains an unsafe path: ${file}`,
-        ExitCode.InvalidInput,
-      );
-    }
-  }
-  return { ok: true, value: stagePaths };
-}
-
-function isUnsafeStagePath(file: string): boolean {
-  if (file.includes("\0") || path.isAbsolute(file)) return true;
-  const normalized = path.posix.normalize(file.replaceAll("\\", "/"));
-  return (
-    normalized === "." ||
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    normalized === ".git" ||
-    normalized.startsWith(".git/")
-  );
 }
 
 function extractIssueNumber(value: JsonObject): null | number {
@@ -631,101 +542,7 @@ function extractIssueUrl(value: JsonObject): null | string {
   return null;
 }
 
-// ── Git / artifact helpers ────────────────────────────────────────────────────
-
-async function pushWithRebase(
-  task: TaskEnvelope,
-  workspacePath: string,
-  branchName: string,
-): Promise<{ ok: boolean }> {
-  const first = await runGit(workspacePath, ["push", "-u", "origin", branchName]);
-  if (first.exitCode === 0) {
-    emit(task, "tool.result", "info", "git push completed", {
-      tool: "git.push",
-      success: true,
-      output: { exitCode: first.exitCode, stderr: first.stderr.slice(0, 500) },
-    });
-    return { ok: true };
-  }
-
-  const rejectedAsNonFastForward = /\[rejected\][^\n]*\((fetch first|non-fast-forward)\)/.test(
-    first.stderr,
-  );
-  if (!rejectedAsNonFastForward) {
-    emit(task, "tool.result", "error", "git push failed", {
-      tool: "git.push",
-      success: false,
-      error: { code: "git_push_failed", message: first.stderr || first.stdout },
-    });
-    emit(task, "agent.failed", "error", "Failed to push branch", {
-      error: { code: "git_push_failed", message: first.stderr || first.stdout },
-    });
-    return { ok: false };
-  }
-
-  emit(task, "tool.result", "warn", "git push rejected; rebasing onto remote and retrying", {
-    tool: "git.push",
-    success: false,
-    output: { stderr: first.stderr.slice(0, 500) },
-  });
-
-  const fetchResult = await runGit(workspacePath, [
-    "fetch",
-    "origin",
-    `${branchName}:refs/remotes/origin/${branchName}`,
-  ]);
-  if (fetchResult.exitCode !== 0) {
-    const msg = fetchResult.stderr || fetchResult.stdout;
-    emit(task, "agent.failed", "error", "git fetch failed during push recovery", {
-      error: { code: "git_fetch_failed", message: msg },
-    });
-    return { ok: false };
-  }
-
-  const rebaseResult = await runGit(workspacePath, ["rebase", `origin/${branchName}`]);
-  if (rebaseResult.exitCode !== 0) {
-    await runGit(workspacePath, ["rebase", "--abort"]);
-    const msg = rebaseResult.stderr || rebaseResult.stdout;
-    emit(task, "agent.failed", "error", "git rebase onto origin failed; manual resolution needed", {
-      error: { code: "git_rebase_conflict", message: msg },
-    });
-    return { ok: false };
-  }
-
-  const retry = await runGit(workspacePath, ["push", "-u", "origin", branchName]);
-  if (retry.exitCode !== 0) {
-    const msg = retry.stderr || retry.stdout;
-    emit(task, "agent.failed", "error", "git push failed after rebase", {
-      error: { code: "git_push_failed_after_rebase", message: msg },
-    });
-    return { ok: false };
-  }
-
-  emit(task, "tool.result", "info", "git push completed after rebase", {
-    tool: "git.push",
-    success: true,
-    output: { exitCode: retry.exitCode, stderr: retry.stderr.slice(0, 500) },
-  });
-  return { ok: true };
-}
-
-async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => resolve({ exitCode: 127, stdout: "", stderr: error.message }));
-    child.on("close", (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      });
-    });
-  });
-}
+// ── Artifact helpers ──────────────────────────────────────────────────────────
 
 async function writeResultArtifact(task: TaskEnvelope, result: PrOpenedResult) {
   const artifactRoot =
@@ -764,10 +581,6 @@ function isObject(value: unknown): value is JsonObject {
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }
 
 function emit(
@@ -819,6 +632,10 @@ interface CodeChangeInput {
   planId: null | string;
   issueNumber: null | number;
   issueUrl: null | string;
+  // Delivery flags recorded by the coder (issue #39): whether it committed and
+  // pushed the branch. The pr-opener requires `pushed` to open a PR.
+  pushed: boolean;
+  commitSha: null | string;
 }
 
 interface PrContentRaw {
@@ -828,12 +645,6 @@ interface PrContentRaw {
   what: string;
   how: string;
   notes: string;
-}
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
 }
 
 type PrOpenedResult = ProtocolEvent["data"] & {

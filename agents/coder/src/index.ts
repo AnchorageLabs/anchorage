@@ -75,7 +75,7 @@ async function main(): Promise<number> {
     emit(task.value, "tool.result", "error", "LLM code generation failed", {
       tool: auth.value.tool,
       success: false,
-      error: { code: codeResult.code, message: codeResult.message },
+      output: { error: { code: codeResult.code, message: codeResult.message } },
     });
     await resetWorkspace(task.value, input.value.workspacePath);
     return fail(task.value, codeResult);
@@ -102,6 +102,17 @@ async function main(): Promise<number> {
     },
   });
 
+  // Deliver the work as real git history so changes are retrievable without
+  // touching the user's host working copy (see issue #39). Commit to the run
+  // branch, then push best-effort — push degrades gracefully (no remote/token)
+  // and never fails the run.
+  const delivery = await commitAndPush(
+    task.value,
+    input.value.workspacePath,
+    input.value.plan,
+    changedFiles.length > 0,
+  );
+
   const output: CodeChangeResult = {
     status: changedFiles.length > 0 ? "changed" : "no_changes",
     planId: input.value.plan.planId,
@@ -114,6 +125,10 @@ async function main(): Promise<number> {
     model: auth.value.model,
     summary: codeResult.value.summary,
     commandsSuggested: codeResult.value.commandsSuggested,
+    committed: delivery.committed,
+    commitSha: delivery.commitSha,
+    pushed: delivery.pushed,
+    ...(delivery.pushSkippedReason ? { pushSkippedReason: delivery.pushSkippedReason } : {}),
   };
 
   emit(task.value, "agent.output", "info", "Code change result created", output);
@@ -537,9 +552,181 @@ async function ensureBranch(
   emit(task, "tool.result", "error", `Failed to switch to branch ${branchName}`, {
     tool: "git.switch",
     success: false,
-    error: { code: "branch_checkout_failed", message },
+    output: { error: { code: "branch_checkout_failed", message } },
   });
   return failure("branch_checkout_failed", message, ExitCode.ExternalDependencyFailure);
+}
+
+interface DeliveryResult {
+  committed: boolean;
+  commitSha: string | null;
+  pushed: boolean;
+  pushSkippedReason?: string;
+}
+
+async function commitAndPush(
+  task: TaskEnvelope,
+  workspacePath: string,
+  plan: ImplementationPlan,
+  hasChanges: boolean,
+): Promise<DeliveryResult> {
+  if (!hasChanges) {
+    return { committed: false, commitSha: null, pushed: false, pushSkippedReason: "no_changes" };
+  }
+
+  const commit = await commitChanges(task, workspacePath, plan);
+  if (!commit.ok) {
+    // Non-fatal: the edits are on disk; we just couldn't record them as a commit.
+    return { committed: false, commitSha: null, pushed: false, pushSkippedReason: commit.reason };
+  }
+
+  const push = await pushBranch(task, workspacePath, plan.branchName);
+  return {
+    committed: true,
+    commitSha: commit.sha,
+    pushed: push.pushed,
+    ...(push.pushed ? {} : { pushSkippedReason: push.reason }),
+  };
+}
+
+async function commitChanges(
+  task: TaskEnvelope,
+  workspacePath: string,
+  plan: ImplementationPlan,
+): Promise<{ ok: true; sha: string } | { ok: false; reason: string }> {
+  emit(task, "tool.requested", "info", "Committing changes", {
+    tool: "git.commit",
+    input: { branchName: plan.branchName },
+  });
+
+  const add = await runGit(workspacePath, ["add", "-A"]);
+  if (add.exitCode !== 0) {
+    const reason = add.stderr.trim() || `git add failed (exit ${add.exitCode})`;
+    emitGitError(task, "git.commit", "commit_failed", reason);
+    return { ok: false, reason };
+  }
+
+  // Identity from the run environment, with a safe fallback so the commit never
+  // fails on "tell me who you are" in environments that don't set GIT_AUTHOR_*.
+  const name = process.env.GIT_AUTHOR_NAME || "Anchorage Agent";
+  const email = process.env.GIT_AUTHOR_EMAIL || "agent@anchorage.dev";
+  const commit = await runGit(workspacePath, [
+    "-c",
+    `user.name=${name}`,
+    "-c",
+    `user.email=${email}`,
+    "commit",
+    "-m",
+    commitMessage(plan),
+  ]);
+  if (commit.exitCode !== 0) {
+    const reason =
+      commit.stderr.trim() || commit.stdout.trim() || `git commit failed (exit ${commit.exitCode})`;
+    emitGitError(task, "git.commit", "commit_failed", reason);
+    return { ok: false, reason };
+  }
+
+  const rev = await runGit(workspacePath, ["rev-parse", "HEAD"]);
+  const sha = rev.stdout.trim();
+  emit(task, "tool.result", "info", "Changes committed", {
+    tool: "git.commit",
+    success: true,
+    output: { commitSha: sha, branchName: plan.branchName },
+  });
+  return { ok: true, sha };
+}
+
+async function pushBranch(
+  task: TaskEnvelope,
+  workspacePath: string,
+  branchName: string,
+): Promise<{ pushed: true } | { pushed: false; reason: string }> {
+  if (process.env.ANCHORAGE_CODER_PUSH === "false") {
+    return { pushed: false, reason: "push_disabled" };
+  }
+
+  const originResult = await runGit(workspacePath, ["remote", "get-url", "origin"]);
+  const origin = originResult.stdout.trim();
+  if (originResult.exitCode !== 0 || !origin) {
+    return { pushed: false, reason: "no_origin_remote" };
+  }
+
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const pushTarget = authenticatedPushUrl(origin, token);
+  if (!pushTarget) {
+    return { pushed: false, reason: "unsupported_remote_or_missing_token" };
+  }
+
+  emit(task, "tool.requested", "info", `Pushing branch ${branchName}`, {
+    tool: "git.push",
+    input: { branchName, remote: redactUrl(origin) },
+  });
+
+  // Push to an ephemeral token URL so the credential is never written to the
+  // repo's git config. The named `origin` remote stays token-free.
+  const push = await runGit(workspacePath, ["push", pushTarget, `${branchName}:${branchName}`]);
+  if (push.exitCode !== 0) {
+    const reason = redactToken(
+      push.stderr.trim() || `git push failed (exit ${push.exitCode})`,
+      token,
+    );
+    emit(task, "tool.result", "error", `Failed to push branch ${branchName}`, {
+      tool: "git.push",
+      success: false,
+      output: { error: { code: "push_failed", message: reason } },
+    });
+    return { pushed: false, reason };
+  }
+
+  emit(task, "tool.result", "info", `Pushed branch ${branchName}`, {
+    tool: "git.push",
+    success: true,
+    output: { branchName, remote: redactUrl(origin) },
+  });
+  return { pushed: true };
+}
+
+function commitMessage(plan: ImplementationPlan): string {
+  const subject = truncate(
+    (plan.goal || plan.summary || "Apply agent code changes").split("\n")[0]?.trim() ||
+      "Apply agent code changes",
+    72,
+  );
+  const body = plan.summary?.trim();
+  const parts = [subject];
+  if (body && body !== subject) parts.push("", body);
+  parts.push("", `Plan: ${plan.planId}`);
+  return parts.join("\n");
+}
+
+function authenticatedPushUrl(origin: string, token: string | undefined): null | string {
+  if (!token) return null;
+  if (!origin.startsWith("https://")) return null; // ssh/other: no token auth available
+  const withoutCreds = origin.replace(/^https:\/\/([^@/]*@)?/, "");
+  return `https://x-access-token:${token}@${withoutCreds}`;
+}
+
+function redactUrl(url: string): string {
+  return url.replace(/\/\/[^@/]*@/, "//");
+}
+
+function redactToken(text: string, token: string | undefined): string {
+  if (!token) return text;
+  return text.split(token).join("***");
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+function emitGitError(task: TaskEnvelope, tool: string, code: string, message: string): void {
+  // tool.result events must carry `output` per the protocol schema; the failure
+  // detail lives inside it so the event still validates.
+  emit(task, "tool.result", "error", "Git operation failed", {
+    tool,
+    success: false,
+    output: { error: { code, message } },
+  });
 }
 
 async function runGit(workspacePath: string, args: string[]): Promise<CommandResult> {
@@ -708,6 +895,10 @@ type CodeChangeResult = ProtocolEvent["data"] & {
   model: string;
   summary: string;
   commandsSuggested: string[];
+  committed: boolean;
+  commitSha: string | null;
+  pushed: boolean;
+  pushSkippedReason?: string;
 };
 
 main()
