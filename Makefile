@@ -1,14 +1,15 @@
-.PHONY: help install build test typecheck check format clean
+.PHONY: help install build test typecheck check format clean codegraph-init
 
 help:
 	@echo "Anchorage Monorepo Tasks:"
-	@echo "  make install     install dependencies"
-	@echo "  make build       build all packages and agents"
-	@echo "  make test        run all tests"
-	@echo "  make typecheck   run typescript type checking"
-	@echo "  make check       run lint, typecheck, and tests"
-	@echo "  make format      format code with biome"
-	@echo "  make clean       remove build artifacts"
+	@echo "  make install         install dependencies"
+	@echo "  make build           build all packages and agents"
+	@echo "  make test            run all tests"
+	@echo "  make typecheck       run typescript type checking"
+	@echo "  make check           run lint, typecheck, and tests"
+	@echo "  make format          format code with biome"
+	@echo "  make clean           remove build artifacts"
+	@echo "  make codegraph-init  build the CodeGraph index (see docs/codegraph.md)"
 
 install:
 	corepack pnpm install
@@ -31,3 +32,7 @@ format:
 clean:
 	find . -name "dist" -type d -exec rm -rf {} +
 	find . -name "node_modules" -type d -exec rm -rf {} +
+
+# ── CodeGraph (local dev tool, see docs/codegraph.md) ───────────────────────
+codegraph-init:
+	@npx -y @colbymchenry/codegraph init --index

@@ -5,6 +5,9 @@ coverage/
 .turbo/
 .next/
 
+# CodeGraph local index (see docs/codegraph.md) — machine-local SQLite db
+.codegraph/
+
 # Env / secrets
 .env
 .env.*
