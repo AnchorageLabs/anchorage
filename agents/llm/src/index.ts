@@ -385,7 +385,11 @@ async function requestAnthropicCompletion(
     });
 
   let response = await send(true);
-  if (!response.ok && request.temperature !== undefined && isTemperatureUnsupported(response.message)) {
+  if (
+    !response.ok &&
+    request.temperature !== undefined &&
+    isTemperatureUnsupported(response.message)
+  ) {
     response = await send(false);
   }
   if (!response.ok) return { ok: false, message: response.message };
@@ -441,7 +445,11 @@ async function requestChatCompletion(
     });
 
   let response = await send(true);
-  if (!response.ok && request.temperature !== undefined && isTemperatureUnsupported(response.message)) {
+  if (
+    !response.ok &&
+    request.temperature !== undefined &&
+    isTemperatureUnsupported(response.message)
+  ) {
     response = await send(false);
   }
   if (!response.ok) return { ok: false, message: response.message };
