@@ -29,16 +29,16 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-06-01 — Let PR opening recover from unpublished coder branches.
+### 2026-06-01 — Start coder branches from the selected remote base.
 
-**Intent:** Allow live workflows to open PRs when the coder created a commit but reported `pushed: false` by letting `pr-opener` publish that existing branch as a recovery step. GitHub SSH origins are converted to ephemeral HTTPS token push URLs, keeping credentials out of git config while avoiding the generic `branch_not_pushed` failure.
+**Intent:** Ensure the coder resolves each issue from the selected base branch (`main` or the branch chosen in the UI) by fetching and fast-forward pulling it from origin before creating the issue branch. The coder also expands directory `likelyFiles` entries (for example `api/` and `api/internal/`) into tracked source files so broad API issues do not collapse into `status: no_changes` because only `api/go.mod` and docs were provided as context. PR opening can recover when the coder created a commit but reported `pushed: false` by publishing that existing branch as a recovery step.
 
 **Files touched:**
 - CHANGELOG.md
 - agents/coder/src/index.ts
 - agents/pr-opener/src/index.ts
 
-**Reason:** Live pipeline against `AnchorageLabs/envy` failed at `pr-opener` with `branch_not_pushed` after coder delivery became best-effort while pr-opener required a published branch. The workflow continued past `code.change` even when the branch was not on the remote, then failed at PR creation without surfacing the delivery recovery path.
+**Reason:** Live pipeline against `AnchorageLabs/envy#34` failed at `pr-opener` with `branch_not_pushed`, but the real upstream failure was in the coder path: it created the issue branch from whatever checkout the workspace currently had and produced `status=no_changes`, `pushSkippedReason=no_changes`, with a summary saying the selected context only contained `api/go.mod` and `docs/MODEL.md` while the change required router/auth/handler/store/db/migration files. CodeGraph traced the flow through `commitAndPush`, `parseCodeChangeResult`, and `runDefinition`; run artifacts confirmed the coder never produced a commit to publish.
 
 **Author:** Sol Soletti
 
