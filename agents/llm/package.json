@@ -19,7 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1053.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.1058.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1"

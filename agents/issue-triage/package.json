@@ -19,7 +19,7 @@
   "dependencies": {
     "@anchorage/sdk": "workspace:*",
     "@anchorage/agent-llm": "workspace:*",
-    "@aws-sdk/client-bedrock-runtime": "^3.1053.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1058.0",
     "@octokit/rest": "^22.0.1"
   },
   "devDependencies": {
