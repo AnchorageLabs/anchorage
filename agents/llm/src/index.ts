@@ -27,10 +27,20 @@ export interface LlmConfig {
   region?: string;
 }
 
+// Anthropic requires a max_tokens; this is the generous default used only when a
+// caller leaves maxTokens unset (OpenAI/Bedrock omit the cap entirely instead).
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 16000;
+
 export interface LlmRequest {
   system: string;
   user: string;
-  maxTokens: number;
+  /**
+   * Output token cap. Optional: when omitted, the OpenAI and Bedrock paths send
+   * no cap at all so the model produces as much as it needs (up to its own
+   * maximum). The Anthropic path falls back to DEFAULT_ANTHROPIC_MAX_TOKENS
+   * because that API requires max_tokens.
+   */
+  maxTokens?: number;
   /**
    * Sampling temperature. Optional: some models (e.g. Claude Opus 4.8+) have
    * deprecated the parameter and reject requests that include it. When set, the
@@ -389,7 +399,7 @@ async function requestAnthropicCompletion(
       },
       body: {
         model: config.model,
-        max_tokens: request.maxTokens,
+        max_tokens: request.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
         ...temperatureBody(request, includeTemperature),
         system: [anthropicSystemBlock(request.system)],
         messages: [{ role: "user", content: request.user }],
@@ -460,7 +470,7 @@ async function requestChatCompletion(
           { role: "system", content: request.system },
           { role: "user", content: request.user },
         ],
-        [tokenParam]: request.maxTokens,
+        ...(request.maxTokens !== undefined ? { [tokenParam]: request.maxTokens } : {}),
         ...(includeTemperature && request.temperature !== undefined
           ? { temperature: request.temperature }
           : {}),
@@ -540,7 +550,7 @@ async function requestBedrockCompletion(
         system: [{ text: request.system }],
         messages: [{ role: "user", content: [{ text: request.user }] }],
         inferenceConfig: {
-          maxTokens: request.maxTokens,
+          ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
           ...(includeTemperature && request.temperature !== undefined
             ? { temperature: request.temperature }
             : {}),

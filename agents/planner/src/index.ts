@@ -272,7 +272,6 @@ async function createPlan(
   const response = await requestLlmCompletion(config.value, {
     system: plannerSystemPrompt(),
     user: plannerUserPrompt(issue),
-    maxTokens: 2400,
     temperature: 0.2,
   });
   if (!response.ok) {

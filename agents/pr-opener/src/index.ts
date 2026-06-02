@@ -156,7 +156,6 @@ async function generatePrContent(
   const response = await requestLlmCompletion(config.value, {
     system: prContentSystemPrompt(),
     user: prContentUserPrompt(input),
-    maxTokens: 1200,
     temperature: 0.2,
   });
   if (!response.ok) {

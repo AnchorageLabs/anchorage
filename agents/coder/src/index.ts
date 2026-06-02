@@ -326,7 +326,12 @@ async function requestCodeChanges(
   plan: ImplementationPlan,
   workspaceContext: WorkspaceContext,
 ): Promise<{ ok: true; value: LlmCodeResult } | CoderFailure> {
-  const maxTokens = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS ?? 120000);
+  // No output cap by default — the model produces what the change needs.
+  // ANCHORAGE_CODER_MAX_TOKENS is an optional override for environments that
+  // want to bound it.
+  const maxTokens = process.env.ANCHORAGE_CODER_MAX_TOKENS
+    ? Number(process.env.ANCHORAGE_CODER_MAX_TOKENS)
+    : undefined;
   const maxAttempts = Number(process.env.ANCHORAGE_CODER_MAX_ATTEMPTS ?? 2);
   const userPrompt = coderUserPrompt(plan, workspaceContext);
 
@@ -347,9 +352,13 @@ async function requestCodeChanges(
     // Anthropic + Bedrock report "max_tokens"; OpenAI reports "length".
     const stopReason = response.value.stopReason;
     if (stopReason === "max_tokens" || stopReason === "length") {
+      const limit =
+        maxTokens !== undefined
+          ? `the configured cap (ANCHORAGE_CODER_MAX_TOKENS=${maxTokens})`
+          : "the model's maximum output";
       return failure(
         "llm_output_truncated",
-        `${config.provider} stopped at the output token limit (${maxTokens}). The feature is too large for one coder call. Set ANCHORAGE_CODER_MAX_TOKENS to a higher value or break the issue into smaller tasks.`,
+        `${config.provider} stopped at ${limit}. The feature may be too large for one coder call — raise/clear ANCHORAGE_CODER_MAX_TOKENS or break the issue into smaller tasks.`,
         ExitCode.ExternalDependencyFailure,
       );
     }
