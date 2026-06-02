@@ -6,7 +6,7 @@
   "taskTypes": ["plan.create"],
   "inputs": ["issue.summary"],
   "outputs": ["implementation.plan"],
-  "requires": ["llm.plan"],
+  "requires": ["llm.plan", "repo.read", "web.read"],
   "binary": "./dist/index.js",
   "timeout": 120
 }

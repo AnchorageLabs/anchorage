@@ -1,4 +1,40 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { runWithTools } from "./tools/loop.js";
+import { createAnthropicProvider } from "./tools/providers/anthropic.js";
+import { createOpenAiProvider } from "./tools/providers/openai.js";
+import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from "./tools/types.js";
+
+export { discoveryTools } from "./tools/builtin/discovery.js";
+export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
+export { shellTools } from "./tools/builtin/shell.js";
+export { webTools } from "./tools/builtin/web.js";
+// Re-export the tool-loop surface so consumers can `import { runWithTools,
+// repoReadTools, ... } from "@anchorage/agent-llm"` without deep imports.
+export { runWithTools } from "./tools/loop.js";
+export { createAnthropicProvider } from "./tools/providers/anthropic.js";
+export { createOpenAiProvider } from "./tools/providers/openai.js";
+export type {
+  AssistantMessage,
+  BudgetConfig,
+  BudgetState,
+  ContentBlock,
+  ContextSnapshot,
+  LoopMessage,
+  ProviderAdapter,
+  RunWithToolsRequest,
+  RunWithToolsResult,
+  TextBlock,
+  ToolCallRecord,
+  ToolContext,
+  ToolDefinition,
+  ToolEvent,
+  ToolEventEmitter,
+  ToolHandler,
+  ToolHandlerResult,
+  ToolResultBlock,
+  ToolUseBlock,
+  UserMessage,
+} from "./tools/types.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -94,6 +130,67 @@ export async function requestLlmCompletion(
     case "openai-compatible":
       return requestChatCompletion(config, request);
   }
+}
+
+/**
+ * Build a tool-loop ProviderAdapter from an existing LlmConfig. Anthropic and
+ * OpenAI (incl. Moonshot/Kimi/openai-compatible) are supported; Bedrock and
+ * other providers return an error — the one-shot requestLlmCompletion path
+ * remains available for those callers.
+ */
+export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdapter> {
+  switch (config.provider) {
+    case "anthropic":
+      if (!config.apiKey) {
+        return { ok: false, message: "Anthropic provider requires an API key." };
+      }
+      return {
+        ok: true,
+        value: createAnthropicProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          promptCache: process.env.ANCHORAGE_LLM_PROMPT_CACHE !== "false",
+        }),
+      };
+    case "openai":
+    case "openai-compatible":
+    case "kimi":
+    case "moonshot":
+      if (!config.apiKey) {
+        return { ok: false, message: `${config.provider} provider requires an API key.` };
+      }
+      return {
+        ok: true,
+        value: createOpenAiProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+        }),
+      };
+    case "aws-bedrock":
+      return {
+        ok: false,
+        message:
+          "Bedrock tool-use is not wired yet. Use anthropic / openai providers, " +
+          "or fall back to the one-shot requestLlmCompletion path.",
+      };
+  }
+}
+
+/**
+ * Convenience: resolve a provider from an LlmConfig and drive the tool loop.
+ * Equivalent to `providerFromLlmConfig` + `runWithTools` but saves the agent
+ * a few lines.
+ */
+export async function runWithLlmTools(
+  config: LlmConfig,
+  request: RunWithToolsRequest,
+): Promise<LlmResult<RunWithToolsResult>> {
+  const provider = providerFromLlmConfig(config);
+  if (!provider.ok) return { ok: false, message: provider.message };
+  const result = await runWithTools(provider.value, request);
+  return { ok: true, value: result };
 }
 
 export function llmEventInput(
