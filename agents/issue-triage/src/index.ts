@@ -68,7 +68,6 @@ async function main(): Promise<number> {
   const completion = await requestLlmCompletion(llmConfig.value, {
     system: triageSystemPrompt(),
     user: triageUserPrompt(issue.value),
-    maxTokens: 1200,
     temperature: 0.1,
   });
 

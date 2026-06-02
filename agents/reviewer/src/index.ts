@@ -412,7 +412,6 @@ async function requestReview(
   const response = await requestLlmCompletion(config, {
     system: reviewerSystemPrompt(),
     user: reviewerUserPrompt(pr),
-    maxTokens: 4000,
     temperature: 0.1,
   });
   if (!response.ok) {
