@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-01 — Let coder push GitHub SSH-origin workspaces with token auth.
+
+**Intent:** Allow live workflows to open PRs from workspaces whose `origin` remote is `git@github.com:OWNER/REPO.git` by converting that remote to an ephemeral HTTPS token push URL. This keeps credentials out of git config while satisfying the `pr-opener` requirement that `code.change.result.pushed` is true.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/coder/src/index.ts
+
+**Reason:** Live pipeline against `AnchorageLabs/envy` failed at `pr-opener` with `branch_not_pushed` because the coder only supported HTTPS origins for token-authenticated pushes and treated the SSH origin as `unsupported_remote_or_missing_token`.
+
+**Author:** Sol Soletti
+
 ### 2026-05-13 — Restore green CI baseline for current Dependabot action PRs.
 
 **Intent:** Let current GitHub Actions dependency updates validate against a green baseline by fixing Biome lint drift and making Vitest resolve a peer-compatible Vite version during SDK tests.

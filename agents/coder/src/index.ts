@@ -710,9 +710,19 @@ function commitMessage(plan: ImplementationPlan): string {
 
 function authenticatedPushUrl(origin: string, token: string | undefined): null | string {
   if (!token) return null;
-  if (!origin.startsWith("https://")) return null; // ssh/other: no token auth available
-  const withoutCreds = origin.replace(/^https:\/\/([^@/]*@)?/, "");
+  const httpsOrigin = githubHttpsOrigin(origin);
+  if (!httpsOrigin) return null;
+  const withoutCreds = httpsOrigin.replace(/^https:\/\/([^@/]*@)?/, "");
   return `https://x-access-token:${token}@${withoutCreds}`;
+}
+
+function githubHttpsOrigin(origin: string): null | string {
+  if (origin.startsWith("https://")) return origin;
+
+  const sshMatch = /^git@github\.com:([^/]+)\/(.+)$/.exec(origin);
+  if (!sshMatch) return null;
+  const [, owner, repo] = sshMatch;
+  return `https://github.com/${owner}/${repo}`;
 }
 
 function redactUrl(url: string): string {
