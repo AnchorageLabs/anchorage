@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -39,7 +40,7 @@ async function main(): Promise<number> {
   const input = await resolvePrOpenerInput(task.value);
   if (!input.ok) return fail(task.value, input);
 
-  const { codeChangeResult, owner, name: repoName, baseBranch } = input.value;
+  const { workspacePath, codeChangeResult, owner, name: repoName, baseBranch } = input.value;
   const { branchName, changedFiles } = codeChangeResult;
 
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
@@ -51,18 +52,9 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  // Commit + push are owned by the coder (issue #39); the pr-opener no longer
-  // stages, commits, or pushes. It relies on the branch the coder already
-  // published and only opens the PR. If the branch wasn't pushed there is no
-  // remote head to open a PR from — fail clearly instead of letting the GitHub
-  // API return an opaque "head not found".
   if (!codeChangeResult.pushed) {
-    const msg =
-      "code.change.result.pushed is not true — the coder did not push the branch, so there is no remote branch to open a PR from.";
-    emit(task.value, "agent.failed", "error", msg, {
-      error: { code: "branch_not_pushed", message: msg },
-    });
-    return ExitCode.ExternalDependencyFailure;
+    const publish = await publishBranch(task.value, workspacePath, codeChangeResult, token);
+    if (!publish.ok) return fail(task.value, publish.failure);
   }
 
   const prContent = await generatePrContent(task.value, input.value);
@@ -473,8 +465,131 @@ function parseCodeChangeResult(
       issueUrl: extractIssueUrl(value),
       pushed: value.pushed === true,
       commitSha: typeof value.commitSha === "string" ? value.commitSha : null,
+      pushSkippedReason:
+        typeof value.pushSkippedReason === "string" ? value.pushSkippedReason : null,
     },
   };
+}
+
+async function publishBranch(
+  task: TaskEnvelope,
+  workspacePath: string,
+  codeChangeResult: CodeChangeInput,
+  token: string,
+): Promise<{ ok: true } | { ok: false; failure: PrOpenerFailure }> {
+  if (!codeChangeResult.commitSha) {
+    const reason = codeChangeResult.pushSkippedReason
+      ? ` coder pushSkippedReason=${codeChangeResult.pushSkippedReason}.`
+      : "";
+    return {
+      ok: false,
+      failure: failure(
+        "branch_not_pushed",
+        `code.change.result.pushed is not true and there is no coder commit to publish.${reason}`,
+        ExitCode.ExternalDependencyFailure,
+      ),
+    };
+  }
+
+  const originResult = await runGit(workspacePath, ["remote", "get-url", "origin"]);
+  const origin = originResult.stdout.trim();
+  if (originResult.exitCode !== 0 || !origin) {
+    return {
+      ok: false,
+      failure: failure(
+        "no_origin_remote",
+        "code.change.result.pushed is not true and the workspace has no origin remote to publish from.",
+        ExitCode.ExternalDependencyFailure,
+      ),
+    };
+  }
+
+  const pushTarget = authenticatedPushUrl(origin, token);
+  if (!pushTarget) {
+    return {
+      ok: false,
+      failure: failure(
+        "unsupported_remote_or_missing_token",
+        `code.change.result.pushed is not true and origin cannot be pushed with token auth: ${redactUrl(origin)}`,
+        ExitCode.ExternalDependencyFailure,
+      ),
+    };
+  }
+
+  emit(task, "tool.requested", "info", `Publishing branch ${codeChangeResult.branchName}`, {
+    tool: "git.push",
+    input: { branchName: codeChangeResult.branchName, remote: redactUrl(origin) },
+  });
+
+  const push = await runGit(workspacePath, [
+    "push",
+    pushTarget,
+    `${codeChangeResult.branchName}:${codeChangeResult.branchName}`,
+  ]);
+  if (push.exitCode !== 0) {
+    const message = redactToken(
+      push.stderr.trim() || push.stdout.trim() || `git push failed (exit ${push.exitCode})`,
+      token,
+    );
+    emit(task, "tool.result", "error", "Failed to publish branch", {
+      tool: "git.push",
+      success: false,
+      output: { error: { code: "git_push_failed", message } },
+    });
+    return {
+      ok: false,
+      failure: failure("git_push_failed", message, ExitCode.ExternalDependencyFailure),
+    };
+  }
+
+  emit(task, "tool.result", "info", "Branch published", {
+    tool: "git.push",
+    success: true,
+    output: { branchName: codeChangeResult.branchName, remote: redactUrl(origin) },
+  });
+  return { ok: true };
+}
+
+async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (error) => resolve({ exitCode: 127, stdout: "", stderr: error.message }));
+    child.on("close", (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
+}
+
+function authenticatedPushUrl(origin: string, token: string): null | string {
+  const httpsOrigin = githubHttpsOrigin(origin);
+  if (!httpsOrigin) return null;
+  const withoutCreds = httpsOrigin.replace(/^https:\/\/([^@/]*@)?/, "");
+  return `https://x-access-token:${token}@${withoutCreds}`;
+}
+
+function githubHttpsOrigin(origin: string): null | string {
+  if (origin.startsWith("https://")) return origin;
+
+  const sshMatch = /^git@github\.com:([^/]+)\/(.+)$/.exec(origin);
+  if (!sshMatch) return null;
+  const [, owner, repo] = sshMatch;
+  return `https://github.com/${owner}/${repo}`;
+}
+
+function redactUrl(url: string): string {
+  return url.replace(/\/\/[^@/]*@/, "//");
+}
+
+function redactToken(text: string, token: string): string {
+  return text.split(token).join("***");
 }
 
 async function readPlanArtifact(task: TaskEnvelope): Promise<JsonObject | null> {
@@ -607,6 +722,13 @@ interface CodeChangeInput {
   // pushed the branch. The pr-opener requires `pushed` to open a PR.
   pushed: boolean;
   commitSha: null | string;
+  pushSkippedReason: null | string;
+}
+
+interface CommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 interface PrContentRaw {
