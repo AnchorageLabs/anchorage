@@ -306,19 +306,106 @@ async function collectWorkspaceContext(
   const files: WorkspaceFile[] = [];
   const candidates = unique(
     plan.likelyFiles.filter((filePath) => filePath !== "TBD by coder after repository inspection"),
-  ).slice(0, maxFiles);
+  );
 
   for (const candidate of candidates) {
+    if (files.length >= maxFiles) break;
     const safePath = safeWorkspacePath(workspacePath, candidate);
     if (!safePath) continue;
     const stat = await fs.stat(safePath.absolutePath).catch(() => null);
-    if (!stat?.isFile() || stat.size > maxBytes) continue;
-    const content = await fs.readFile(safePath.absolutePath, "utf8").catch(() => null);
-    if (content === null) continue;
-    files.push({ path: safePath.relativePath, content });
+    if (!stat) continue;
+
+    if (stat.isDirectory()) {
+      const expanded = await trackedFilesUnder(workspacePath, safePath.relativePath, maxFiles);
+      for (const relativePath of rankContextFiles(expanded, plan)) {
+        if (files.length >= maxFiles) break;
+        if (files.some((file) => file.path === relativePath)) continue;
+        const added = await readWorkspaceContextFile(workspacePath, relativePath, maxBytes);
+        if (added) files.push(added);
+      }
+      continue;
+    }
+
+    if (stat.isFile()) {
+      const added = await readWorkspaceContextFile(workspacePath, safePath.relativePath, maxBytes);
+      if (added && !files.some((file) => file.path === added.path)) files.push(added);
+    }
   }
 
   return { files };
+}
+
+async function trackedFilesUnder(
+  workspacePath: string,
+  relativePath: string,
+  maxFiles: number,
+): Promise<string[]> {
+  const prefix = relativePath.replaceAll("\\", "/").replace(/\/+$/, "");
+  const result = await runGit(workspacePath, ["ls-files", "--", prefix]);
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(isString)
+    .filter(isLikelyTextSourceFile)
+    .slice(0, maxFiles * 4);
+}
+
+async function readWorkspaceContextFile(
+  workspacePath: string,
+  relativePath: string,
+  maxBytes: number,
+): Promise<WorkspaceFile | null> {
+  const safePath = safeWorkspacePath(workspacePath, relativePath);
+  if (!safePath) return null;
+  const stat = await fs.stat(safePath.absolutePath).catch(() => null);
+  if (!stat?.isFile() || stat.size > maxBytes) return null;
+  const content = await fs.readFile(safePath.absolutePath, "utf8").catch(() => null);
+  return content === null ? null : { path: safePath.relativePath, content };
+}
+
+function rankContextFiles(files: string[], plan: ImplementationPlan): string[] {
+  const haystack = [
+    plan.goal,
+    plan.summary,
+    ...plan.implementationSteps,
+    ...plan.acceptanceCriteria,
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  return [...files].sort((a, b) => scoreContextFile(b, haystack) - scoreContextFile(a, haystack));
+}
+
+function scoreContextFile(file: string, planText: string): number {
+  const lower = file.toLowerCase();
+  let score = 0;
+  for (const token of [
+    "handler",
+    "server",
+    "router",
+    "route",
+    "auth",
+    "repo",
+    "store",
+    "db",
+    "migration",
+    "project",
+    "environment",
+    "version",
+  ]) {
+    if (lower.includes(token)) score += planText.includes(token) ? 4 : 1;
+  }
+  if (/\.(go|ts|tsx|js|jsx|py|rs|sql|md|json)$/.test(lower)) score += 1;
+  return score;
+}
+
+function isLikelyTextSourceFile(file: string): boolean {
+  const lower = file.toLowerCase();
+  if (lower.includes("/node_modules/") || lower.includes("/dist/") || lower.includes("/vendor/")) {
+    return false;
+  }
+  return /\.(go|ts|tsx|js|jsx|py|rs|sql|md|json|yaml|yml|toml|mod|sum)$/.test(lower);
 }
 
 async function requestCodeChanges(
