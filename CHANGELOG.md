@@ -29,16 +29,16 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-06-01 — Give coder enough repository context for directory-scoped plans.
+### 2026-06-01 — Start coder branches from the selected remote base.
 
-**Intent:** Let the coder expand `likelyFiles` entries that are directories (for example `api/` and `api/internal/`) into tracked source files before asking the LLM for edits, so broad API issues do not collapse into `status: no_changes` because only `api/go.mod` and docs were provided as context. PR opening can also recover when the coder created a commit but reported `pushed: false` by publishing that existing branch as a recovery step.
+**Intent:** Ensure the coder resolves each issue from the selected base branch (`main` or the branch chosen in the UI) by fetching and fast-forward pulling it from origin before creating the issue branch. The coder also expands directory `likelyFiles` entries (for example `api/` and `api/internal/`) into tracked source files so broad API issues do not collapse into `status: no_changes` because only `api/go.mod` and docs were provided as context. PR opening can recover when the coder created a commit but reported `pushed: false` by publishing that existing branch as a recovery step.
 
 **Files touched:**
 - CHANGELOG.md
 - agents/coder/src/index.ts
 - agents/pr-opener/src/index.ts
 
-**Reason:** Live pipeline against `AnchorageLabs/envy#34` failed at `pr-opener` with `branch_not_pushed`, but the real upstream failure was the coder artifact: `status=no_changes`, `pushSkippedReason=no_changes`, and a summary saying the selected context only contained `api/go.mod` and `docs/MODEL.md` while the change required router/auth/handler/store/db/migration files. CodeGraph traced the flow through `commitAndPush`, `parseCodeChangeResult`, and `runDefinition`; run artifacts confirmed the context starvation.
+**Reason:** Live pipeline against `AnchorageLabs/envy#34` failed at `pr-opener` with `branch_not_pushed`, but the real upstream failure was in the coder path: it created the issue branch from whatever checkout the workspace currently had and produced `status=no_changes`, `pushSkippedReason=no_changes`, with a summary saying the selected context only contained `api/go.mod` and `docs/MODEL.md` while the change required router/auth/handler/store/db/migration files. CodeGraph traced the flow through `commitAndPush`, `parseCodeChangeResult`, and `runDefinition`; run artifacts confirmed the coder never produced a commit to publish.
 
 **Author:** Sol Soletti
 

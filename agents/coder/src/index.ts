@@ -47,6 +47,14 @@ async function main(): Promise<number> {
   const auth = resolveCoderLlmConfig();
   if (!auth.ok) return fail(task.value, auth);
 
+  const baseBranch = task.value.repository?.defaultBranch ?? "main";
+  const baseResult = await syncBaseBranch(
+    task.value,
+    input.value.workspacePath,
+    baseBranch,
+  );
+  if (!baseResult.ok) return fail(task.value, baseResult);
+
   const branchResult = await ensureBranch(
     task.value,
     input.value.workspacePath,
@@ -651,6 +659,62 @@ async function ensureBranch(
     output: { error: { code: "branch_checkout_failed", message } },
   });
   return failure("branch_checkout_failed", message, ExitCode.ExternalDependencyFailure);
+}
+
+async function syncBaseBranch(
+  task: TaskEnvelope,
+  workspacePath: string,
+  baseBranch: string,
+): Promise<{ ok: true } | CoderFailure> {
+  emit(task, "tool.requested", "info", `Syncing base branch ${baseBranch}`, {
+    tool: "git.sync_base",
+    input: { baseBranch, workspacePath },
+  });
+
+  const fetch = await runGit(workspacePath, [
+    "fetch",
+    "origin",
+    `${baseBranch}:refs/remotes/origin/${baseBranch}`,
+  ]);
+  if (fetch.exitCode !== 0) {
+    const message =
+      fetch.stderr.trim() || fetch.stdout.trim() || `git fetch failed (exit ${fetch.exitCode})`;
+    emitGitError(task, "git.sync_base", "base_fetch_failed", message);
+    return failure("base_fetch_failed", message, ExitCode.ExternalDependencyFailure);
+  }
+
+  const switchExisting = await runGit(workspacePath, ["switch", baseBranch]);
+  if (switchExisting.exitCode !== 0) {
+    const switchNew = await runGit(workspacePath, [
+      "switch",
+      "-c",
+      baseBranch,
+      `origin/${baseBranch}`,
+    ]);
+    if (switchNew.exitCode !== 0) {
+      const message =
+        switchNew.stderr.trim() ||
+        switchExisting.stderr.trim() ||
+        `git switch base failed (exit ${switchNew.exitCode})`;
+      emitGitError(task, "git.sync_base", "base_checkout_failed", message);
+      return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
+    }
+  }
+
+  const pull = await runGit(workspacePath, ["pull", "--ff-only", "origin", baseBranch]);
+  if (pull.exitCode !== 0) {
+    const message =
+      pull.stderr.trim() || pull.stdout.trim() || `git pull failed (exit ${pull.exitCode})`;
+    emitGitError(task, "git.sync_base", "base_pull_failed", message);
+    return failure("base_pull_failed", message, ExitCode.ExternalDependencyFailure);
+  }
+
+  emit(task, "tool.result", "info", `Base branch ${baseBranch} synced`, {
+    tool: "git.sync_base",
+    success: true,
+    output: { baseBranch },
+  });
+  return { ok: true };
 }
 
 interface DeliveryResult {
