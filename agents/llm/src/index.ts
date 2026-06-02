@@ -333,7 +333,19 @@ function roleModelEnvName(role: string): string {
 function isTemperatureUnsupported(message: string): boolean {
   return (
     /temperature/i.test(message) &&
-    /(deprecat|unsupported|not\s+supported|not\s+allowed|invalid)/i.test(message)
+    /(deprecat|unsupported|not\s+support|not\s+allowed|invalid)/i.test(message)
+  );
+}
+
+/**
+ * True when a provider rejects `max_completion_tokens` (an older model / a
+ * compatible endpoint that only knows `max_tokens`), so the caller can fall
+ * back to `max_tokens`.
+ */
+function isMaxCompletionTokensUnsupported(message: string): boolean {
+  return (
+    /max_completion_tokens/i.test(message) &&
+    /(unsupported|unrecogni|unknown|not\s+support|invalid)/i.test(message)
   );
 }
 
@@ -427,7 +439,16 @@ async function requestChatCompletion(
   config: LlmConfig,
   request: LlmRequest,
 ): Promise<LlmResult<LlmCompletion>> {
-  const send = (includeTemperature: boolean) =>
+  // Token budget parameter: OpenAI's newer (reasoning) models require
+  // `max_completion_tokens` and reject `max_tokens`; older models and most
+  // OpenAI-compatible providers (moonshot/kimi) still take `max_tokens`. Start
+  // with the right default per provider, then flex on the API's error so any
+  // model works without us tracking model names.
+  let tokenParam: "max_completion_tokens" | "max_tokens" =
+    config.provider === "openai" ? "max_completion_tokens" : "max_tokens";
+  let includeTemperature = request.temperature !== undefined;
+
+  const send = () =>
     postJson(`${config.baseUrl}/chat/completions`, {
       headers: {
         authorization: `Bearer ${config.apiKey ?? ""}`,
@@ -439,18 +460,34 @@ async function requestChatCompletion(
           { role: "system", content: request.system },
           { role: "user", content: request.user },
         ],
-        max_tokens: request.maxTokens,
-        ...temperatureBody(request, includeTemperature),
+        [tokenParam]: request.maxTokens,
+        ...(includeTemperature && request.temperature !== undefined
+          ? { temperature: request.temperature }
+          : {}),
       },
     });
 
-  let response = await send(true);
-  if (
-    !response.ok &&
-    request.temperature !== undefined &&
-    isTemperatureUnsupported(response.message)
-  ) {
-    response = await send(false);
+  let response = await send();
+  // Retry up to twice, dropping/flipping whichever parameter the model rejects
+  // (temperature for reasoning models; the token-budget param either way).
+  for (let attempt = 0; attempt < 2 && !response.ok; attempt++) {
+    let changed = false;
+    if (includeTemperature && isTemperatureUnsupported(response.message)) {
+      includeTemperature = false;
+      changed = true;
+    }
+    if (tokenParam === "max_tokens" && /max_completion_tokens/i.test(response.message)) {
+      tokenParam = "max_completion_tokens";
+      changed = true;
+    } else if (
+      tokenParam === "max_completion_tokens" &&
+      isMaxCompletionTokensUnsupported(response.message)
+    ) {
+      tokenParam = "max_tokens";
+      changed = true;
+    }
+    if (!changed) break;
+    response = await send();
   }
   if (!response.ok) return { ok: false, message: response.message };
 
