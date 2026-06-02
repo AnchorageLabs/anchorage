@@ -29,15 +29,16 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-06-01 — Let coder push GitHub SSH-origin workspaces with token auth.
+### 2026-06-01 — Let PR opening recover from unpublished coder branches.
 
-**Intent:** Allow live workflows to open PRs from workspaces whose `origin` remote is `git@github.com:OWNER/REPO.git` by converting that remote to an ephemeral HTTPS token push URL. This keeps credentials out of git config while satisfying the `pr-opener` requirement that `code.change.result.pushed` is true.
+**Intent:** Allow live workflows to open PRs when the coder created a commit but reported `pushed: false` by letting `pr-opener` publish that existing branch as a recovery step. GitHub SSH origins are converted to ephemeral HTTPS token push URLs, keeping credentials out of git config while avoiding the generic `branch_not_pushed` failure.
 
 **Files touched:**
 - CHANGELOG.md
 - agents/coder/src/index.ts
+- agents/pr-opener/src/index.ts
 
-**Reason:** Live pipeline against `AnchorageLabs/envy` failed at `pr-opener` with `branch_not_pushed` because the coder only supported HTTPS origins for token-authenticated pushes and treated the SSH origin as `unsupported_remote_or_missing_token`.
+**Reason:** Live pipeline against `AnchorageLabs/envy` failed at `pr-opener` with `branch_not_pushed` after coder delivery became best-effort while pr-opener required a published branch. The workflow continued past `code.change` even when the branch was not on the remote, then failed at PR creation without surfacing the delivery recovery path.
 
 **Author:** Sol Soletti
 
