@@ -143,12 +143,12 @@ importers:
 
   agents/pr-opener:
     dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.1053.0
-        version: 3.1053.0
       '@octokit/rest':
         specifier: ^22.0.1
         version: 22.0.1

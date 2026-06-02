@@ -4,13 +4,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { llmEventInput, requestLlmCompletion, resolveLlmConfig } from "@anchorage/agent-llm";
 import {
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { Octokit } from "@octokit/rest";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -133,51 +133,48 @@ async function generatePrContent(
   task: TaskEnvelope,
   input: PrOpenerInput,
 ): Promise<{ title: string; body: string }> {
-  if (!hasBedrockAuth()) {
+  // Use the shared LLM adapter so the title/body respect the configured provider
+  // (ANCHORAGE_LLM_PROVIDER: anthropic/openai/bedrock/...). The previous
+  // Bedrock-only path silently fell back to a generic "Fix issue #N" title for
+  // every non-Bedrock provider.
+  const config = resolveLlmConfig({
+    role: "pr-opener",
+    anthropicModel: "claude-sonnet-4-6",
+    bedrockModel: "us.anthropic.claude-sonnet-4-6",
+    openaiModel: "gpt-4.1",
+  });
+  if (!config.ok) {
+    // No LLM configured at all — deterministic fallback title/body.
     return fallbackPrContent(input);
   }
 
-  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-  const model =
-    process.env.ANCHORAGE_PR_OPENER_MODEL ??
-    process.env.ANCHORAGE_PLANNER_MODEL ??
-    "us.anthropic.claude-sonnet-4-6";
-
   emit(task, "tool.requested", "info", "Generating PR title and body via LLM", {
-    tool: "bedrock.converse",
-    input: { provider: "aws-bedrock", region, model },
+    tool: config.value.tool,
+    input: llmEventInput(config.value, { issueNumber: input.codeChangeResult.issueNumber }),
   });
 
-  let response: unknown;
-  try {
-    const client = new BedrockRuntimeClient({ region });
-    response = await client.send(
-      new ConverseCommand({
-        modelId: model,
-        system: [{ text: prContentSystemPrompt() }],
-        messages: [{ role: "user", content: [{ text: prContentUserPrompt(input) }] }],
-        inferenceConfig: { maxTokens: 1200, temperature: 0.2 },
-      }),
-    );
-  } catch {
-    emit(task, "tool.result", "info", "LLM PR content failed, using fallback", {
-      tool: "bedrock.converse",
+  const response = await requestLlmCompletion(config.value, {
+    system: prContentSystemPrompt(),
+    user: prContentUserPrompt(input),
+    maxTokens: 1200,
+    temperature: 0.2,
+  });
+  if (!response.ok) {
+    emit(task, "tool.result", "warn", "LLM PR content failed, using fallback", {
+      tool: config.value.tool,
       success: false,
-      output: { fallback: true },
+      output: { error: response.message, fallback: true },
     });
     return fallbackPrContent(input);
   }
 
-  const text = extractBedrockText(response);
-  if (!text) return fallbackPrContent(input);
-
-  const parsed = parsePrContentJson(text);
+  const parsed = parsePrContentJson(response.value.text);
   if (!parsed) return fallbackPrContent(input);
 
   emit(task, "tool.result", "info", "LLM PR content generated", {
-    tool: "bedrock.converse",
+    tool: config.value.tool,
     success: true,
-    output: { titleLength: parsed.title.length },
+    output: { ...llmEventInput(config.value), titleLength: parsed.title.length },
   });
 
   return assemblePrContent(parsed, input.codeChangeResult);
@@ -332,31 +329,6 @@ function buildFallbackTitle(codeChange: CodeChangeInput): string {
 function changedFilesList(files: string[]): string {
   if (files.length === 0) return "No files changed.";
   return files.map((f) => `- \`${f}\``).join("\n");
-}
-
-function hasBedrockAuth(): boolean {
-  return Boolean(
-    process.env.AWS_BEARER_TOKEN_BEDROCK ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE ||
-      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
-      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-      process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-  );
-}
-
-function extractBedrockText(value: unknown): null | string {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as Record<string, unknown>;
-  const output = v.output as Record<string, unknown> | undefined;
-  const message = output?.message as Record<string, unknown> | undefined;
-  if (!Array.isArray(message?.content)) return null;
-  const text = (message.content as unknown[])
-    .map((b) => (typeof b === "object" && b !== null ? (b as Record<string, unknown>).text : null))
-    .filter((t): t is string => typeof t === "string")
-    .join("\n")
-    .trim();
-  return text || null;
 }
 
 // ── Input resolution ──────────────────────────────────────────────────────────
