@@ -17,9 +17,12 @@ import { Octokit } from "@octokit/rest";
 const agentVersion = "0.1.0";
 let eventSequence = 0;
 
-// Bounds for the agentic exploration loop. Kept conservative so the agent works
-// with smaller open-source models and never runs away against a large repo.
-const MAX_STEPS = 12;
+// Upper bound on exploration turns. This is a safety stop against runaway cost /
+// the step's own duration ceiling — NOT a failure condition: when the budget is
+// reached the agent forces a finalize instead of giving up (see exploreAndDraft).
+// Opening the issue is the most important step in the pipeline, so it must always
+// translate the user's instruction into an issue.
+const MAX_STEPS = 16;
 const MAX_OBSERVATION_CHARS = 4000;
 const MAX_DIR_ENTRIES = 200;
 const LLM_MAX_TOKENS = 4000;
@@ -156,7 +159,18 @@ async function exploreAndDraft(
     openaiModel: "gpt-4.1",
   });
   if (!config.ok) {
-    return detail("llm_unconfigured", config.message, ExitCode.MissingCapability);
+    // The issue is the most important step in the pipeline — never abort. With no
+    // LLM we can still translate the instruction faithfully into a minimal issue.
+    emit(
+      task,
+      "agent.progress",
+      "warn",
+      "LLM unavailable; drafting the issue from the instruction",
+      {
+        reason: config.message,
+      },
+    );
+    return { ok: true, value: fallbackDraft(input.instruction) };
   }
 
   emit(task, "agent.progress", "info", "Exploring repository to draft the issue", {
@@ -168,7 +182,7 @@ async function exploreAndDraft(
   // in `user`. Each turn the model emits one JSON action; we run it and append the
   // observation, until it finalizes or we hit the step cap.
   const system = buildSystemPrompt();
-  let transcript = `Instruction from the user:\n${input.instruction}\n\nBegin exploring. Respond with your first JSON action.`;
+  let transcript = `Instruction from the user:\n${input.instruction}\n\nYou have up to ${MAX_STEPS} exploration steps before you must finalize. Explore enough to ground the issue, then finalize. Respond with your first JSON action.`;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const completion = await requestLlmCompletion(config.value, {
@@ -177,7 +191,21 @@ async function exploreAndDraft(
       maxTokens: LLM_MAX_TOKENS,
     });
     if (!completion.ok) {
-      return detail("llm_request_failed", completion.message, ExitCode.ExternalDependencyFailure);
+      // Don't lose the user's request to a transient model error: finalize with
+      // whatever we have, falling back to a draft built straight from the instruction.
+      emit(
+        task,
+        "agent.progress",
+        "warn",
+        "LLM request failed; finalizing the issue with what we have",
+        {
+          reason: completion.message,
+        },
+      );
+      return {
+        ok: true,
+        value: await finalizeOrFallback(task, config.value, system, transcript, input.instruction),
+      };
     }
 
     const action = parseAction(completion.value.text);
@@ -217,11 +245,86 @@ async function exploreAndDraft(
     transcript += `\n\nASSISTANT:\n${JSON.stringify(action)}\n\nOBSERVATION:\n${observation}`;
   }
 
-  return detail(
-    "exploration_budget_exhausted",
-    `Reached the ${MAX_STEPS}-step exploration limit without a finalized issue draft.`,
-    ExitCode.GenericFailure,
+  // Budget reached without a finalize. Rather than fail (and produce no issue),
+  // force a final draft — the issue-opener must always yield an actionable issue.
+  emit(
+    task,
+    "agent.progress",
+    "warn",
+    `Reached the ${MAX_STEPS}-step exploration limit; finalizing the issue now`,
+    {
+      steps: MAX_STEPS,
+    },
   );
+  return {
+    ok: true,
+    value: await finalizeOrFallback(task, config.value, system, transcript, input.instruction),
+  };
+}
+
+/**
+ * Last-resort finalization. Makes one mandatory finalize turn using the full
+ * transcript; if the model still won't return a valid draft, synthesizes one
+ * directly from the instruction so the issue is never lost.
+ */
+async function finalizeOrFallback(
+  task: TaskEnvelope,
+  config: Parameters<typeof requestLlmCompletion>[0],
+  system: string,
+  transcript: string,
+  instruction: string,
+): Promise<IssueDraft> {
+  const forced = `${transcript}\n\nOBSERVATION:\nNo more exploration is allowed. Respond NOW with exactly one {"action":"finalize",...} JSON object that turns the user's instruction into a detailed issue using what you have learned. Do not request any more exploration.`;
+  const completion = await requestLlmCompletion(config, {
+    system,
+    user: forced,
+    maxTokens: LLM_MAX_TOKENS,
+  });
+  if (completion.ok) {
+    const action = parseAction(completion.value.text);
+    if (action?.action === "finalize") {
+      const draft = validateFinalize(action);
+      if (draft.ok) {
+        emit(task, "agent.progress", "info", "Issue draft finalized", {
+          title: draft.value.title,
+          labels: draft.value.labels,
+          forced: true,
+        });
+        return draft.value;
+      }
+    }
+  }
+  emit(task, "agent.progress", "warn", "Drafting the issue directly from the instruction", {});
+  return fallbackDraft(instruction);
+}
+
+/**
+ * A faithful, deterministic issue built straight from the user's instruction.
+ * Used only when the model cannot produce a valid draft — guarantees the
+ * instruction is always captured as an actionable issue.
+ */
+function fallbackDraft(instruction: string): IssueDraft {
+  const firstLine =
+    instruction
+      .split("\n")
+      .map((line) => line.trim().replace(/^#+\s*/, ""))
+      .find((line) => line.length > 0) ?? "Automated change request";
+  const title = firstLine.length > 80 ? `${firstLine.slice(0, 77)}…` : firstLine;
+  const body = [
+    "## Problem / Goal",
+    "",
+    "Created directly from the user's instruction (full repository exploration was not completed).",
+    "",
+    "## Instruction (verbatim)",
+    "",
+    instruction,
+    "",
+    "## Acceptance criteria",
+    "",
+    "- [ ] The change described in the instruction above is implemented.",
+    "- [ ] The project builds and existing tests pass.",
+  ].join("\n");
+  return { title, body, labels: [] };
 }
 
 function buildSystemPrompt(): string {
