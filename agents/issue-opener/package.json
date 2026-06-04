@@ -1,0 +1,27 @@
+{
+  "name": "@anchorage/agent-issue-opener",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "issue-opener": "./dist/index.js"
+  },
+  "files": [
+    "agent.json",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anchorage/sdk": "workspace:*",
+    "@anchorage/agent-llm": "workspace:*",
+    "@octokit/rest": "^22.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1"
+  }
+}

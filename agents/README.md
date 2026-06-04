@@ -6,6 +6,7 @@ Reference agent implementations and the agent contract.
 
 Implemented reference agents:
 
+- `issue-opener`: turns a natural-language instruction into a detailed GitHub issue by exploring the repository, creates it, and emits `issue.opened` + `issue.summary`.
 - `issue-reader`: reads a GitHub issue and emits `issue.summary`.
 - `planner`: turns `issue.summary` into `implementation.plan` for the coder handoff.
 - `coder`: applies `implementation.plan` by calling a configured LLM provider and writing workspace changes.
@@ -33,7 +34,7 @@ Agents observe or act on one task and emit protocol events. Workflow routing, re
 
 ## LLM provider configuration
 
-`planner`, `coder`, and `reviewer` use the shared `@anchorage/agent-llm` adapter. Set `ANCHORAGE_LLM_PROVIDER` to choose a provider explicitly:
+`issue-opener`, `planner`, `coder`, and `reviewer` use the shared `@anchorage/agent-llm` adapter. Set `ANCHORAGE_LLM_PROVIDER` to choose a provider explicitly:
 
 - `anthropic`: uses `ANTHROPIC_API_KEY`.
 - `openai`: uses `OPENAI_API_KEY`.

@@ -29,6 +29,22 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-04 — Add issue-opener reference agent for instruction → issue.
+
+**Intent:** Add a public `issue-opener` agent that turns a natural-language instruction into a detailed GitHub issue. It supports the new `issue.open` task type, explores the repository with a bounded, provider-portable ReAct loop over the shared LLM adapter (the model emits one JSON action per turn — `list_dir`/`read_file`/`search`/`finalize` — so no native tool-calling is required), path-guarded to read only inside `workspacePath`, then creates the issue via the GitHub API. It emits `issue.opened` (record) plus `issue.summary` in the same shape `issue-reader` produces, so downstream agents consume it directly. `issue-closer` now falls back to the `issue.opened`/`issue.summary` artifact for the issue number when it is created mid-run.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/README.md
+- agents/issue-opener/agent.json
+- agents/issue-opener/package.json
+- agents/issue-opener/tsconfig.json
+- agents/issue-opener/src/index.ts
+- agents/issue-opener/README.md
+- agents/issue-closer/src/index.ts
+- pnpm-lock.yaml
+
+**Reason:** ADR-0023 — instruction-driven pipeline entry. The pipeline could only start from an existing issue; this bridges natural language to a grounded, code-aware issue.
 ### 2026-06-04 — Coder captures the change diff so the UI can render it.
 
 **Intent:** After applying changes the coder captures the staged unified diff (`git diff --cached`) in its own workspace and embeds it in the `code.change.result` artifact as a raw `diff` plus a per-file `fileDiffs` breakdown. Consumers (the orchestrator diff endpoint and the test-UI Changes tab) can render the real change set without re-running git in a workspace that may not hold the branch or commit. The diff is captured even when commit/push degrades, so the change stays reviewable.
