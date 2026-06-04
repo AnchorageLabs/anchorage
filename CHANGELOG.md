@@ -45,6 +45,15 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 - pnpm-lock.yaml
 
 **Reason:** ADR-0023 — instruction-driven pipeline entry. The pipeline could only start from an existing issue; this bridges natural language to a grounded, code-aware issue.
+### 2026-06-04 — Coder captures the change diff so the UI can render it.
+
+**Intent:** After applying changes the coder captures the staged unified diff (`git diff --cached`) in its own workspace and embeds it in the `code.change.result` artifact as a raw `diff` plus a per-file `fileDiffs` breakdown. Consumers (the orchestrator diff endpoint and the test-UI Changes tab) can render the real change set without re-running git in a workspace that may not hold the branch or commit. The diff is captured even when commit/push degrades, so the change stays reviewable.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/coder/src/index.ts
+
+**Reason:** Test-UI Changes tab showed nothing because the branch diff (issue #47) was recomputed server-side against a workspace that often lacked the branch.
 
 **Author:** Sol Soletti
 
