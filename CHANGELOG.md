@@ -29,6 +29,41 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-04 — Agents acquire context through a uniform tool surface.
+
+**Intent:** Replace the planner/coder/reviewer/issue-triage one-shot LLM calls with a provider-agnostic tool-use loop in `@anchorage/agent-llm`. Agents now actively read the workspace (read_file/list_dir/grep/git_log/git_show/git_diff/detect_project/read_repo_manifest), write changes (write_file/delete_file), run verification commands (shell_exec), and consult the open web (web_search/web_fetch/github_search_issues/github_get_file) via capability-gated tools. Removes the ≤12-file pre-load in the coder and the "no repo visibility" blind spot in the planner and reviewer. No protocol changes — tool calls ride existing `tool.requested`/`tool.result` events; per-run `agent.progress` carries a `context.snapshot` payload with bytes/files/turns/tokens.
+
+After live verification against AnchorageLabs/chary#6 (issue → PR #13), strict-JSON output is enforced on every reasoning agent (no markdown fences, no thinking tags) and the JSON extractor uses balanced-brace scanning that survives the cases models sometimes slip in.
+
+**Files touched:**
+- anchorage-internal/adr/0024-agent-context-via-uniform-tool-surface.md
+- agents/llm/src/index.ts
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/budget.ts
+- agents/llm/src/tools/registry.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/builtin/repo.ts
+- agents/llm/src/tools/builtin/discovery.ts
+- agents/llm/src/tools/builtin/shell.ts
+- agents/llm/src/tools/builtin/web.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/openai.ts
+- agents/llm/scripts/smoke-tool-loop.mjs
+- agents/planner/src/index.ts
+- agents/planner/agent.json
+- agents/coder/src/index.ts
+- agents/coder/agent.json
+- agents/reviewer/src/index.ts
+- agents/reviewer/agent.json
+- agents/issue-triage/src/index.ts
+- agents/issue-triage/agent.json
+- docs/agent-tools.md
+- CHANGELOG.md
+
+**Reason:** ADR-0024.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-04 — Add issue-opener reference agent for instruction → issue.
 
 **Intent:** Add a public `issue-opener` agent that turns a natural-language instruction into a detailed GitHub issue. It supports the new `issue.open` task type, explores the repository with a bounded, provider-portable ReAct loop over the shared LLM adapter (the model emits one JSON action per turn — `list_dir`/`read_file`/`search`/`finalize` — so no native tool-calling is required), path-guarded to read only inside `workspacePath`, then creates the issue via the GitHub API. It emits `issue.opened` (record) plus `issue.summary` in the same shape `issue-reader` produces, so downstream agents consume it directly. `issue-closer` now falls back to the `issue.opened`/`issue.summary` artifact for the issue number when it is created mid-run.
@@ -45,6 +80,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 - pnpm-lock.yaml
 
 **Reason:** ADR-0023 — instruction-driven pipeline entry. The pipeline could only start from an existing issue; this bridges natural language to a grounded, code-aware issue.
+
 ### 2026-06-04 — Coder captures the change diff so the UI can render it.
 
 **Intent:** After applying changes the coder captures the staged unified diff (`git diff --cached`) in its own workspace and embeds it in the `code.change.result` artifact as a raw `diff` plus a per-file `fileDiffs` breakdown. Consumers (the orchestrator diff endpoint and the test-UI Changes tab) can render the real change set without re-running git in a workspace that may not hold the branch or commit. The diff is captured even when commit/push degrades, so the change stays reviewable.
@@ -69,6 +105,7 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** Live pipeline against `AnchorageLabs/envy#34` failed at `pr-opener` with `branch_not_pushed`, but the real upstream failure was in the coder path: it created the issue branch from whatever checkout the workspace currently had and produced `status=no_changes`, `pushSkippedReason=no_changes`, with a summary saying the selected context only contained `api/go.mod` and `docs/MODEL.md` while the change required router/auth/handler/store/db/migration files. CodeGraph traced the flow through `commitAndPush`, `parseCodeChangeResult`, and `runDefinition`; run artifacts confirmed the coder never produced a commit to publish.
 
 **Author:** Sol Soletti
+
 
 ### 2026-05-13 — Restore green CI baseline for current Dependabot action PRs.
 

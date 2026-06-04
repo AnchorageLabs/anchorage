@@ -6,7 +6,7 @@
   "taskTypes": ["issue.triage"],
   "inputs": ["issue.summary"],
   "outputs": ["issue.triage.result"],
-  "requires": ["llm.plan"],
+  "requires": ["llm.plan", "repo.read", "web.read"],
   "binary": "./dist/index.js",
   "timeout": 120
 }

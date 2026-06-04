@@ -6,7 +6,7 @@
   "taskTypes": ["review.run"],
   "inputs": ["pr.opened"],
   "outputs": ["pr.review.result"],
-  "requires": ["github.read", "llm.review"],
+  "requires": ["github.read", "llm.review", "repo.read", "web.read"],
   "binary": "./dist/index.js",
   "timeout": 300
 }
