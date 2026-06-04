@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-04 — Coder captures the change diff so the UI can render it.
+
+**Intent:** After applying changes the coder captures the staged unified diff (`git diff --cached`) in its own workspace and embeds it in the `code.change.result` artifact as a raw `diff` plus a per-file `fileDiffs` breakdown. Consumers (the orchestrator diff endpoint and the test-UI Changes tab) can render the real change set without re-running git in a workspace that may not hold the branch or commit. The diff is captured even when commit/push degrades, so the change stays reviewable.
+
+**Files touched:**
+- CHANGELOG.md
+- agents/coder/src/index.ts
+
+**Reason:** Test-UI Changes tab showed nothing because the branch diff (issue #47) was recomputed server-side against a workspace that often lacked the branch.
+
+**Author:** Sol Soletti
+
 ### 2026-06-01 — Start coder branches from the selected remote base.
 
 **Intent:** Ensure the coder resolves each issue from the selected base branch (`main` or the branch chosen in the UI) by fetching and fast-forward pulling it from origin before creating the issue branch. The coder also expands directory `likelyFiles` entries (for example `api/` and `api/internal/`) into tracked source files so broad API issues do not collapse into `status: no_changes` because only `api/go.mod` and docs were provided as context. PR opening can recover when the coder created a commit but reported `pushed: false` by publishing that existing branch as a recovery step.

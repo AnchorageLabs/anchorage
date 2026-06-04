@@ -48,11 +48,7 @@ async function main(): Promise<number> {
   if (!auth.ok) return fail(task.value, auth);
 
   const baseBranch = task.value.repository?.defaultBranch ?? "main";
-  const baseResult = await syncBaseBranch(
-    task.value,
-    input.value.workspacePath,
-    baseBranch,
-  );
+  const baseResult = await syncBaseBranch(task.value, input.value.workspacePath, baseBranch);
   if (!baseResult.ok) return fail(task.value, baseResult);
 
   const branchResult = await ensureBranch(
@@ -137,6 +133,10 @@ async function main(): Promise<number> {
     commitSha: delivery.commitSha,
     pushed: delivery.pushed,
     ...(delivery.pushSkippedReason ? { pushSkippedReason: delivery.pushSkippedReason } : {}),
+    // Authoritative change set: the raw unified diff plus a per-file breakdown
+    // the UI renders directly, independent of any server-side git invocation.
+    diff: delivery.diff,
+    fileDiffs: parseFileDiffs(delivery.diff),
   };
 
   emit(task.value, "agent.output", "info", "Code change result created", output);
@@ -722,6 +722,8 @@ interface DeliveryResult {
   commitSha: string | null;
   pushed: boolean;
   pushSkippedReason?: string;
+  // Unified diff of the staged change, captured in the agent's own workspace.
+  diff: string;
 }
 
 async function commitAndPush(
@@ -731,13 +733,26 @@ async function commitAndPush(
   hasChanges: boolean,
 ): Promise<DeliveryResult> {
   if (!hasChanges) {
-    return { committed: false, commitSha: null, pushed: false, pushSkippedReason: "no_changes" };
+    return {
+      committed: false,
+      commitSha: null,
+      pushed: false,
+      pushSkippedReason: "no_changes",
+      diff: "",
+    };
   }
 
   const commit = await commitChanges(task, workspacePath, plan);
   if (!commit.ok) {
     // Non-fatal: the edits are on disk; we just couldn't record them as a commit.
-    return { committed: false, commitSha: null, pushed: false, pushSkippedReason: commit.reason };
+    // The staged diff was still captured, so the change stays reviewable.
+    return {
+      committed: false,
+      commitSha: null,
+      pushed: false,
+      pushSkippedReason: commit.reason,
+      diff: commit.diff,
+    };
   }
 
   const push = await pushBranch(task, workspacePath, plan.branchName);
@@ -746,6 +761,7 @@ async function commitAndPush(
     commitSha: commit.sha,
     pushed: push.pushed,
     ...(push.pushed ? {} : { pushSkippedReason: push.reason }),
+    diff: commit.diff,
   };
 }
 
@@ -753,7 +769,7 @@ async function commitChanges(
   task: TaskEnvelope,
   workspacePath: string,
   plan: ImplementationPlan,
-): Promise<{ ok: true; sha: string } | { ok: false; reason: string }> {
+): Promise<{ ok: true; sha: string; diff: string } | { ok: false; reason: string; diff: string }> {
   emit(task, "tool.requested", "info", "Committing changes", {
     tool: "git.commit",
     input: { branchName: plan.branchName },
@@ -763,8 +779,16 @@ async function commitChanges(
   if (add.exitCode !== 0) {
     const reason = add.stderr.trim() || `git add failed (exit ${add.exitCode})`;
     emitGitError(task, "git.commit", "commit_failed", reason);
-    return { ok: false, reason };
+    return { ok: false, reason, diff: "" };
   }
+
+  // Capture the effective diff of everything just staged (added, modified, and
+  // deleted files) against the branch point. This authoritative diff travels
+  // with the code-change artifact so the UI can render the real change without
+  // the server re-running git in a workspace that may not have this branch or
+  // commit (see issue #47).
+  const staged = await runGit(workspacePath, ["diff", "--cached", "--no-color"]);
+  const diff = staged.exitCode === 0 ? staged.stdout : "";
 
   // Identity from the run environment, with a safe fallback so the commit never
   // fails on "tell me who you are" in environments that don't set GIT_AUTHOR_*.
@@ -783,7 +807,7 @@ async function commitChanges(
     const reason =
       commit.stderr.trim() || commit.stdout.trim() || `git commit failed (exit ${commit.exitCode})`;
     emitGitError(task, "git.commit", "commit_failed", reason);
-    return { ok: false, reason };
+    return { ok: false, reason, diff };
   }
 
   const rev = await runGit(workspacePath, ["rev-parse", "HEAD"]);
@@ -793,7 +817,7 @@ async function commitChanges(
     success: true,
     output: { commitSha: sha, branchName: plan.branchName },
   });
-  return { ok: true, sha };
+  return { ok: true, sha, diff };
 }
 
 async function pushBranch(
@@ -1069,7 +1093,45 @@ type CodeChangeResult = ProtocolEvent["data"] & {
   commitSha: string | null;
   pushed: boolean;
   pushSkippedReason?: string;
+  diff: string;
+  fileDiffs: FileDiff[];
 };
+
+interface FileDiff {
+  // Index signature keeps FileDiff assignable to the artifact's JsonObject value.
+  [key: string]: number | string;
+  path: string;
+  additions: number;
+  deletions: number;
+  patch: string;
+}
+
+/**
+ * Split a unified diff (`git diff` output) into one entry per file, counting
+ * added/removed lines and keeping each file's hunk text. Mirrors the parser the
+ * UI uses as a fallback, so the artifact can carry a ready-to-render breakdown.
+ */
+function parseFileDiffs(diffText: string): FileDiff[] {
+  if (!diffText) return [];
+  const files: FileDiff[] = [];
+  let current: FileDiff | null = null;
+
+  for (const line of diffText.split("\n")) {
+    const match = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (match) {
+      if (current) files.push(current);
+      current = { path: match[2] ?? match[1] ?? "unknown", additions: 0, deletions: 0, patch: "" };
+      continue;
+    }
+    if (!current) continue;
+    current.patch += `${line}\n`;
+    if (line.startsWith("+") && !line.startsWith("+++ ")) current.additions++;
+    if (line.startsWith("-") && !line.startsWith("--- ")) current.deletions++;
+  }
+
+  if (current) files.push(current);
+  return files;
+}
 
 main()
   .then((exitCode) => {
