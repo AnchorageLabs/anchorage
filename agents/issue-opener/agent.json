@@ -1,0 +1,12 @@
+{
+  "name": "issue-opener",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Turns a natural-language instruction into a detailed GitHub issue by exploring the repository, then creates it. Emits issue.opened and issue.summary.",
+  "taskTypes": ["issue.open"],
+  "inputs": ["instruction"],
+  "outputs": ["issue.opened", "issue.summary"],
+  "requires": ["github.write", "workspace.read", "llm.plan"],
+  "binary": "./dist/index.js",
+  "timeout": 600
+}

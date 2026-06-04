@@ -172,11 +172,17 @@ async function parseInput(
   }
 
   const issue = isObject(task.input.issue) ? task.input.issue : task.input;
-  const issueNumber = readPositiveInteger(issue.issueNumber) ?? readPositiveInteger(issue.number);
+  // In instruction-driven workflows the issue number isn't known when the
+  // workflow is built (issue-opener creates it mid-run), so fall back to the
+  // issue.opened / issue.summary artifact carried in context.priorArtifacts.
+  const issueNumber =
+    readPositiveInteger(issue.issueNumber) ??
+    readPositiveInteger(issue.number) ??
+    (await resolvePriorIssueNumber(task));
   if (!issueNumber) {
     return failure(
       "invalid_issue_number",
-      "issue-closer requires input.issue.issueNumber.",
+      "issue-closer requires input.issue.issueNumber or a prior issue.opened/issue.summary artifact.",
       ExitCode.InvalidInput,
     );
   }
@@ -234,6 +240,19 @@ async function resolvePriorSummary(task: TaskEnvelope): Promise<WorkflowSummaryI
   }
 
   return summary;
+}
+
+async function resolvePriorIssueNumber(task: TaskEnvelope): Promise<number | null> {
+  const artifacts = task.context?.priorArtifacts ?? [];
+  for (const artifact of artifacts) {
+    if (artifact.artifactType !== "issue.opened" && artifact.artifactType !== "issue.summary") {
+      continue;
+    }
+    const data = await readJsonArtifact(artifact.uri);
+    const issueNumber = data ? readPositiveInteger(data.issueNumber) : null;
+    if (issueNumber) return issueNumber;
+  }
+  return null;
 }
 
 async function readJsonArtifact(uri: string): Promise<JsonObject | null> {
