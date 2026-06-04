@@ -48,11 +48,7 @@ async function main(): Promise<number> {
   if (!auth.ok) return fail(task.value, auth);
 
   const baseBranch = task.value.repository?.defaultBranch ?? "main";
-  const baseResult = await syncBaseBranch(
-    task.value,
-    input.value.workspacePath,
-    baseBranch,
-  );
+  const baseResult = await syncBaseBranch(task.value, input.value.workspacePath, baseBranch);
   if (!baseResult.ok) return fail(task.value, baseResult);
 
   const branchResult = await ensureBranch(
