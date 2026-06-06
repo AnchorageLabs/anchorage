@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-06 — Bound tool input echoed into tool.requested events.
+
+**Intent:** Cap the serialized tool input carried in `tool.requested` protocol events (preview beyond ~4KB) in `@anchorage/agent-llm`. A large argument — e.g. the coder calling `write_file` with a big file body — previously produced a multi-hundred-KB NDJSON event line; when that line was truncated/mis-framed the strict event-stream parser failed the whole run with `runner_preflight_failed` ("invalid JSON"). `tool.result` already truncated to a preview; this makes `tool.requested` symmetric. The tool handler still receives the full, untouched input — only the observability event is bounded. Surfaced once tool budgets were uncapped and the coder began reaching large `write_file` calls.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- CHANGELOG.md
+
+**Reason:** Oversized `tool.requested` event lines aborted real coder runs at the runner's NDJSON validation.
+
+**Author:** Sol Soletti
+
 ### 2026-06-06 — Tool loop runs uncapped by default; budgets become opt-in via env.
 
 **Intent:** Remove the default tool-loop budget caps in `@anchorage/agent-llm`. Max turns, input tokens, files, web calls, and shell calls are now **unlimited by default**, so the reasoning agents (planner/coder/reviewer/issue-triage/issue-opener) run their tool loop to completion instead of aborting at 30 turns with `tool_budget_exceeded`. Each limit stays configurable per run via `ANCHORAGE_TOOL_MAX_*` — a positive number sets a cap, `0` or negative means unlimited, unset uses the (now-unlimited) default. The orchestrator's Temporal activity timeout (start-to-close / heartbeat) remains the hard backstop against runaway loops.
