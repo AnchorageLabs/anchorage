@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-06 — Tool loop runs uncapped by default; budgets become opt-in via env.
+
+**Intent:** Remove the default tool-loop budget caps in `@anchorage/agent-llm`. Max turns, input tokens, files, web calls, and shell calls are now **unlimited by default**, so the reasoning agents (planner/coder/reviewer/issue-triage/issue-opener) run their tool loop to completion instead of aborting at 30 turns with `tool_budget_exceeded`. Each limit stays configurable per run via `ANCHORAGE_TOOL_MAX_*` — a positive number sets a cap, `0` or negative means unlimited, unset uses the (now-unlimited) default. The orchestrator's Temporal activity timeout (start-to-close / heartbeat) remains the hard backstop against runaway loops.
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/budget.ts
+- CHANGELOG.md
+
+**Reason:** The 30-turn cap aborted real issue→PR runs (`tool_budget_exceeded`) before the coder finished.
+
+**Author:** Sol Soletti
+
 ### 2026-06-06 — Narrow the LLM adapter to Anthropic, OpenAI, and Bedrock with full tool-loop parity.
 
 **Intent:** Trim `@anchorage/agent-llm` to three providers — `anthropic`, `openai`, `aws-bedrock` — and remove `moonshot`, `kimi`, and the generic `openai-compatible` paths along with their `ANCHORAGE_LLM_API_KEY`/`ANCHORAGE_LLM_BASE_URL` credentials. Provider selection stays a single env switch (`ANCHORAGE_LLM_PROVIDER`, inferred from `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → AWS credentials when unset) and model selection stays `ANCHORAGE_<ROLE>_MODEL` → `ANCHORAGE_LLM_MODEL` → per-provider default, so swapping providers or model tiers is env-only.

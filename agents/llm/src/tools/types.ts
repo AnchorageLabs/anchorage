@@ -251,11 +251,15 @@ export type ProviderTurnResult =
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
+// Tool use is uncapped by default — the only hard backstop is the orchestrator's
+// Temporal activity timeout (start-to-close / heartbeat). Re-impose any cap per
+// run with the ANCHORAGE_TOOL_MAX_* env vars (a positive number sets a limit; 0
+// or negative means unlimited). `webEnabled` is a capability gate, not a budget.
 export const DEFAULT_BUDGET: BudgetConfig = {
-  maxTurns: 30,
-  maxInputTokens: 200_000,
-  maxFiles: 50,
-  maxWebCalls: 10,
-  maxShellCalls: 20,
+  maxTurns: Number.POSITIVE_INFINITY,
+  maxInputTokens: Number.POSITIVE_INFINITY,
+  maxFiles: Number.POSITIVE_INFINITY,
+  maxWebCalls: Number.POSITIVE_INFINITY,
+  maxShellCalls: Number.POSITIVE_INFINITY,
   webEnabled: false,
 };
