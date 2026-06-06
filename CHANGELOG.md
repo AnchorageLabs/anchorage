@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-06 — Narrow the LLM adapter to Anthropic, OpenAI, and Bedrock with full tool-loop parity.
+
+**Intent:** Trim `@anchorage/agent-llm` to three providers — `anthropic`, `openai`, `aws-bedrock` — and remove `moonshot`, `kimi`, and the generic `openai-compatible` paths along with their `ANCHORAGE_LLM_API_KEY`/`ANCHORAGE_LLM_BASE_URL` credentials. Provider selection stays a single env switch (`ANCHORAGE_LLM_PROVIDER`, inferred from `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → AWS credentials when unset) and model selection stays `ANCHORAGE_<ROLE>_MODEL` → `ANCHORAGE_LLM_MODEL` → per-provider default, so swapping providers or model tiers is env-only.
+
+All three providers now drive the multi-turn tool loop. Bedrock gains a Converse-API `ProviderAdapter` with native `toolConfig` tool use — previously `providerFromLlmConfig` hard-errored for Bedrock, so only the one-shot path worked there. Every flow now tolerates models that drop request parameters: the Anthropic and OpenAI tool-loop adapters retry without `temperature` (Opus 4.7/4.8 reject it) and flex `max_completion_tokens`↔`max_tokens` (OpenAI reasoning models), matching the one-shot path. Shared "is this param rejected" predicates live in a new `param-support` module used by both paths.
+
+**Files touched:**
+- agents/llm/src/index.ts
+- agents/llm/src/tools/providers/param-support.ts
+- agents/llm/src/tools/providers/bedrock.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/openai.ts
+- agents/llm/README.md
+- CHANGELOG.md
+
+**Reason:** Anthropic-first cost control with predictable, env-only provider/model switching; unblock Bedrock tool use and Opus 4.8 parameter compatibility across every agent.
+
+**Author:** Sol Soletti
+
 ### 2026-06-04 — Agents acquire context through a uniform tool surface.
 
 **Intent:** Replace the planner/coder/reviewer/issue-triage one-shot LLM calls with a provider-agnostic tool-use loop in `@anchorage/agent-llm`. Agents now actively read the workspace (read_file/list_dir/grep/git_log/git_show/git_diff/detect_project/read_repo_manifest), write changes (write_file/delete_file), run verification commands (shell_exec), and consult the open web (web_search/web_fetch/github_search_issues/github_get_file) via capability-gated tools. Removes the ≤12-file pre-load in the coder and the "no repo visibility" blind spot in the planner and reviewer. No protocol changes — tool calls ride existing `tool.requested`/`tool.result` events; per-run `agent.progress` carries a `context.snapshot` payload with bytes/files/turns/tokens.

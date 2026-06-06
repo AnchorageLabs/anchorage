@@ -13,6 +13,7 @@ import type {
   ToolUseBlock,
   UserMessage,
 } from "../types.js";
+import { isTemperatureUnsupported } from "./param-support.js";
 
 export interface AnthropicProviderConfig {
   apiKey: string;
@@ -37,18 +38,18 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
     name: "anthropic",
     model: config.model,
     async requestTurn(input: ProviderTurnInput): Promise<ProviderTurnResult> {
-      const body: JsonObject = {
-        model: config.model,
-        max_tokens: input.maxTokens,
-        system: [systemBlock(input.system, promptCache)],
-        messages: input.messages.map(toAnthropicMessage),
-        tools: input.tools.map(toAnthropicTool),
-      };
-      if (typeof input.temperature === "number") body.temperature = input.temperature;
-
-      let response: Response;
-      try {
-        response = await fetch(`${baseUrl}/messages`, {
+      const send = (includeTemperature: boolean): Promise<Response> => {
+        const body: JsonObject = {
+          model: config.model,
+          max_tokens: input.maxTokens,
+          system: [systemBlock(input.system, promptCache)],
+          messages: input.messages.map(toAnthropicMessage),
+          tools: input.tools.map(toAnthropicTool),
+        };
+        if (includeTemperature && typeof input.temperature === "number") {
+          body.temperature = input.temperature;
+        }
+        return fetch(`${baseUrl}/messages`, {
           method: "POST",
           headers: {
             "anthropic-version": anthropicVersion,
@@ -57,6 +58,11 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
           },
           body: JSON.stringify(body),
         });
+      };
+
+      let response: Response;
+      try {
+        response = await send(true);
       } catch (error) {
         return {
           ok: false,
@@ -65,7 +71,20 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
         };
       }
 
-      const text = await response.text();
+      let text = await response.text();
+      // Opus 4.7+ reject `temperature` (and top_p/top_k) — retry once without it.
+      if (!response.ok && typeof input.temperature === "number" && isTemperatureUnsupported(text)) {
+        try {
+          response = await send(false);
+          text = await response.text();
+        } catch (error) {
+          return {
+            ok: false,
+            code: "network_error",
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
       if (!response.ok) {
         return {
           ok: false,
