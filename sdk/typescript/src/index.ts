@@ -1,8 +1,17 @@
-export type { RevisionFailure, RevisionRequest } from "./artifacts.js";
+export type {
+  RevisionFailure,
+  RevisionRequest,
+  RuntimePreview,
+  RuntimePreviewStatus,
+  RuntimeStrategy,
+} from "./artifacts.js";
 export {
   buildRevisionRequest,
+  buildRuntimePreview,
   REVISION_REQUEST_ARTIFACT_TYPE,
+  RUNTIME_PREVIEW_ARTIFACT_TYPE,
 } from "./artifacts.js";
+export { writeAllSync } from "./event-io.js";
 export type { EventStreamValidationContext } from "./events/event-stream.js";
 export {
   eventStreamContextFromTaskEnvelope,

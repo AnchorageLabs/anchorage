@@ -1,0 +1,12 @@
+{
+  "name": "runtime",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Pre-merge execution gate: detects how to run the reviewed change locally, starts it, and exposes a preview URL for human inspection. Emits a runtime.preview artifact (running | not_applicable | failed).",
+  "taskTypes": ["runtime.start"],
+  "inputs": ["code.change.result"],
+  "outputs": ["runtime.preview"],
+  "requires": ["workspace.read", "shell.exec"],
+  "binary": "./dist/index.js",
+  "timeout": 600
+}
