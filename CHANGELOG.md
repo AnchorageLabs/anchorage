@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
+
+**Intent:** Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- agents/issue-opener/src/index.ts
+- agents/llm/src/index.ts
+
+**Reason:** planning-2026-06-06.md items 5, 2, 3-B: coder was ignoring issue.summary and triage.result already in priorArtifacts; issue-opener had a bespoke ReAct loop inconsistent with the rest of the tool-using agents; Bedrock tool-loop error message was misleading.
+
+**Author:** Sol Soletti
+
 ### 2026-06-06 — Planner/coder reuse existing types; coder gates on tests + typecheck; reviewer checks integration.
 
 **Intent:** Raise output quality of the reasoning agents after chary#18 shipped code that didn't integrate (it invented a parallel `ParsedCommit` with `hash` instead of reusing the repo's `Commit` with `sha`, and shipped self-referential tests). Prompt-level hardening:

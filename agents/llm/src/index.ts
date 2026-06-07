@@ -126,9 +126,11 @@ export async function requestLlmCompletion(
 }
 
 /**
- * Build a tool-loop ProviderAdapter from an existing LlmConfig. All three
- * supported providers — Anthropic, OpenAI, and AWS Bedrock — drive the
- * multi-turn tool loop natively.
+ * Build a tool-loop ProviderAdapter from an existing LlmConfig. Anthropic and
+ * OpenAI (incl. Moonshot/Kimi/openai-compatible) are supported. Bedrock is
+ * one-shot only — it returns `{ ok: false }` here; use requestLlmCompletion
+ * for Bedrock workflows, or switch to ANTHROPIC_API_KEY / OPENAI_API_KEY to
+ * enable tool-using agents (coder, planner, reviewer, issue-triage).
  */
 export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdapter> {
   switch (config.provider) {
