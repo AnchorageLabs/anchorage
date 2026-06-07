@@ -396,7 +396,9 @@ function plannerSystemPrompt(hasWorkspace: boolean): string {
 - list_dir, read_file, grep: inspect the actual code.
 - git_log, git_show, git_diff: see how the area has evolved.
 
-Use these tools BEFORE producing the plan. A plan grounded in real files (correct paths in likelyFiles, real verification commands) is far more useful than a guess. Read 3–8 files minimum on non-trivial issues. likelyFiles MUST be paths you have verified exist.`
+Use these tools BEFORE producing the plan. A plan grounded in real files (correct paths in likelyFiles, real verification commands) is far more useful than a guess. Read 3–8 files minimum on non-trivial issues. likelyFiles MUST be paths you have verified exist.
+
+REUSE EXISTING CONTRACTS. Before introducing any new type, interface, or config for a concept, grep the repo for an existing one and reuse or extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). If the new code must consume data from an existing module, name that module's real type WITH its real field names in likelyFiles/implementationSteps and require the coder to import it directly — never a look-alike. A field-name mismatch against an existing type (e.g. hash vs sha) is a planning failure.`
     : `No workspace is mounted for this run. Plan based on the issue alone and let the coder do file inspection.`;
 
   const webReach = `web_search / web_fetch / github_search_issues are available for library docs, error messages, framework changelogs, and related public issues. Use them when the issue references external systems you'd otherwise have to guess at.`;
@@ -423,7 +425,12 @@ When you have enough context, your FINAL message MUST be a single JSON object an
   "handoffInstructions": string
 }
 
-Design the smallest product-oriented plan that resolves the issue. Do not propose tests as standalone files unless the issue clearly requires them.`;
+Design the smallest product-oriented plan that resolves the issue.
+
+acceptanceCriteria MUST include, for any code change:
+- "The repo's existing test suite and typecheck/build pass" — and verificationCommands MUST list the repo's REAL commands for both (from detect_project / package.json scripts), e.g. the test runner and the type-check/build command.
+- At least one test that exercises the new code against the REAL existing types/contracts it integrates with (an integration test), not only hand-built fixtures that restate the implementation's own assumptions. If the new code consumes an upstream module's type, a test MUST feed that real type through it.
+verificationCommands must be runnable as-is by the coder via shell_exec.`;
 }
 
 function plannerUserPrompt(issue: IssueSummary): string {

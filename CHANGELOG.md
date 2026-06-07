@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-06 — Planner/coder reuse existing types; coder gates on tests + typecheck; reviewer checks integration.
+
+**Intent:** Raise output quality of the reasoning agents after chary#18 shipped code that didn't integrate (it invented a parallel `ParsedCommit` with `hash` instead of reusing the repo's `Commit` with `sha`, and shipped self-referential tests). Prompt-level hardening:
+- **planner:** must grep for and reuse existing types/contracts (never a parallel type for an existing concept; call out real field names); `acceptanceCriteria` must require the repo's real test suite + typecheck/build to pass and at least one integration test against the real upstream types, with runnable `verificationCommands` for both.
+- **coder:** reuse existing contracts (no look-alike types / field mismatches); MUST run the repo's tests + typecheck via `shell_exec` and they MUST pass before finishing — never report success over a red state; cover the change with an integration test against real types.
+- **reviewer:** explicitly flags duplicate/parallel types (e.g. `hash` vs `sha`), code that can't be fed by its real upstream producer, committed `node_modules/`/`dist/`, and self-referential tests (request a real integration test).
+
+These pair with the new `issue-to-reviewer` workflow (anchorage-orchestrator) which adds the tester + reviewer gates.
+
+**Files touched:**
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+- agents/reviewer/src/index.ts
+- CHANGELOG.md
+
+**Reason:** chary#18 — agentic output didn't reuse existing types, had no integration test, and wasn't gated on tests/typecheck.
+
+**Author:** Sol Soletti
+
 ### 2026-06-06 — Coder never commits node_modules / build output.
 
 **Intent:** Stop the coder from committing dependency installs and build artifacts. It may run `pnpm install` / a build via `shell_exec`, producing `node_modules/` and `dist/`; combined with `git add -A` and a target repo that has no `.gitignore`, this swept everything into the commit (chary#18 opened a PR with ~1.28M lines across ~4.5k files). The coder now (1) writes a baseline `.gitignore` when the workspace has none, and (2) passes pathspec excludes to `git add` for `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `target`, etc. — so artifacts are never staged even when an existing `.gitignore` is incomplete. The committed diff / `code.change.result` artifact stay clean as a result.
