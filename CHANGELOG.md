@@ -84,6 +84,17 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-06-07 — Emit context-miss telemetry on the tool-loop snapshot.
+
+**Intent:** The `context.snapshot` event now carries three context-miss signals — `filesReadCapHit`, `repeatedSymbolGrep`, `grepReadChurn` — so we can measure across real runs how often agents are under-served by the lexical tool surface (grep / read_file). Measurement only: no tool is capped or limited, grep stays uncapped, and the loop's behaviour is unchanged.
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/loop.ts
+
+**Reason:** anchorage-internal#30 — telemetry for the symbol-tool A/B (anchorage-internal#28)
+
+**Author:** Valentin Torassa
 ### 2026-06-07 — Fix biome formatting drift on main (CI lint red).
 
 **Intent:** `biome check .` was failing on `main` (3 errors) because `agents/coder/src/index.ts` and `agents/issue-opener/src/index.ts` were committed without biome 2.4.15 formatting — long lines not wrapped and one unsorted import group. Applied `biome check --write` (formatting/import-organization only, no behaviour change) so CI lint is green again and dependent PRs can merge.
