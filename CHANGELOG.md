@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-06 — Coder never commits node_modules / build output.
+
+**Intent:** Stop the coder from committing dependency installs and build artifacts. It may run `pnpm install` / a build via `shell_exec`, producing `node_modules/` and `dist/`; combined with `git add -A` and a target repo that has no `.gitignore`, this swept everything into the commit (chary#18 opened a PR with ~1.28M lines across ~4.5k files). The coder now (1) writes a baseline `.gitignore` when the workspace has none, and (2) passes pathspec excludes to `git add` for `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `target`, etc. — so artifacts are never staged even when an existing `.gitignore` is incomplete. The committed diff / `code.change.result` artifact stay clean as a result.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- CHANGELOG.md
+
+**Reason:** `git add -A` in the coder committed `node_modules`/`dist` on repos without a `.gitignore`.
+
+**Author:** Sol Soletti
+
 ### 2026-06-06 — Bound tool input echoed into tool.requested events.
 
 **Intent:** Cap the serialized tool input carried in `tool.requested` protocol events (preview beyond ~4KB) in `@anchorage/agent-llm`. A large argument — e.g. the coder calling `write_file` with a big file body — previously produced a multi-hundred-KB NDJSON event line; when that line was truncated/mis-framed the strict event-stream parser failed the whole run with `runner_preflight_failed` ("invalid JSON"). `tool.result` already truncated to a preview; this makes `tool.requested` symmetric. The tool handler still receives the full, untouched input — only the observability event is bounded. Surfaced once tool budgets were uncapped and the coder began reaching large `write_file` calls.

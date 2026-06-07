@@ -652,6 +652,65 @@ async function commitAndPush(
   };
 }
 
+// Dependency and build-output directories that must never be committed, even
+// when the target repo has no .gitignore. Excluded from `git add` via pathspec
+// and seeded into a generated .gitignore.
+const IGNORED_ARTIFACT_DIRS = [
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  "coverage",
+  "__pycache__",
+  ".venv",
+  "venv",
+  "target",
+];
+
+// Write a baseline .gitignore when the workspace has none, so `git add -A`
+// (which honors .gitignore, including nested matches) won't sweep up installs or
+// build output. An existing .gitignore is left untouched — the pathspec excludes
+// on `git add` are the backstop for incomplete ones.
+async function ensureWorkspaceGitignore(workspacePath: string): Promise<void> {
+  const gitignorePath = path.join(workspacePath, ".gitignore");
+  try {
+    await fs.access(gitignorePath);
+    return;
+  } catch {
+    // No .gitignore present — write a sane default below.
+  }
+  const body = `${[
+    "# Dependencies",
+    "node_modules/",
+    "",
+    "# Build output",
+    "dist/",
+    "build/",
+    "out/",
+    ".next/",
+    ".nuxt/",
+    ".svelte-kit/",
+    "*.tsbuildinfo",
+    "",
+    "# Caches / coverage / logs",
+    ".turbo/",
+    ".cache/",
+    "coverage/",
+    "*.log",
+    "",
+    "# Python",
+    "__pycache__/",
+    ".venv/",
+    "venv/",
+  ].join("\n")}\n`;
+  await fs.writeFile(gitignorePath, body, "utf8");
+}
+
 async function commitChanges(
   task: TaskEnvelope,
   workspacePath: string,
@@ -662,7 +721,13 @@ async function commitChanges(
     input: { branchName: plan.branchName },
   });
 
-  const add = await runGit(workspacePath, ["add", "-A"]);
+  // Never let dependency installs or build output reach the commit. The coder
+  // may run `pnpm install` / a build via shell_exec, which produces node_modules/
+  // and dist/; without this a repo lacking a .gitignore would have all of it
+  // swept up by `git add -A` (see chary#18: 1.28M lines / 4.4k files committed).
+  await ensureWorkspaceGitignore(workspacePath);
+  const addArgs = ["add", "-A", "--", ".", ...IGNORED_ARTIFACT_DIRS.map((d) => `:(exclude)${d}`)];
+  const add = await runGit(workspacePath, addArgs);
   if (add.exitCode !== 0) {
     const reason = add.stderr.trim() || `git add failed (exit ${add.exitCode})`;
     emitGitError(task, "git.commit", "commit_failed", reason);
