@@ -353,7 +353,12 @@ async function driveCoderLoop(
 
   const result = await runWithTools(provider.value, {
     system: coderSystemPrompt(),
-    messages: [{ role: "user", content: coderUserPrompt(input.plan, input.issueSummary, input.triageResult) }],
+    messages: [
+      {
+        role: "user",
+        content: coderUserPrompt(input.plan, input.issueSummary, input.triageResult),
+      },
+    ],
     tools,
     workspacePath: input.workspacePath,
     capabilities: new Set(task.capabilities ?? []),
