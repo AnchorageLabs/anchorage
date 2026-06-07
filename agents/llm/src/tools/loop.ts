@@ -109,7 +109,11 @@ export async function runWithTools(
       emit({
         kind: "tool.requested",
         tool: use.name,
-        input: use.input,
+        // Bound the echoed input: a large argument (e.g. write_file content) must
+        // not become a multi-hundred-KB NDJSON event line that bloats the run log
+        // or trips strict stream parsing. The tool handler below still receives
+        // the full, untouched `use.input`.
+        input: boundInputForEvent(use.input),
         turn: turnNumber,
       });
 
@@ -191,6 +195,21 @@ function extractText(blocks: ContentBlock[]): string {
     .filter((text) => text.length > 0)
     .join("\n")
     .trim();
+}
+
+// Max serialized size of a tool input echoed into a `tool.requested` event.
+// Beyond this the input is replaced with a bounded preview so a single event
+// line stays small regardless of how large the model's argument is.
+const MAX_EVENT_INPUT_BYTES = 4096;
+
+function boundInputForEvent(input: JsonObject): JsonObject {
+  const json = JSON.stringify(input);
+  if (json.length <= MAX_EVENT_INPUT_BYTES) return input;
+  return {
+    _truncated: true,
+    _bytes: json.length,
+    preview: `${json.slice(0, MAX_EVENT_INPUT_BYTES)}…`,
+  };
 }
 
 function previewOf(output: string | ContentBlock[]): string {

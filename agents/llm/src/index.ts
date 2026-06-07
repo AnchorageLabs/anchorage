@@ -1,7 +1,13 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { runWithTools } from "./tools/loop.js";
 import { createAnthropicProvider } from "./tools/providers/anthropic.js";
+import { createBedrockProvider } from "./tools/providers/bedrock.js";
 import { createOpenAiProvider } from "./tools/providers/openai.js";
+import {
+  isMaxCompletionTokensUnsupported,
+  isTemperatureUnsupported,
+  wantsMaxCompletionTokens,
+} from "./tools/providers/param-support.js";
 import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from "./tools/types.js";
 
 export { discoveryTools } from "./tools/builtin/discovery.js";
@@ -12,6 +18,7 @@ export { webTools } from "./tools/builtin/web.js";
 // repoReadTools, ... } from "@anchorage/agent-llm"` without deep imports.
 export { runWithTools } from "./tools/loop.js";
 export { createAnthropicProvider } from "./tools/providers/anthropic.js";
+export { createBedrockProvider } from "./tools/providers/bedrock.js";
 export { createOpenAiProvider } from "./tools/providers/openai.js";
 export type {
   AssistantMessage,
@@ -39,13 +46,7 @@ export type {
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
 
-export type LlmProvider =
-  | "anthropic"
-  | "aws-bedrock"
-  | "kimi"
-  | "moonshot"
-  | "openai"
-  | "openai-compatible";
+export type LlmProvider = "anthropic" | "aws-bedrock" | "openai";
 
 export interface LlmRoleDefaults {
   role: string;
@@ -107,11 +108,6 @@ export function resolveLlmConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig
       return resolveBedrockConfig(defaults);
     case "openai":
       return resolveOpenAiConfig(defaults);
-    case "openai-compatible":
-      return resolveOpenAiCompatibleConfig(defaults, provider.value);
-    case "kimi":
-    case "moonshot":
-      return resolveMoonshotConfig(defaults, provider.value);
   }
 }
 
@@ -124,10 +120,7 @@ export async function requestLlmCompletion(
       return requestAnthropicCompletion(config, request);
     case "aws-bedrock":
       return requestBedrockCompletion(config, request);
-    case "kimi":
-    case "moonshot":
     case "openai":
-    case "openai-compatible":
       return requestChatCompletion(config, request);
   }
 }
@@ -155,11 +148,8 @@ export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdap
         }),
       };
     case "openai":
-    case "openai-compatible":
-    case "kimi":
-    case "moonshot":
       if (!config.apiKey) {
-        return { ok: false, message: `${config.provider} provider requires an API key.` };
+        return { ok: false, message: "OpenAI provider requires an API key." };
       }
       return {
         ok: true,
@@ -171,11 +161,8 @@ export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdap
       };
     case "aws-bedrock":
       return {
-        ok: false,
-        message:
-          "Bedrock is one-shot only and does not support the multi-turn tool loop. " +
-          "Use requestLlmCompletion for Bedrock, or set ANTHROPIC_API_KEY / OPENAI_API_KEY " +
-          "to enable tool-using agents (coder, planner, reviewer).",
+        ok: true,
+        value: createBedrockProvider({ model: config.model, region: config.region }),
       };
   }
 }
@@ -226,25 +213,20 @@ function resolveProvider(): LlmResult<LlmProvider> {
     if (provider) return { ok: true, value: provider };
     return {
       ok: false,
-      message:
-        "ANCHORAGE_LLM_PROVIDER must be one of anthropic, openai, openai-compatible, moonshot, kimi, bedrock.",
+      message: "ANCHORAGE_LLM_PROVIDER must be one of anthropic, openai, bedrock.",
     };
   }
 
+  // No explicit provider: infer from available credentials.
   if (process.env.ANTHROPIC_API_KEY) return { ok: true, value: "anthropic" };
   if (process.env.OPENAI_API_KEY) return { ok: true, value: "openai" };
-  if (process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY) {
-    return { ok: true, value: "moonshot" };
-  }
-  if (process.env.ANCHORAGE_LLM_API_KEY && process.env.ANCHORAGE_LLM_BASE_URL) {
-    return { ok: true, value: "openai-compatible" };
-  }
   if (hasBedrockAuth()) return { ok: true, value: "aws-bedrock" };
 
   return {
     ok: false,
     message:
-      "Set ANCHORAGE_LLM_PROVIDER plus provider credentials, or configure ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, ANCHORAGE_LLM_API_KEY with ANCHORAGE_LLM_BASE_URL, or AWS Bedrock credentials.",
+      "Set ANCHORAGE_LLM_PROVIDER (anthropic | openai | bedrock), or provide credentials: " +
+      "ANTHROPIC_API_KEY, OPENAI_API_KEY, or AWS Bedrock credentials.",
   };
 }
 
@@ -258,26 +240,15 @@ function normalizeProvider(value: string): null | LlmProvider {
       return "aws-bedrock";
     case "openai":
       return "openai";
-    case "openai-compatible":
-    case "openai_compatible":
-    case "compatible":
-      return "openai-compatible";
-    case "kimi":
-      return "kimi";
-    case "moonshot":
-      return "moonshot";
     default:
       return null;
   }
 }
 
 function resolveAnthropicConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return {
-      ok: false,
-      message: "Set ANTHROPIC_API_KEY or ANCHORAGE_LLM_API_KEY for the Anthropic provider.",
-    };
+    return { ok: false, message: "Set ANTHROPIC_API_KEY for the Anthropic provider." };
   }
 
   return {
@@ -285,11 +256,7 @@ function resolveAnthropicConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig>
     value: {
       provider: "anthropic",
       apiKey,
-      baseUrl: trimTrailingSlash(
-        process.env.ANTHROPIC_BASE_URL ||
-          process.env.ANCHORAGE_LLM_BASE_URL ||
-          "https://api.anthropic.com/v1",
-      ),
+      baseUrl: trimTrailingSlash(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1"),
       model: normalizeAnthropicModel(resolveModel(defaults, defaults.anthropicModel)),
       tool: "anthropic.messages",
     },
@@ -316,12 +283,9 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
 }
 
 function resolveOpenAiConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return {
-      ok: false,
-      message: "Set OPENAI_API_KEY or ANCHORAGE_LLM_API_KEY for the OpenAI provider.",
-    };
+    return { ok: false, message: "Set OPENAI_API_KEY for the OpenAI provider." };
   }
 
   return {
@@ -329,90 +293,8 @@ function resolveOpenAiConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
     value: {
       provider: "openai",
       apiKey,
-      baseUrl: trimTrailingSlash(
-        process.env.OPENAI_BASE_URL ||
-          process.env.ANCHORAGE_LLM_BASE_URL ||
-          "https://api.openai.com/v1",
-      ),
+      baseUrl: trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
       model: resolveModel(defaults, defaults.openaiModel || "gpt-4.1"),
-      tool: "openai.chat.completions",
-    },
-  };
-}
-
-function resolveOpenAiCompatibleConfig(
-  defaults: LlmRoleDefaults,
-  provider: "openai-compatible",
-): LlmResult<LlmConfig> {
-  const apiKey = process.env.ANCHORAGE_LLM_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return {
-      ok: false,
-      message: "Set ANCHORAGE_LLM_API_KEY for the OpenAI-compatible provider.",
-    };
-  }
-
-  const baseUrl = process.env.ANCHORAGE_LLM_BASE_URL || process.env.OPENAI_BASE_URL;
-  if (!baseUrl) {
-    return {
-      ok: false,
-      message: "Set ANCHORAGE_LLM_BASE_URL for the OpenAI-compatible provider.",
-    };
-  }
-
-  const model = resolveOptionalModel(defaults);
-  if (!model) {
-    return {
-      ok: false,
-      message: `Set ${roleModelEnvName(defaults.role)} or ANCHORAGE_LLM_MODEL for the OpenAI-compatible provider.`,
-    };
-  }
-
-  return {
-    ok: true,
-    value: {
-      provider,
-      apiKey,
-      baseUrl: trimTrailingSlash(baseUrl),
-      model,
-      tool: "openai.chat.completions",
-    },
-  };
-}
-
-function resolveMoonshotConfig(
-  defaults: LlmRoleDefaults,
-  provider: "kimi" | "moonshot",
-): LlmResult<LlmConfig> {
-  const apiKey =
-    process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || process.env.ANCHORAGE_LLM_API_KEY;
-  if (!apiKey) {
-    return {
-      ok: false,
-      message: "Set MOONSHOT_API_KEY, KIMI_API_KEY, or ANCHORAGE_LLM_API_KEY for Kimi/Moonshot.",
-    };
-  }
-
-  const model = resolveOptionalModel(defaults);
-  if (!model) {
-    return {
-      ok: false,
-      message: `Set ${roleModelEnvName(defaults.role)} or ANCHORAGE_LLM_MODEL for Kimi/Moonshot.`,
-    };
-  }
-
-  return {
-    ok: true,
-    value: {
-      provider,
-      apiKey,
-      baseUrl: trimTrailingSlash(
-        process.env.MOONSHOT_BASE_URL ||
-          process.env.KIMI_BASE_URL ||
-          process.env.ANCHORAGE_LLM_BASE_URL ||
-          "https://api.moonshot.ai/v1",
-      ),
-      model,
       tool: "openai.chat.completions",
     },
   };
@@ -432,30 +314,6 @@ function resolveOptionalModel(defaults: LlmRoleDefaults): null | string {
 
 function roleModelEnvName(role: string): string {
   return `ANCHORAGE_${role.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_MODEL`;
-}
-
-/**
- * True when a provider error indicates the `temperature` parameter is not
- * accepted by the target model (deprecated / unsupported / not allowed). Lets
- * the completion helpers retry once without temperature instead of failing.
- */
-function isTemperatureUnsupported(message: string): boolean {
-  return (
-    /temperature/i.test(message) &&
-    /(deprecat|unsupported|not\s+support|not\s+allowed|invalid)/i.test(message)
-  );
-}
-
-/**
- * True when a provider rejects `max_completion_tokens` (an older model / a
- * compatible endpoint that only knows `max_tokens`), so the caller can fall
- * back to `max_tokens`.
- */
-function isMaxCompletionTokensUnsupported(message: string): boolean {
-  return (
-    /max_completion_tokens/i.test(message) &&
-    /(unsupported|unrecogni|unknown|not\s+support|invalid)/i.test(message)
-  );
 }
 
 /**
@@ -549,12 +407,10 @@ async function requestChatCompletion(
   request: LlmRequest,
 ): Promise<LlmResult<LlmCompletion>> {
   // Token budget parameter: OpenAI's newer (reasoning) models require
-  // `max_completion_tokens` and reject `max_tokens`; older models and most
-  // OpenAI-compatible providers (moonshot/kimi) still take `max_tokens`. Start
-  // with the right default per provider, then flex on the API's error so any
-  // model works without us tracking model names.
-  let tokenParam: "max_completion_tokens" | "max_tokens" =
-    config.provider === "openai" ? "max_completion_tokens" : "max_tokens";
+  // `max_completion_tokens` and reject `max_tokens`; older models take
+  // `max_tokens`. Start with the modern default, then flex on the API's error
+  // so any model works without us tracking model names.
+  let tokenParam: "max_completion_tokens" | "max_tokens" = "max_completion_tokens";
   let includeTemperature = request.temperature !== undefined;
 
   const send = () =>
@@ -585,7 +441,7 @@ async function requestChatCompletion(
       includeTemperature = false;
       changed = true;
     }
-    if (tokenParam === "max_tokens" && /max_completion_tokens/i.test(response.message)) {
+    if (tokenParam === "max_tokens" && wantsMaxCompletionTokens(response.message)) {
       tokenParam = "max_completion_tokens";
       changed = true;
     } else if (

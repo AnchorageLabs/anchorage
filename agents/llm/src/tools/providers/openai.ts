@@ -11,6 +11,11 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from "../types.js";
+import {
+  isMaxCompletionTokensUnsupported,
+  isTemperatureUnsupported,
+  wantsMaxCompletionTokens,
+} from "./param-support.js";
 
 export interface OpenAiProviderConfig {
   apiKey: string;
@@ -29,7 +34,10 @@ export interface OpenAiProviderConfig {
  *      not blocks inside a user message — so a user message with N
  *      tool_result blocks fans out into N tool messages.
  *
- * Also covers Moonshot, Kimi, and any openai-compatible gateway.
+ * The token-budget parameter and `temperature` are flexed on the API's error:
+ * newer reasoning models require `max_completion_tokens` and reject
+ * `temperature`, while older models take `max_tokens` — we retry rather than
+ * track model names.
  */
 export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdapter {
   const baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
@@ -42,19 +50,26 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
       for (const message of input.messages) {
         messages.push(...toOpenAiMessages(message));
       }
+      const toolDefs = input.tools.map(toOpenAiTool);
 
-      const body: JsonObject = {
-        model: config.model,
-        messages,
-        max_tokens: input.maxTokens,
-        tools: input.tools.map(toOpenAiTool),
-        tool_choice: "auto",
-      };
-      if (typeof input.temperature === "number") body.temperature = input.temperature;
+      // Reasoning models want `max_completion_tokens` and reject `temperature`;
+      // older models take `max_tokens`. Start with the modern shape, then flex
+      // on whichever parameter the API rejects (up to two retries).
+      let tokenParam: "max_completion_tokens" | "max_tokens" = "max_completion_tokens";
+      let includeTemperature = typeof input.temperature === "number";
 
-      let response: Response;
-      try {
-        response = await fetch(`${baseUrl}/chat/completions`, {
+      const send = (): Promise<Response> => {
+        const body: JsonObject = {
+          model: config.model,
+          messages,
+          [tokenParam]: input.maxTokens,
+          tools: toolDefs,
+          tool_choice: "auto",
+        };
+        if (includeTemperature && typeof input.temperature === "number") {
+          body.temperature = input.temperature;
+        }
+        return fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${config.apiKey}`,
@@ -62,6 +77,33 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
           },
           body: JSON.stringify(body),
         });
+      };
+
+      let response: Response;
+      let text: string;
+      try {
+        response = await send();
+        text = await response.text();
+        for (let attempt = 0; attempt < 2 && !response.ok; attempt++) {
+          let changed = false;
+          if (includeTemperature && isTemperatureUnsupported(text)) {
+            includeTemperature = false;
+            changed = true;
+          }
+          if (tokenParam === "max_tokens" && wantsMaxCompletionTokens(text)) {
+            tokenParam = "max_completion_tokens";
+            changed = true;
+          } else if (
+            tokenParam === "max_completion_tokens" &&
+            isMaxCompletionTokensUnsupported(text)
+          ) {
+            tokenParam = "max_tokens";
+            changed = true;
+          }
+          if (!changed) break;
+          response = await send();
+          text = await response.text();
+        }
       } catch (error) {
         return {
           ok: false,
@@ -70,7 +112,6 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         };
       }
 
-      const text = await response.text();
       if (!response.ok) {
         return {
           ok: false,

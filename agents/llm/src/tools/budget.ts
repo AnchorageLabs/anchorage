@@ -129,12 +129,17 @@ export function recordTurn(state: BudgetState, inputTokens: number, outputTokens
   state.outputTokensTotal += outputTokens;
 }
 
+// A positive value sets an explicit cap; 0 or negative means "unlimited"
+// (Number.POSITIVE_INFINITY, so the `>=` budget checks never trip). An unset /
+// blank / non-numeric env falls back to the default.
 function pickInt(override: number | undefined, fallback: number, envName: string): number {
-  if (typeof override === "number" && Number.isFinite(override) && override > 0) return override;
+  if (typeof override === "number" && Number.isFinite(override)) {
+    return override > 0 ? override : Number.POSITIVE_INFINITY;
+  }
   const fromEnv = process.env[envName];
   if (fromEnv && fromEnv.trim().length > 0) {
     const parsed = Number(fromEnv);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    if (Number.isFinite(parsed)) return parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
   }
   return fallback;
 }

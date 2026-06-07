@@ -42,6 +42,80 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Sol Soletti
 
+### 2026-06-06 — Planner/coder reuse existing types; coder gates on tests + typecheck; reviewer checks integration.
+
+**Intent:** Raise output quality of the reasoning agents after chary#18 shipped code that didn't integrate (it invented a parallel `ParsedCommit` with `hash` instead of reusing the repo's `Commit` with `sha`, and shipped self-referential tests). Prompt-level hardening:
+- **planner:** must grep for and reuse existing types/contracts (never a parallel type for an existing concept; call out real field names); `acceptanceCriteria` must require the repo's real test suite + typecheck/build to pass and at least one integration test against the real upstream types, with runnable `verificationCommands` for both.
+- **coder:** reuse existing contracts (no look-alike types / field mismatches); MUST run the repo's tests + typecheck via `shell_exec` and they MUST pass before finishing — never report success over a red state; cover the change with an integration test against real types.
+- **reviewer:** explicitly flags duplicate/parallel types (e.g. `hash` vs `sha`), code that can't be fed by its real upstream producer, committed `node_modules/`/`dist/`, and self-referential tests (request a real integration test).
+
+These pair with the new `issue-to-reviewer` workflow (anchorage-orchestrator) which adds the tester + reviewer gates.
+
+**Files touched:**
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+- agents/reviewer/src/index.ts
+- CHANGELOG.md
+
+**Reason:** chary#18 — agentic output didn't reuse existing types, had no integration test, and wasn't gated on tests/typecheck.
+
+**Author:** Sol Soletti
+
+### 2026-06-06 — Coder never commits node_modules / build output.
+
+**Intent:** Stop the coder from committing dependency installs and build artifacts. It may run `pnpm install` / a build via `shell_exec`, producing `node_modules/` and `dist/`; combined with `git add -A` and a target repo that has no `.gitignore`, this swept everything into the commit (chary#18 opened a PR with ~1.28M lines across ~4.5k files). The coder now (1) writes a baseline `.gitignore` when the workspace has none, and (2) passes pathspec excludes to `git add` for `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `target`, etc. — so artifacts are never staged even when an existing `.gitignore` is incomplete. The committed diff / `code.change.result` artifact stay clean as a result.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- CHANGELOG.md
+
+**Reason:** `git add -A` in the coder committed `node_modules`/`dist` on repos without a `.gitignore`.
+
+**Author:** Sol Soletti
+
+### 2026-06-06 — Bound tool input echoed into tool.requested events.
+
+**Intent:** Cap the serialized tool input carried in `tool.requested` protocol events (preview beyond ~4KB) in `@anchorage/agent-llm`. A large argument — e.g. the coder calling `write_file` with a big file body — previously produced a multi-hundred-KB NDJSON event line; when that line was truncated/mis-framed the strict event-stream parser failed the whole run with `runner_preflight_failed` ("invalid JSON"). `tool.result` already truncated to a preview; this makes `tool.requested` symmetric. The tool handler still receives the full, untouched input — only the observability event is bounded. Surfaced once tool budgets were uncapped and the coder began reaching large `write_file` calls.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- CHANGELOG.md
+
+**Reason:** Oversized `tool.requested` event lines aborted real coder runs at the runner's NDJSON validation.
+
+**Author:** Sol Soletti
+
+### 2026-06-06 — Tool loop runs uncapped by default; budgets become opt-in via env.
+
+**Intent:** Remove the default tool-loop budget caps in `@anchorage/agent-llm`. Max turns, input tokens, files, web calls, and shell calls are now **unlimited by default**, so the reasoning agents (planner/coder/reviewer/issue-triage/issue-opener) run their tool loop to completion instead of aborting at 30 turns with `tool_budget_exceeded`. Each limit stays configurable per run via `ANCHORAGE_TOOL_MAX_*` — a positive number sets a cap, `0` or negative means unlimited, unset uses the (now-unlimited) default. The orchestrator's Temporal activity timeout (start-to-close / heartbeat) remains the hard backstop against runaway loops.
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/budget.ts
+- CHANGELOG.md
+
+**Reason:** The 30-turn cap aborted real issue→PR runs (`tool_budget_exceeded`) before the coder finished.
+
+**Author:** Sol Soletti
+
+### 2026-06-06 — Narrow the LLM adapter to Anthropic, OpenAI, and Bedrock with full tool-loop parity.
+
+**Intent:** Trim `@anchorage/agent-llm` to three providers — `anthropic`, `openai`, `aws-bedrock` — and remove `moonshot`, `kimi`, and the generic `openai-compatible` paths along with their `ANCHORAGE_LLM_API_KEY`/`ANCHORAGE_LLM_BASE_URL` credentials. Provider selection stays a single env switch (`ANCHORAGE_LLM_PROVIDER`, inferred from `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → AWS credentials when unset) and model selection stays `ANCHORAGE_<ROLE>_MODEL` → `ANCHORAGE_LLM_MODEL` → per-provider default, so swapping providers or model tiers is env-only.
+
+All three providers now drive the multi-turn tool loop. Bedrock gains a Converse-API `ProviderAdapter` with native `toolConfig` tool use — previously `providerFromLlmConfig` hard-errored for Bedrock, so only the one-shot path worked there. Every flow now tolerates models that drop request parameters: the Anthropic and OpenAI tool-loop adapters retry without `temperature` (Opus 4.7/4.8 reject it) and flex `max_completion_tokens`↔`max_tokens` (OpenAI reasoning models), matching the one-shot path. Shared "is this param rejected" predicates live in a new `param-support` module used by both paths.
+
+**Files touched:**
+- agents/llm/src/index.ts
+- agents/llm/src/tools/providers/param-support.ts
+- agents/llm/src/tools/providers/bedrock.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/openai.ts
+- agents/llm/README.md
+- CHANGELOG.md
+
+**Reason:** Anthropic-first cost control with predictable, env-only provider/model switching; unblock Bedrock tool use and Opus 4.8 parameter compatibility across every agent.
+
+**Author:** Sol Soletti
 
 ### 2026-06-04 — Agents acquire context through a uniform tool surface.
 
