@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Fix biome formatting drift on main (CI lint red).
+
+**Intent:** `biome check .` was failing on `main` (3 errors) because `agents/coder/src/index.ts` and `agents/issue-opener/src/index.ts` were committed without biome 2.4.15 formatting — long lines not wrapped and one unsorted import group. Applied `biome check --write` (formatting/import-organization only, no behaviour change) so CI lint is green again and dependent PRs can merge.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- agents/issue-opener/src/index.ts
+
+**Reason:** CI "Build and Test" → lint step red on main; blocks all open PRs.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-07 — Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
 
 **Intent:** Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
