@@ -209,7 +209,10 @@ async function resolveCoderInput(
   const plan = await resolveImplementationPlan(task);
   if (!plan.ok) return plan;
 
-  return { ok: true, value: { workspacePath, plan: plan.value } };
+  const issueSummary = await readOptionalJsonArtifact(task, "issue.summary");
+  const triageResult = await readOptionalJsonArtifact(task, "issue.triage.result");
+
+  return { ok: true, value: { workspacePath, plan: plan.value, issueSummary, triageResult } };
 }
 
 function resolveWorkspacePath(value: JsonValue | undefined): null | string {
@@ -300,6 +303,20 @@ function parseImplementationPlan(
   };
 }
 
+async function readOptionalJsonArtifact(
+  task: TaskEnvelope,
+  artifactType: string,
+): Promise<JsonObject | null> {
+  const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === artifactType);
+  if (!artifact || !artifact.uri.startsWith("file://")) return null;
+  try {
+    const parsed = JSON.parse(await fs.readFile(new URL(artifact.uri), "utf8"));
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveCoderLlmConfig(): { ok: true; value: LlmConfig } | CoderFailure {
   const config = resolveLlmConfig({
     role: "coder",
@@ -336,7 +353,7 @@ async function driveCoderLoop(
 
   const result = await runWithTools(provider.value, {
     system: coderSystemPrompt(),
-    messages: [{ role: "user", content: coderUserPrompt(input.plan) }],
+    messages: [{ role: "user", content: coderUserPrompt(input.plan, input.issueSummary, input.triageResult) }],
     tools,
     workspacePath: input.workspacePath,
     capabilities: new Set(task.capabilities ?? []),
@@ -421,10 +438,33 @@ When you are finished, your FINAL message MUST be a single JSON object and NOTHI
 If you encounter a blocker (missing capability, unsolvable issue, environment problem), still return the JSON above with an empty edit set and explain in 'risks'.`;
 }
 
-function coderUserPrompt(plan: ImplementationPlan): string {
+function coderUserPrompt(
+  plan: ImplementationPlan,
+  issueSummary: JsonObject | null,
+  triageResult: JsonObject | null,
+): string {
+  const context: JsonObject = {};
+  if (issueSummary) {
+    const issue: JsonObject = {};
+    if (issueSummary.issueNumber !== undefined) issue.number = issueSummary.issueNumber;
+    if (issueSummary.title !== undefined) issue.title = issueSummary.title;
+    if (issueSummary.body !== undefined) issue.body = issueSummary.body;
+    if (issueSummary.labels !== undefined) issue.labels = issueSummary.labels;
+    if (issueSummary.url !== undefined) issue.url = issueSummary.url;
+    context.issue = issue;
+  }
+  if (triageResult) {
+    const triage: JsonObject = {};
+    if (triageResult.scope !== undefined) triage.scope = triageResult.scope;
+    if (triageResult.type !== undefined) triage.type = triageResult.type;
+    if (triageResult.priority !== undefined) triage.priority = triageResult.priority;
+    context.triage = triage;
+  }
+
   return JSON.stringify(
     {
       task: "Apply this implementation plan by editing the workspace via the available tools.",
+      ...(Object.keys(context).length > 0 ? { context } : {}),
       plan,
       constraints: [
         "Use write_file for every edit; do not paste fileEdits[] in your response.",
@@ -915,6 +955,8 @@ interface CoderFailure extends AgentFailure {
 interface CoderInput {
   workspacePath: string;
   plan: ImplementationPlan;
+  issueSummary: JsonObject | null;
+  triageResult: JsonObject | null;
 }
 
 interface CommandResult {

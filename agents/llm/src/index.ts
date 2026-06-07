@@ -134,9 +134,10 @@ export async function requestLlmCompletion(
 
 /**
  * Build a tool-loop ProviderAdapter from an existing LlmConfig. Anthropic and
- * OpenAI (incl. Moonshot/Kimi/openai-compatible) are supported; Bedrock and
- * other providers return an error — the one-shot requestLlmCompletion path
- * remains available for those callers.
+ * OpenAI (incl. Moonshot/Kimi/openai-compatible) are supported. Bedrock is
+ * one-shot only — it returns `{ ok: false }` here; use requestLlmCompletion
+ * for Bedrock workflows, or switch to ANTHROPIC_API_KEY / OPENAI_API_KEY to
+ * enable tool-using agents (coder, planner, reviewer, issue-triage).
  */
 export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdapter> {
   switch (config.provider) {
@@ -172,8 +173,9 @@ export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdap
       return {
         ok: false,
         message:
-          "Bedrock tool-use is not wired yet. Use anthropic / openai providers, " +
-          "or fall back to the one-shot requestLlmCompletion path.",
+          "Bedrock is one-shot only and does not support the multi-turn tool loop. " +
+          "Use requestLlmCompletion for Bedrock, or set ANTHROPIC_API_KEY / OPENAI_API_KEY " +
+          "to enable tool-using agents (coder, planner, reviewer).",
       };
   }
 }

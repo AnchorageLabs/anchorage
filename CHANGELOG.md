@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
+
+**Intent:** Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- agents/issue-opener/src/index.ts
+- agents/llm/src/index.ts
+
+**Reason:** planning-2026-06-06.md items 5, 2, 3-B: coder was ignoring issue.summary and triage.result already in priorArtifacts; issue-opener had a bespoke ReAct loop inconsistent with the rest of the tool-using agents; Bedrock tool-loop error message was misleading.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-04 — Agents acquire context through a uniform tool surface.
 
 **Intent:** Replace the planner/coder/reviewer/issue-triage one-shot LLM calls with a provider-agnostic tool-use loop in `@anchorage/agent-llm`. Agents now actively read the workspace (read_file/list_dir/grep/git_log/git_show/git_diff/detect_project/read_repo_manifest), write changes (write_file/delete_file), run verification commands (shell_exec), and consult the open web (web_search/web_fetch/github_search_issues/github_get_file) via capability-gated tools. Removes the ≤12-file pre-load in the coder and the "no repo visibility" blind spot in the planner and reviewer. No protocol changes — tool calls ride existing `tool.requested`/`tool.result` events; per-run `agent.progress` carries a `context.snapshot` payload with bytes/files/turns/tokens.
