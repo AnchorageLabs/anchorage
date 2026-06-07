@@ -67,6 +67,22 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 **Reason:** ADR-0029 / planning-2026-06-06.md §6 (Agent Feedback) — close the forward-only pipeline into a real feedback loop with a first-class revision-request artifact.
 
 **Author:** Sol Soletti
+### 2026-06-07 — Add tree-sitter symbol tools (find_references, symbol_outline) to the repo.read surface.
+
+**Intent:** Give the reasoning agents symbol-level awareness alongside grep. Two new tools on the existing `repo.read` capability — `find_references(symbol, [path])` (definition + reference `file:line`s, to gauge a change's blast radius) and `symbol_outline(path)` (a file's defined symbols) — backed by a tree-sitter engine (`web-tree-sitter` + `tree-sitter-wasms`, 36 languages). Tool descriptions steer selection: `grep` now defers named-symbol lookups to `find_references`, and the symbol tools are marked "preferred" for symbol/structure queries — without this, weaker models (e.g. Haiku) default to grep and never reach for them. Additive and uncapped: they sit next to `grep`/`read_file` and the model uses whichever fits; grep is never replaced or limited. Fidelity is syntactic (accurate definitions, identifier-matched references — not type-resolved), and every path **fails closed** to a plain note (unsupported language, missing grammar, oversized file, parse error) so the model falls back to grep with no failure path. A `git grep -l` prefilter bounds which files tree-sitter parses; candidate/result caps bound cost. Tools ride the existing `repo.read` gate, so planner/coder/reviewer/issue-triage gain them automatically; `ANCHORAGE_TOOL_SYMBOLS_ENABLED=false` is an ops kill-switch (default on). Symbol-tool usage is observable via the existing `tool.requested`/`tool.result` events — no protocol change.
+
+**Files touched:**
+- agents/llm/src/tools/symbols/engine.ts
+- agents/llm/src/tools/builtin/symbols.ts
+- agents/llm/src/tools/builtin/repo.ts
+- agents/llm/src/index.ts
+- agents/llm/package.json
+- pnpm-lock.yaml
+- CHANGELOG.md
+
+**Reason:** anchorage-internal#31 — symbol tool from the agent-context audit (anchorage-internal#28).
+
+**Author:** Valentin Torassa
 
 ### 2026-06-07 — Fix biome formatting drift on main (CI lint red).
 
