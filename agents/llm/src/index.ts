@@ -13,6 +13,7 @@ import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from ".
 export { discoveryTools } from "./tools/builtin/discovery.js";
 export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
 export { shellTools } from "./tools/builtin/shell.js";
+export { symbolTools } from "./tools/builtin/symbols.js";
 export { webTools } from "./tools/builtin/web.js";
 // Re-export the tool-loop surface so consumers can `import { runWithTools,
 // repoReadTools, ... } from "@anchorage/agent-llm"` without deep imports.
