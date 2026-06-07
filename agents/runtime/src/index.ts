@@ -558,8 +558,13 @@ function probeOnce(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: 3_000 }, (res) => {
       res.resume();
-      // Any HTTP response means something is listening.
-      resolve((res.statusCode ?? 0) > 0);
+      // A 5xx means the server is listening but the app is erroring (e.g.
+      // `next start` with no prior build → required-server-files.json missing).
+      // That is NOT a usable preview, so don't report it as healthy — only
+      // 2xx/3xx/4xx count as ready. Otherwise a broken app (or a stale process
+      // still bound to the port) gets surfaced to the user as "running".
+      const code = res.statusCode ?? 0;
+      resolve(code > 0 && code < 500);
     });
     req.on("error", () => resolve(false));
     req.on("timeout", () => {
