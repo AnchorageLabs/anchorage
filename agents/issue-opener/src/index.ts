@@ -6,13 +6,13 @@ import path from "node:path";
 import process from "node:process";
 import {
   discoveryTools,
+  type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
   repoReadTools,
   requestLlmCompletion,
   resolveLlmConfig,
   runWithTools,
-  type LlmConfig,
   type ToolEvent,
 } from "@anchorage/agent-llm";
 import {
@@ -160,9 +160,15 @@ async function exploreAndDraft(
     openaiModel: "gpt-4.1",
   });
   if (!config.ok) {
-    emit(task, "agent.progress", "warn", "LLM unavailable; drafting the issue from the instruction", {
-      reason: config.message,
-    });
+    emit(
+      task,
+      "agent.progress",
+      "warn",
+      "LLM unavailable; drafting the issue from the instruction",
+      {
+        reason: config.message,
+      },
+    );
     return { ok: true, value: fallbackDraft(input.instruction) };
   }
 
@@ -319,7 +325,10 @@ function buildSystemPrompt(): string {
 }
 
 function parseIssueDraft(text: string): IssueDraft | null {
-  let raw = text.trim().replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+  let raw = text
+    .trim()
+    .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+    .trim();
   const fence = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
   if (fence?.[1]) raw = fence[1].trim();
   if (!raw.startsWith("{")) {

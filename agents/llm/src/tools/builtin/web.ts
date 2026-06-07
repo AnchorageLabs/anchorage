@@ -19,6 +19,8 @@ const ALLOWED_CONTENT_TYPES = [
   "application/ld+json",
   "application/atom+xml",
   "application/rss+xml",
+  // GitHub returns application/vnd.github.* for the contents and search APIs; the agents pass the matching accept header explicitly.
+  "application/vnd.github",
 ];
 
 // ── Common HTTP helper with timeout + size cap ─────────────────────────────
