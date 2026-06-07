@@ -175,12 +175,14 @@ async function findReferencesHandler(
 export const findReferencesTool: ToolDefinition = {
   name: "find_references",
   description:
-    "Find where a symbol (function, class, method, type, variable) is defined and referenced " +
-    "across the repository, using tree-sitter. Returns the definition site(s) plus reference " +
-    "file:line locations — use it to gauge the blast radius of changing a symbol before editing " +
-    "or reviewing it. Multi-language; syntactic (identifier-matched, not type-resolved). " +
-    "'symbol' must be a single identifier — for patterns/substrings use grep. Falls back to a " +
-    "note when the language is unsupported; then use grep + read_file.",
+    "PREFER THIS over grep whenever you need to locate a named symbol. Resolves where a symbol " +
+    "(function, class, method, type, variable) is defined and every place it is referenced, " +
+    "using tree-sitter — returns the definition site plus exact reference file:line locations. " +
+    "ALWAYS call this first when a task asks to change, rename, or review a symbol, or to find " +
+    "its callers / blast radius: one call replaces several grep+read_file rounds and won't miss " +
+    "call sites the way a substring grep does. Multi-language; syntactic (identifier-matched, " +
+    "not type-resolved). 'symbol' must be a single identifier — for free-form patterns use grep. " +
+    "If the language is unsupported it returns a short note; only then fall back to grep + read_file.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -240,10 +242,11 @@ async function symbolOutlineHandler(
 export const symbolOutlineTool: ToolDefinition = {
   name: "symbol_outline",
   description:
-    "List the symbols defined in a single file (functions, classes, methods, types, …) with " +
-    "their line numbers, using tree-sitter — a fast structural table of contents, cheaper than " +
-    "reading the whole file. Multi-language; falls back to a note when the language is " +
-    "unsupported (then use read_file).",
+    "PREFER THIS over read_file when you only need a file's structure (not its full contents). " +
+    "Lists the symbols defined in one file (functions, classes, methods, types, …) with their " +
+    "line numbers, using tree-sitter — a fast structural table of contents that orients you and " +
+    "points read_file at the exact lines worth opening. Multi-language; if the language is " +
+    "unsupported it returns a short note — only then use read_file.",
   inputSchema: {
     type: "object",
     additionalProperties: false,

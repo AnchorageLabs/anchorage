@@ -327,9 +327,12 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
 export const grepTool: ToolDefinition = {
   name: "grep",
   description:
-    "Search for a pattern across git-tracked files. Returns up to 50 matches by default. " +
-    "Use this to find symbol definitions/uses, error messages, or feature flags. " +
-    "Pattern is git-grep's ERE syntax.",
+    "Search for a regex/text pattern across git-tracked files (git-grep ERE syntax). " +
+    "Returns up to 50 matches by default. Use it for error messages, log strings, feature " +
+    "flags, comments, or free-form patterns. NOTE: to locate where a specific named symbol " +
+    "(function, class, method, type, variable) is defined or called, use `find_references` " +
+    "instead — it is symbol-aware and returns the definition plus exact call sites, whereas " +
+    "grep returns noisy substring matches.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
