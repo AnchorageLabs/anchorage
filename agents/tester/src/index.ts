@@ -6,8 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  buildRevisionRequest,
   ExitCode,
   type ProtocolEvent,
+  REVISION_REQUEST_ARTIFACT_TYPE,
+  type RevisionRequest,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
@@ -105,6 +108,19 @@ async function main(): Promise<number> {
   await maybePostTestComment(task.value, report);
 
   if (!report.passed) {
+    // Emit a revision request alongside the report so the orchestrator can loop
+    // the failures back to the coder instead of failing the run outright. The
+    // exit code stays PartialSuccessAttentionRequired — the orchestrator decides
+    // whether a feedback loop is configured for this step.
+    const revisionArtifact = await writeRevisionArtifact(task.value, report);
+    emit(
+      task.value,
+      "artifact.created",
+      "info",
+      "Revision request artifact created",
+      revisionArtifact,
+    );
+
     emit(task.value, "agent.failed", "error", "One or more test commands failed", {
       error: { code: "test_failed", message: "One or more test commands failed." },
       artifact,
@@ -323,6 +339,37 @@ async function writeArtifact(task: TaskEnvelope, report: TestReport) {
   await fs.writeFile(artifactPath, content, "utf8");
   return {
     artifactType: "test.report",
+    uri: `file://${artifactPath}`,
+    mediaType: "application/json",
+    sizeBytes: Buffer.byteLength(content),
+  };
+}
+
+async function writeRevisionArtifact(task: TaskEnvelope, report: TestReport) {
+  const failed = report.results.filter((result) => !result.passed);
+  const revision: RevisionRequest = buildRevisionRequest({
+    fromAgent: "tester",
+    reason: "test_failed",
+    summary:
+      failed.length === report.results.length
+        ? `All ${report.results.length} command(s) failed`
+        : `${failed.length} of ${report.results.length} command(s) failed`,
+    failures: failed.map((result) => ({
+      name: result.name,
+      command: result.command,
+      details: result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`,
+    })),
+  });
+
+  const artifactRoot =
+    process.env.ANCHORAGE_ARTIFACT_DIR ??
+    path.join(os.tmpdir(), "anchorage-agent-artifacts", task.run.id);
+  await fs.mkdir(artifactRoot, { recursive: true });
+  const artifactPath = path.join(artifactRoot, "revision-request.json");
+  const content = `${JSON.stringify(revision, null, 2)}\n`;
+  await fs.writeFile(artifactPath, content, "utf8");
+  return {
+    artifactType: REVISION_REQUEST_ARTIFACT_TYPE,
     uri: `file://${artifactPath}`,
     mediaType: "application/json",
     sizeBytes: Buffer.byteLength(content),

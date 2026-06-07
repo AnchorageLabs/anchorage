@@ -29,6 +29,45 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Reviewer emits revision requests; merge-gate skips gracefully; pr-opener is idempotent — enabling an auto-fix review loop.
+
+**Intent:** A reviewer "request_changes" can now be fixed automatically. The reviewer emits a code.revision.request (alongside pr.review.result) so a reviewer → coder feedback loop can hand the findings back to the coder; it still exits 0. When the loop can't get an approval, the merge-gate now SKIPS the merge gracefully (run completes, merged:false/skipped:true, PR left open with feedback) instead of failing the run with PolicyDenied. pr-opener is now idempotent — on a 422 it reuses the existing open PR for the branch, which is required because the loop re-runs pr-opener after the PR already exists.
+
+**Files touched:**
+- agents/reviewer/src/index.ts
+- agents/merge-gate/src/index.ts
+- agents/pr-opener/src/index.ts
+
+**Reason:** planning-2026-06-06.md §6 (Agent Feedback) — close the reviewer dead-end into an auto-fix loop; user request to make a non-approve skip the merge gracefully rather than fail the run.
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Fix merge-gate review check so a reviewer "request_changes" actually cancels the merge with correct guidance.
+
+**Intent:** When the reviewer concludes request_changes, the merge-gate cancels the merge (PolicyDenied) and the PR stays open with the reviewer's feedback. The non-approve block already prevented the merge, but it compared the decision against "changes_requested" — a value the reviewer never emits (it emits "approve" | "request_changes") — so the changes-requested-specific guidance was dead code. Corrected the value and made the "merge cancelled" intent explicit in the failure message.
+
+**Files touched:**
+- agents/merge-gate/src/index.ts
+
+**Reason:** Reviewer/merge-gate decision-value mismatch surfaced while validating run_srv_1780803022653_22 (reviewer emitted request_changes).
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Add code.revision.request artifact so the tester can hand failures back to the coder.
+
+**Intent:** A failing test/typecheck no longer just ends the pipeline — the tester now emits a structured `code.revision.request` artifact describing what failed, and the coder reads it on a loop-back to fix the listed failures instead of starting over. Introduces a shared SDK type so emitter and consumer cannot drift on field names. (Orchestrator side wires the actual loop.)
+
+**Files touched:**
+- sdk/typescript/src/artifacts.ts
+- sdk/typescript/src/index.ts
+- sdk/typescript/tests/artifacts.test.ts
+- agents/tester/src/index.ts
+- agents/coder/src/index.ts
+
+**Reason:** ADR-0029 / planning-2026-06-06.md §6 (Agent Feedback) — close the forward-only pipeline into a real feedback loop with a first-class revision-request artifact.
+
+**Author:** Sol Soletti
+
 ### 2026-06-07 — Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.
 
 **Intent:** Feed coder full issue context; migrate issue-opener to runWithTools; document Bedrock as one-shot only.

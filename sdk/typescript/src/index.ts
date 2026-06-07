@@ -1,3 +1,8 @@
+export type { RevisionFailure, RevisionRequest } from "./artifacts.js";
+export {
+  buildRevisionRequest,
+  REVISION_REQUEST_ARTIFACT_TYPE,
+} from "./artifacts.js";
 export type { EventStreamValidationContext } from "./events/event-stream.js";
 export {
   eventStreamContextFromTaskEnvelope,
