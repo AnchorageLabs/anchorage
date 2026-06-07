@@ -185,6 +185,23 @@ export interface ContextSnapshot {
   shellCalls: number;
   inputTokensTotal: number;
   outputTokensTotal: number;
+  // ── Context-miss signals ──────────────────────────────────────────────────
+  // Heuristics that hint the run was under-served by the lexical tool surface
+  // (grep / read_file) and might benefit from symbol-level lookup. Emitted on
+  // the `context.snapshot` event so we can measure, across real runs, how often
+  // agents hit these before committing to a symbol tool. Instrumentation only —
+  // nothing in the loop changes behaviour based on them.
+  //
+  // True when the run reached its unique-file cap (ANCHORAGE_TOOL_MAX_FILES);
+  // always false when the cap is unlimited.
+  filesReadCapHit: boolean;
+  // Number of `grep` calls that repeated a pattern already searched this run
+  // (total grep calls minus distinct patterns) — a proxy for blindly hunting a
+  // symbol the model couldn't resolve.
+  repeatedSymbolGrep: number;
+  // Count of `grep`→`read_file` adjacencies — a proxy for manual cross-file
+  // chasing that a references lookup would short-circuit.
+  grepReadChurn: number;
 }
 
 export interface ToolCallRecord {

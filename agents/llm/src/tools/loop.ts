@@ -53,7 +53,7 @@ export async function runWithTools(
         reason: turnCheck.reason,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget),
+        snapshot: snapshotOf(budget, toolCalls),
       };
     }
 
@@ -72,7 +72,7 @@ export async function runWithTools(
         message: `${provider.name} (${provider.model}): ${turnResult.message}`,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget),
+        snapshot: snapshotOf(budget, toolCalls),
       };
     }
 
@@ -94,7 +94,7 @@ export async function runWithTools(
         stopReason: turnResult.stopReason,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget),
+        snapshot: snapshotOf(budget, toolCalls),
       };
     }
 
@@ -218,15 +218,20 @@ function previewOf(output: string | ContentBlock[]): string {
   return `${text.slice(0, 200)}…`;
 }
 
-function snapshotOf(budget: {
-  bytesAcquired: number;
-  filesRead: Set<string>;
-  turns: number;
-  webCalls: number;
-  shellCalls: number;
-  inputTokensTotal: number;
-  outputTokensTotal: number;
-}): ContextSnapshot {
+function snapshotOf(
+  budget: {
+    bytesAcquired: number;
+    filesRead: Set<string>;
+    maxFiles: number;
+    turns: number;
+    webCalls: number;
+    shellCalls: number;
+    inputTokensTotal: number;
+    outputTokensTotal: number;
+  },
+  toolCalls: ToolCallRecord[],
+): ContextSnapshot {
+  const miss = computeMissSignals(budget, toolCalls);
   return {
     bytesAcquired: budget.bytesAcquired,
     filesRead: [...budget.filesRead].sort(),
@@ -235,7 +240,38 @@ function snapshotOf(budget: {
     shellCalls: budget.shellCalls,
     inputTokensTotal: budget.inputTokensTotal,
     outputTokensTotal: budget.outputTokensTotal,
+    filesReadCapHit: miss.filesReadCapHit,
+    repeatedSymbolGrep: miss.repeatedSymbolGrep,
+    grepReadChurn: miss.grepReadChurn,
   };
+}
+
+// Derive the context-miss signals (see ContextSnapshot) from the budget state
+// and the ordered tool-call record. Pure over its inputs; no side effects.
+function computeMissSignals(
+  budget: { filesRead: Set<string>; maxFiles: number },
+  toolCalls: ToolCallRecord[],
+): { filesReadCapHit: boolean; repeatedSymbolGrep: number; grepReadChurn: number } {
+  const filesReadCapHit =
+    Number.isFinite(budget.maxFiles) && budget.filesRead.size >= budget.maxFiles;
+
+  let grepReadChurn = 0;
+  let repeatedSymbolGrep = 0;
+  const seenPatterns = new Set<string>();
+
+  for (let i = 0; i < toolCalls.length; i++) {
+    const call = toolCalls[i];
+    if (!call || call.name !== "grep") continue;
+    const pattern = typeof call.input.pattern === "string" ? call.input.pattern : "";
+    if (pattern.length > 0) {
+      // Every grep past the first for a given pattern counts as a repeat.
+      if (seenPatterns.has(pattern)) repeatedSymbolGrep += 1;
+      else seenPatterns.add(pattern);
+    }
+    if (toolCalls[i + 1]?.name === "read_file") grepReadChurn += 1;
+  }
+
+  return { filesReadCapHit, repeatedSymbolGrep, grepReadChurn };
 }
 
 // Re-export ToolDefinition as a helper alias so consumers can use the same
