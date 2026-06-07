@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
+import { symbolTools } from "./symbols.js";
 
 // ── Path safety ─────────────────────────────────────────────────────────────
 
@@ -658,6 +659,11 @@ export const repoReadTools: ToolDefinition[] = [
   gitLogTool,
   gitShowTool,
   gitDiffTool,
+  // Symbol tools ride the same `repo.read` capability and are offered alongside
+  // grep/read_file — additive, never a replacement. Every reasoning agent that
+  // already gets repoReadTools (planner, coder, reviewer, issue-triage) gains
+  // them automatically; they fail closed to grep when unavailable.
+  ...symbolTools,
 ];
 
 export const repoWriteTools: ToolDefinition[] = [writeFileTool, deleteFileTool];
