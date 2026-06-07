@@ -656,8 +656,8 @@ async function commitAndPush(
 }
 
 // Dependency and build-output directories that must never be committed, even
-// when the target repo has no .gitignore. Excluded from `git add` via pathspec
-// and seeded into a generated .gitignore.
+// when the target repo has no .gitignore. Seeded into a generated .gitignore and
+// unstaged via `git rm --cached --ignore-unmatch` after `git add -A` as a backstop.
 const IGNORED_ARTIFACT_DIRS = [
   "node_modules",
   "dist",
@@ -677,8 +677,8 @@ const IGNORED_ARTIFACT_DIRS = [
 
 // Write a baseline .gitignore when the workspace has none, so `git add -A`
 // (which honors .gitignore, including nested matches) won't sweep up installs or
-// build output. An existing .gitignore is left untouched — the pathspec excludes
-// on `git add` are the backstop for incomplete ones.
+// build output. An existing .gitignore is left untouched — the post-add
+// `git rm --cached` is the backstop for incomplete ones.
 async function ensureWorkspaceGitignore(workspacePath: string): Promise<void> {
   const gitignorePath = path.join(workspacePath, ".gitignore");
   try {
@@ -726,16 +726,29 @@ async function commitChanges(
 
   // Never let dependency installs or build output reach the commit. The coder
   // may run `pnpm install` / a build via shell_exec, which produces node_modules/
-  // and dist/; without this a repo lacking a .gitignore would have all of it
-  // swept up by `git add -A` (see chary#18: 1.28M lines / 4.4k files committed).
+  // and dist/; without a .gitignore `git add -A` would sweep all of it up (see
+  // chary#18: 1.28M lines / 4.4k files committed). Strategy: ensure a .gitignore
+  // exists (plain `git add -A` then silently skips ignored files — it never errors
+  // on them), and as a backstop drop any artifact dir that slipped into the index.
   await ensureWorkspaceGitignore(workspacePath);
-  const addArgs = ["add", "-A", "--", ".", ...IGNORED_ARTIFACT_DIRS.map((d) => `:(exclude)${d}`)];
-  const add = await runGit(workspacePath, addArgs);
+  const add = await runGit(workspacePath, ["add", "-A"]);
   if (add.exitCode !== 0) {
     const reason = add.stderr.trim() || `git add failed (exit ${add.exitCode})`;
     emitGitError(task, "git.commit", "commit_failed", reason);
     return { ok: false, reason, diff: "" };
   }
+  // Backstop for an existing-but-incomplete .gitignore (or a dir tracked by an
+  // earlier mistake): unstage dependency/build dirs from the index. --ignore-unmatch
+  // makes this a no-op (exit 0) when none are staged, so it never errors the way a
+  // pathspec `git add` of an ignored path does.
+  await runGit(workspacePath, [
+    "rm",
+    "-r",
+    "--cached",
+    "--quiet",
+    "--ignore-unmatch",
+    ...IGNORED_ARTIFACT_DIRS,
+  ]);
 
   // Capture the effective diff of everything just staged (added, modified, and
   // deleted files) against the branch point. This authoritative diff travels
