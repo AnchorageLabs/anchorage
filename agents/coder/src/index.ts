@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFileSync, writeSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +26,7 @@ import {
   REVISION_REQUEST_ARTIFACT_TYPE,
   type TaskEnvelope,
   validateTaskEnvelope,
+  writeAllSync,
 } from "@anchorage/sdk";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -149,7 +150,17 @@ async function main(): Promise<number> {
     fileDiffs: parseFileDiffs(delivery.diff),
   };
 
-  emit(task.value, "agent.output", "info", "Code change result created", output);
+  // Emit a COMPACT progress event without the (potentially huge) unified diff:
+  // a regenerated package-lock.json can push the full diff past 100KB, which
+  // overflowed a single stdout write and corrupted the event stream. The full
+  // diff + per-file breakdown still travel in the code.change.result artifact
+  // (written just below), which the worker inlines from the file.
+  const { diff: _diff, fileDiffs, ...eventSummary } = output;
+  emit(task.value, "agent.output", "info", "Code change result created", {
+    ...eventSummary,
+    fileCount: fileDiffs.length,
+    diffOmitted: true,
+  } as ProtocolEvent["data"]);
 
   const artifact = await writeResultArtifact(task.value, output);
   emit(task.value, "artifact.created", "info", "Code change result artifact created", artifact);
@@ -1055,7 +1066,9 @@ function emit(
     data,
   };
 
-  writeSync(1, `${JSON.stringify(event)}\n`);
+  // writeAllSync (not writeSync) so a large event is flushed completely — a
+  // partial write on the stdout pipe truncates the JSON and crashes the runner.
+  writeAllSync(1, `${JSON.stringify(event)}\n`);
 }
 
 interface AgentFailure {

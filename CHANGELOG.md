@@ -29,6 +29,48 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Flush agent events with a partial-write-safe writer so a large event can't corrupt the stream.
+
+**Intent:** The coder emitted an `agent.output` ("Code change result created") whose data inlined the full unified diff — and when the diff included a regenerated `package-lock.json` it ran ~146KB. `writeSync(1, …)` did a partial write on the stdout pipe, truncating the JSON mid-string; the runner's NDJSON parser rejected the whole stream and failed the step with a non-retryable GenericFailure (so retry never kicked in). Two fixes: (1) a shared `writeAllSync(fd, data)` helper in `@anchorage/sdk` that loops until every byte is flushed (retrying EAGAIN/EINTR), now used by the coder's `emit`; (2) the coder's `agent.output` event is now compact — it omits `diff`/`fileDiffs` (which still travel in the `code.change.result` artifact the worker inlines from disk), so no single event balloons.
+
+**Files touched:**
+- sdk/typescript/src/event-io.ts
+- sdk/typescript/src/index.ts
+- agents/coder/src/index.ts
+
+**Reason:** run_srv_1780845898589_1 failed at apply-code with "line 63: invalid JSON" — a 146KB agent.output event truncated on the stdout pipe; the failure was a deterministic GenericFailure so the bounded retry did not apply.
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Runtime agent binds the local preview to 0.0.0.0 so it is reachable from outside the container.
+
+**Intent:** The runtime agent runs as a Temporal activity inside the orchestrator worker container. It started the reviewed app (e.g. `next dev`) and probed `localhost:<port>` from *inside* the container — which succeeded, so it reported status "running" — but the dev server bound to 127.0.0.1, so the preview was unreachable from the host browser even once the worker published the port. The detached dev process is now spawned with `HOST=0.0.0.0` and `HOSTNAME=0.0.0.0` so it listens on all interfaces and a published container port forwards to it. (The orchestrator worker now publishes port 3000 to the host.)
+
+**Files touched:**
+- agents/runtime/src/index.ts
+
+**Reason:** user report — runtime preview showed "running" but `http://localhost:3000` was empty on the host; the server was bound container-locally.
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Add the runtime agent: a pre-merge gate that runs the reviewed change locally for human inspection.
+
+**Intent:** Introduce a new `runtime` agent (task type `runtime.start`) that runs after the reviewer and before the merge gate. It inspects the repo, detects how to run the solution locally (docker-compose, a runnable package.json dev/start/serve script, or a static `index.html`), starts it detached, and probes a preview URL so a human can inspect the running change before it merges. It is **optional by design**: a documentation-only change (detected from the coder's `code.change.result` diff) or a repo with no recognized local run strategy emits `runtime.preview` with status `not_applicable` and the pipeline continues without pausing; a runnable solution that won't come up emits status `failed`. On the first successful run it writes the working strategy to `.anchorage/runtime.json` in the repo root and reads it first on later runs (and rewrites it when the strategy changes). Adds a shared `runtime.preview` artifact type + `buildRuntimePreview` to the SDK so the agent and the orchestrator's approval gate cannot drift on field names. (The orchestrator wires the pause/approve/reject gate.)
+
+**Files touched:**
+- sdk/typescript/src/artifacts.ts
+- sdk/typescript/src/index.ts
+- agents/runtime/agent.json
+- agents/runtime/package.json
+- agents/runtime/tsconfig.json
+- agents/runtime/README.md
+- agents/runtime/src/index.ts
+- pnpm-lock.yaml
+
+**Reason:** ADR-0030; planning-2026-06-06.md §6 (Agent Feedback) — add a pre-merge execution gate so a human can see the change running locally before it merges; runtime is conditional so non-runnable changes (docs, libraries) skip it.
+
+**Author:** Sol Soletti
+
 ### 2026-06-07 — Reviewer emits revision requests; merge-gate skips gracefully; pr-opener is idempotent — enabling an auto-fix review loop.
 
 **Intent:** A reviewer "request_changes" can now be fixed automatically. The reviewer emits a code.revision.request (alongside pr.review.result) so a reviewer → coder feedback loop can hand the findings back to the coder; it still exits 0. When the loop can't get an approval, the merge-gate now SKIPS the merge gracefully (run completes, merged:false/skipped:true, PR left open with feedback) instead of failing the run with PolicyDenied. pr-opener is now idempotent — on a 422 it reuses the existing open PR for the branch, which is required because the loop re-runs pr-opener after the PR already exists.

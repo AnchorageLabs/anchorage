@@ -195,6 +195,16 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
 
+  agents/runtime:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+
   agents/smoke-test-runner:
     dependencies:
       '@anchorage/sdk':
