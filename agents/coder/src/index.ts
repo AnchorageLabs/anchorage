@@ -23,6 +23,7 @@ import {
 import {
   ExitCode,
   type ProtocolEvent,
+  REVISION_REQUEST_ARTIFACT_TYPE,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
@@ -211,8 +212,14 @@ async function resolveCoderInput(
 
   const issueSummary = await readOptionalJsonArtifact(task, "issue.summary");
   const triageResult = await readOptionalJsonArtifact(task, "issue.triage.result");
+  // Present only on a loop-back: a downstream gate (tester) sent the change back
+  // to be revised against specific failures.
+  const revisionRequest = await readOptionalJsonArtifact(task, REVISION_REQUEST_ARTIFACT_TYPE);
 
-  return { ok: true, value: { workspacePath, plan: plan.value, issueSummary, triageResult } };
+  return {
+    ok: true,
+    value: { workspacePath, plan: plan.value, issueSummary, triageResult, revisionRequest },
+  };
 }
 
 function resolveWorkspacePath(value: JsonValue | undefined): null | string {
@@ -356,7 +363,12 @@ async function driveCoderLoop(
     messages: [
       {
         role: "user",
-        content: coderUserPrompt(input.plan, input.issueSummary, input.triageResult),
+        content: coderUserPrompt(
+          input.plan,
+          input.issueSummary,
+          input.triageResult,
+          input.revisionRequest,
+        ),
       },
     ],
     tools,
@@ -454,6 +466,7 @@ function coderUserPrompt(
   plan: ImplementationPlan,
   issueSummary: JsonObject | null,
   triageResult: JsonObject | null,
+  revisionRequest: JsonObject | null,
 ): string {
   const context: JsonObject = {};
   if (issueSummary) {
@@ -473,15 +486,28 @@ function coderUserPrompt(
     context.triage = triage;
   }
 
+  // A revision request means a prior attempt at this plan was already applied and
+  // a downstream gate rejected it. The branch already carries that work — the job
+  // now is to FIX the listed failures, not to start over.
+  const isRevision = revisionRequest !== null;
+
   return JSON.stringify(
     {
-      task: "Apply this implementation plan by editing the workspace via the available tools.",
+      task: isRevision
+        ? "A previous attempt at this plan failed a downstream check. The branch already has that work; revise it to fix the failures in revisionFeedback, then re-verify."
+        : "Apply this implementation plan by editing the workspace via the available tools.",
       ...(Object.keys(context).length > 0 ? { context } : {}),
       plan,
+      ...(isRevision ? { revisionFeedback: revisionRequest } : {}),
       constraints: [
         "Use write_file for every edit; do not paste fileEdits[] in your response.",
         "Read existing files before editing — never edit blindly.",
         "Run available verification commands (test/build/lint) via shell_exec when possible.",
+        ...(isRevision
+          ? [
+              "Address every failure in revisionFeedback; re-run the failing commands and confirm they pass before finishing.",
+            ]
+          : []),
         "Final response: a JSON object with summary, commandsSuggested, risks.",
       ],
     },
@@ -1047,6 +1073,7 @@ interface CoderInput {
   plan: ImplementationPlan;
   issueSummary: JsonObject | null;
   triageResult: JsonObject | null;
+  revisionRequest: JsonObject | null;
 }
 
 interface CommandResult {

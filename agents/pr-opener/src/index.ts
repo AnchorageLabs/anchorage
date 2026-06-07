@@ -66,9 +66,10 @@ async function main(): Promise<number> {
 
   let prNumber: number;
   let prUrl: string;
+  let reused = false;
 
+  const octokit = new Octokit({ auth: token });
   try {
-    const octokit = new Octokit({ auth: token });
     const response = await octokit.pulls.create({
       owner,
       repo: repoName,
@@ -80,22 +81,33 @@ async function main(): Promise<number> {
     prNumber = response.data.number;
     prUrl = response.data.html_url;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    emit(task.value, "tool.result", "error", "GitHub PR creation failed", {
-      tool: "github.pulls.create",
-      success: false,
-      output: { error: { code: "github_pr_create_failed", message } },
-    });
-    emit(task.value, "agent.failed", "error", "Failed to create PR", {
-      error: { code: "github_pr_create_failed", message },
-    });
-    return ExitCode.ExternalDependencyFailure;
+    // Idempotent re-open: a feedback loop (reviewer/tester → coder) re-runs
+    // pr-opener after the PR already exists, which GitHub rejects with 422. In
+    // that case reuse the open PR for this branch — the coder's new commits are
+    // already pushed to it, so the PR reflects the revised change. Any other
+    // failure is fatal as before.
+    const existing = await findOpenPrForBranch(octokit, owner, repoName, branchName);
+    if (!existing) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(task.value, "tool.result", "error", "GitHub PR creation failed", {
+        tool: "github.pulls.create",
+        success: false,
+        output: { error: { code: "github_pr_create_failed", message } },
+      });
+      emit(task.value, "agent.failed", "error", "Failed to create PR", {
+        error: { code: "github_pr_create_failed", message },
+      });
+      return ExitCode.ExternalDependencyFailure;
+    }
+    prNumber = existing.number;
+    prUrl = existing.html_url;
+    reused = true;
   }
 
-  emit(task.value, "tool.result", "info", `PR #${prNumber} created`, {
+  emit(task.value, "tool.result", "info", `PR #${prNumber} ${reused ? "reused" : "created"}`, {
     tool: "github.pulls.create",
     success: true,
-    output: { prNumber, prUrl, branchName, baseBranch },
+    output: { prNumber, prUrl, branchName, baseBranch, reused },
   });
 
   const output: PrOpenedResult = {
@@ -345,6 +357,27 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
   }
 
   return { ok: true, value: result.value };
+}
+
+async function findOpenPrForBranch(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branchName: string,
+): Promise<{ number: number; html_url: string } | null> {
+  try {
+    const response = await octokit.pulls.list({
+      owner,
+      repo,
+      head: `${owner}:${branchName}`,
+      state: "open",
+      per_page: 1,
+    });
+    const pr = response.data[0];
+    return pr ? { number: pr.number, html_url: pr.html_url } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function resolvePrOpenerInput(

@@ -32,6 +32,8 @@ interface MergeArtifact {
   mergeMethod: MergeMethod;
   sha: string | null;
   ciStatus: string;
+  skipped?: boolean;
+  skipReason?: string;
 }
 
 async function main(): Promise<number> {
@@ -64,33 +66,6 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  const reviewDecision = await resolveReviewDecision(task.value);
-  if (reviewDecision !== "approve") {
-    const reviewSummary = await resolveReviewSummary(task.value);
-    const isChangesRequested = reviewDecision === "changes_requested";
-    emit(task.value, "agent.failed", "error", "Review not approved", {
-      error: {
-        code: "review_not_approved",
-        message: `Review decision is "${reviewDecision}", not "approve". Cannot merge.`,
-      },
-      context: isString(reviewSummary)
-        ? {
-            decision: reviewDecision,
-            nextStep: isChangesRequested
-              ? "Address the reviewer's feedback in a new code.change task, then re-run the pipeline from pr-opener onwards."
-              : `Review is in state "${reviewDecision}". Resolve the review before retrying merge.`,
-            reviewSummary,
-          }
-        : {
-            decision: reviewDecision,
-            nextStep: isChangesRequested
-              ? "Address the reviewer's feedback in a new code.change task, then re-run the pipeline from pr-opener onwards."
-              : `Review is in state "${reviewDecision}". Resolve the review before retrying merge.`,
-          },
-    });
-    return ExitCode.PolicyDenied;
-  }
-
   const prInfo = await resolvePrInfo(task.value, token);
   if (!prInfo.ok) {
     emit(task.value, "agent.failed", "error", prInfo.message, {
@@ -105,6 +80,48 @@ async function main(): Promise<number> {
   const pr = prInfo.value;
   const octokit = new Octokit({ auth: token });
   const mergeMethod = resolveMergeMethod();
+
+  // Review gate: merge only on an explicit approve. The reviewer emits exactly
+  // "approve" | "request_changes" (see agents/reviewer). On any non-approve
+  // decision the merge is SKIPPED gracefully — the run completes, the PR is
+  // left open with the reviewer's feedback, and a configured reviewer → coder
+  // loop (if any) will have already had its chances before we reach here.
+  const reviewDecision = await resolveReviewDecision(task.value);
+  if (reviewDecision !== "approve") {
+    const reviewSummary = await resolveReviewSummary(task.value);
+    const reason =
+      reviewDecision === "request_changes"
+        ? "Reviewer requested changes; merge skipped."
+        : `Review decision is "${reviewDecision}", not "approve"; merge skipped.`;
+    const artifact = await writeArtifact(task.value, {
+      prNumber: pr.prNumber,
+      prUrl: pr.prUrl,
+      merged: false,
+      mergeMethod,
+      sha: null,
+      ciStatus: "skipped",
+      skipped: true,
+      skipReason: reason,
+    });
+    emit(task.value, "agent.output", "info", "Merge skipped — review not approved", {
+      prNumber: pr.prNumber,
+      prUrl: pr.prUrl,
+      merged: false,
+      skipped: true,
+      decision: reviewDecision,
+      reason,
+      ...(isString(reviewSummary) ? { reviewSummary } : {}),
+    });
+    emit(task.value, "artifact.created", "info", "Merge artifact created", artifact);
+    emit(task.value, "agent.completed", "info", "merge-gate completed — merge skipped", {
+      prNumber: pr.prNumber,
+      merged: false,
+      skipped: true,
+      decision: reviewDecision,
+    });
+    return ExitCode.Success;
+  }
+
   const pollIntervalMs = Number(process.env.ANCHORAGE_MERGE_GATE_POLL_INTERVAL_MS) || 10000;
   const maxPolls = Number(process.env.ANCHORAGE_MERGE_GATE_MAX_POLLS) || 30;
 

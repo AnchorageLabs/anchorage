@@ -18,8 +18,10 @@ import {
   webTools,
 } from "@anchorage/agent-llm";
 import {
+  buildRevisionRequest,
   ExitCode,
   type ProtocolEvent,
+  REVISION_REQUEST_ARTIFACT_TYPE,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
@@ -229,6 +231,22 @@ async function main(): Promise<number> {
 
   const artifact = await writeResultArtifact(task.value, output);
   emit(task.value, "artifact.created", "info", "PR review result artifact created", artifact);
+
+  // On request_changes, also emit a code.revision.request so a configured
+  // reviewer → coder feedback loop can hand the findings back to the coder to
+  // fix automatically. Exit stays Success: a completed review is a success
+  // regardless of decision, and if no loop is configured the merge-gate is what
+  // blocks the merge.
+  if (reviewResult.value.decision === "request_changes") {
+    const revisionArtifact = await writeRevisionArtifact(task.value, reviewResult.value);
+    emit(
+      task.value,
+      "artifact.created",
+      "info",
+      "Revision request artifact created",
+      revisionArtifact,
+    );
+  }
 
   emit(task.value, "agent.completed", "info", "reviewer completed successfully", {
     prNumber: prInfo.value.prNumber,
@@ -708,6 +726,37 @@ async function writeResultArtifact(task: TaskEnvelope, result: ReviewResult) {
 
   return {
     artifactType: "pr.review.result",
+    uri: `file://${artifactPath}`,
+    mediaType: "application/json",
+    sizeBytes: Buffer.byteLength(content),
+  };
+}
+
+async function writeRevisionArtifact(task: TaskEnvelope, review: LlmReviewResult) {
+  const revision = buildRevisionRequest({
+    fromAgent: "reviewer",
+    reason: "review_changes_requested",
+    summary: review.summary || "Reviewer requested changes.",
+    // Each inline comment is a concrete thing to fix; risks ride along as
+    // additional failures so the coder addresses them too.
+    failures: [
+      ...review.comments.map((comment) => ({
+        name: comment.line ? `${comment.path}:${comment.line}` : comment.path,
+        details: comment.body,
+      })),
+      ...review.risks.map((risk, index) => ({ name: `risk-${index + 1}`, details: risk })),
+    ],
+  });
+
+  const artifactRoot =
+    process.env.ANCHORAGE_ARTIFACT_DIR ??
+    path.join(os.tmpdir(), "anchorage-agent-artifacts", task.run.id);
+  await fs.mkdir(artifactRoot, { recursive: true });
+  const artifactPath = path.join(artifactRoot, "revision-request.json");
+  const content = `${JSON.stringify(revision, null, 2)}\n`;
+  await fs.writeFile(artifactPath, content, "utf8");
+  return {
+    artifactType: REVISION_REQUEST_ARTIFACT_TYPE,
     uri: `file://${artifactPath}`,
     mediaType: "application/json",
     sizeBytes: Buffer.byteLength(content),
