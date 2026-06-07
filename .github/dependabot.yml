@@ -1,14 +1,17 @@
 version: 2
 
+# Version updates are disabled (open-pull-requests-limit: 0) so Dependabot does
+# NOT open dependency PRs automatically. Dependabot security alerts remain
+# enabled at the repo level and continue to surface vulnerability counts.
 updates:
-  # Enable version updates for pnpm/npm
+  # npm/pnpm version updates — PRs disabled
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     reviewers:
       - "ValentinTorassa"
       - "solsoletti"
@@ -26,14 +29,14 @@ updates:
           - "typescript"
           - "vitest"
 
-  # Enable version updates for GitHub Actions
+  # GitHub Actions version updates — PRs disabled
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     reviewers:
       - "ValentinTorassa"
       - "solsoletti"
