@@ -52,9 +52,51 @@ async function main(): Promise<number> {
     return ExitCode.MissingCapability;
   }
 
-  if (!codeChangeResult.pushed) {
+  const octokit = new Octokit({ auth: token });
+  let noChangeExistingPr: { number: number; html_url: string; title: string } | null = null;
+
+  if (!codeChangeResult.pushed && isNoChangeWithoutCommit(codeChangeResult)) {
+    noChangeExistingPr = await findOpenPrForBranch(octokit, owner, repoName, branchName);
+    if (noChangeExistingPr) {
+      emit(task.value, "tool.result", "warn", "No new commit; reusing existing PR", {
+        tool: "github.pulls.list",
+        success: true,
+        output: {
+          prNumber: noChangeExistingPr.number,
+          prUrl: noChangeExistingPr.html_url,
+          branchName,
+          pushSkippedReason: codeChangeResult.pushSkippedReason,
+        },
+      });
+    }
+  }
+
+  if (!codeChangeResult.pushed && !noChangeExistingPr) {
     const publish = await publishBranch(task.value, workspacePath, codeChangeResult, token);
     if (!publish.ok) return fail(task.value, publish.failure);
+  }
+
+  if (noChangeExistingPr) {
+    const output: PrOpenedResult = {
+      prNumber: noChangeExistingPr.number,
+      prUrl: noChangeExistingPr.html_url,
+      branchName,
+      baseBranch,
+      title: noChangeExistingPr.title,
+      changedFiles,
+    };
+
+    emit(task.value, "agent.output", "warn", "Existing PR reused after no-op code change", output);
+    const artifact = await writeResultArtifact(task.value, output);
+    emit(task.value, "artifact.created", "info", "PR opened artifact created", artifact);
+    emit(task.value, "agent.completed", "warn", "pr-opener completed with existing PR", {
+      prNumber: noChangeExistingPr.number,
+      prUrl: noChangeExistingPr.html_url,
+      branchName,
+      pushSkippedReason: codeChangeResult.pushSkippedReason,
+    });
+
+    return ExitCode.Success;
   }
 
   const prContent = await generatePrContent(task.value, input.value);
@@ -68,7 +110,6 @@ async function main(): Promise<number> {
   let prUrl: string;
   let reused = false;
 
-  const octokit = new Octokit({ auth: token });
   try {
     const response = await octokit.pulls.create({
       owner,
@@ -364,7 +405,7 @@ async function findOpenPrForBranch(
   owner: string,
   repo: string,
   branchName: string,
-): Promise<{ number: number; html_url: string } | null> {
+): Promise<{ number: number; html_url: string; title: string } | null> {
   try {
     const response = await octokit.pulls.list({
       owner,
@@ -374,10 +415,14 @@ async function findOpenPrForBranch(
       per_page: 1,
     });
     const pr = response.data[0];
-    return pr ? { number: pr.number, html_url: pr.html_url } : null;
+    return pr ? { number: pr.number, html_url: pr.html_url, title: pr.title } : null;
   } catch {
     return null;
   }
+}
+
+function isNoChangeWithoutCommit(codeChangeResult: CodeChangeInput): boolean {
+  return !codeChangeResult.commitSha && codeChangeResult.pushSkippedReason === "no_changes";
 }
 
 async function resolvePrOpenerInput(
