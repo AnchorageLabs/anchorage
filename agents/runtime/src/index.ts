@@ -522,6 +522,8 @@ async function startStrategy(
     if (!install.ok) {
       return { ok: false, error: `dependency install failed: ${install.error}` };
     }
+    const cleanup = await cleanStaleNodeBuildOutput(task, workspacePath, strategy);
+    if (!cleanup.ok) return cleanup;
   }
 
   const logPath = path.join(workspacePath, ANCHORAGE_DIR, LOG_FILE);
@@ -565,6 +567,43 @@ async function startStrategy(
     output: { url },
   });
   return { ok: true, previewUrl: url };
+}
+
+async function cleanStaleNodeBuildOutput(
+  task: TaskEnvelope,
+  workspacePath: string,
+  strategy: RuntimeStrategy,
+): Promise<{ ok: true } | StartFailure> {
+  if (!(await isNextProject(workspacePath)) || !usesDevStart(strategy.startCommand))
+    return { ok: true };
+
+  const nextDir = path.join(workspacePath, ".next");
+  if (!(await fileExists(nextDir))) return { ok: true };
+
+  emit(task, "tool.requested", "info", "Removing stale Next.js build output before dev preview", {
+    tool: "workspace.cleanup",
+    input: { path: ".next", reason: "next dev preview must not reuse stale sandbox build output" },
+  });
+
+  try {
+    await fs.rm(nextDir, { force: true, recursive: true });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `failed to remove stale .next directory: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  emit(task, "tool.result", "info", "Removed stale Next.js build output", {
+    tool: "workspace.cleanup",
+    success: true,
+    output: { path: ".next" },
+  });
+  return { ok: true };
+}
+
+function usesDevStart(command: string): boolean {
+  return /\bnext\s+dev\b/.test(command) || /\brun\s+dev\b/.test(command);
 }
 
 /** Spawn a detached, unref'd process group so the server outlives the agent. */
