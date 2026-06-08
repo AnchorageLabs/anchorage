@@ -648,22 +648,30 @@ async function syncBaseBranch(
     return failure("base_fetch_failed", message, ExitCode.ExternalDependencyFailure);
   }
 
-  const switchExisting = await runGit(workspacePath, ["switch", baseBranch]);
-  if (switchExisting.exitCode !== 0) {
-    const switchNew = await runGit(workspacePath, [
-      "switch",
-      "-c",
-      baseBranch,
-      `origin/${baseBranch}`,
-    ]);
-    if (switchNew.exitCode !== 0) {
-      const message =
-        switchNew.stderr.trim() ||
-        switchExisting.stderr.trim() ||
-        `git switch base failed (exit ${switchNew.exitCode})`;
-      emitGitError(task, "git.sync_base", "base_checkout_failed", message);
-      return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
-    }
+  // Discard any leftover state from a prior run that shared this workspace
+  // (the cloud worker reuses one clone per repo). Without this, uncommitted
+  // changes or a leftover feature branch make the base switch below fail.
+  // Best-effort: a fresh clone has nothing to reset.
+  await runGit(workspacePath, ["reset", "--hard"]);
+  await runGit(workspacePath, ["clean", "-fd"]);
+
+  // `checkout -B` creates-or-resets the base branch to the fetched remote tip
+  // and switches to it in one step — correct whether the local branch exists,
+  // is stale, or doesn't exist yet. The hard reset + clean above guarantee the
+  // working tree won't block it.
+  const checkout = await runGit(workspacePath, [
+    "checkout",
+    "-B",
+    baseBranch,
+    `origin/${baseBranch}`,
+  ]);
+  if (checkout.exitCode !== 0) {
+    const message =
+      checkout.stderr.trim() ||
+      checkout.stdout.trim() ||
+      `git checkout base failed (exit ${checkout.exitCode})`;
+    emitGitError(task, "git.sync_base", "base_checkout_failed", message);
+    return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
   }
 
   const pull = await runGit(workspacePath, ["pull", "--ff-only", "origin", baseBranch]);
