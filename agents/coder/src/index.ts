@@ -661,40 +661,31 @@ async function syncBaseBranch(
 
   await cleanAgentRuntimeArtifacts(workspacePath);
 
-  const switchExisting = await runGit(workspacePath, ["switch", baseBranch]);
-  if (switchExisting.exitCode !== 0) {
-    const exists = await localBranchExists(workspacePath, baseBranch);
-    if (exists) {
-      const message =
-        switchExisting.stderr.trim() ||
-        switchExisting.stdout.trim() ||
-        `git switch ${baseBranch} failed (exit ${switchExisting.exitCode})`;
-      emitGitError(task, "git.sync_base", "base_checkout_failed", message);
-      return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
-    }
+  // Discard ALL leftover state from a prior run that shared this workspace
+  // (the cloud worker reuses one clone per repo). A dirty tree or a leftover
+  // feature branch would otherwise make the base switch fail. Best-effort: a
+  // fresh clone has nothing to reset.
+  await runGit(workspacePath, ["reset", "--hard"]);
+  await runGit(workspacePath, ["clean", "-fd"]);
 
-    const switchNew = await runGit(workspacePath, [
-      "switch",
-      "-c",
-      baseBranch,
-      `origin/${baseBranch}`,
-    ]);
-    if (switchNew.exitCode !== 0) {
-      const message =
-        switchNew.stderr.trim() ||
-        switchExisting.stderr.trim() ||
-        `git switch base failed (exit ${switchNew.exitCode})`;
-      emitGitError(task, "git.sync_base", "base_checkout_failed", message);
-      return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
-    }
-  }
-
-  const pull = await runGit(workspacePath, ["pull", "--ff-only", "origin", baseBranch]);
-  if (pull.exitCode !== 0) {
+  // `checkout -B` creates-or-resets the base branch to the fetched remote tip
+  // and switches to it in one step — correct whether the local branch exists,
+  // is stale, or is absent. The hard reset + clean above guarantee the working
+  // tree can't block it. Replaces the old switch / switch -c dance that failed
+  // with "a branch named '<base>' already exists" on a dirty reused workspace.
+  const checkout = await runGit(workspacePath, [
+    "checkout",
+    "-B",
+    baseBranch,
+    `origin/${baseBranch}`,
+  ]);
+  if (checkout.exitCode !== 0) {
     const message =
-      pull.stderr.trim() || pull.stdout.trim() || `git pull failed (exit ${pull.exitCode})`;
-    emitGitError(task, "git.sync_base", "base_pull_failed", message);
-    return failure("base_pull_failed", message, ExitCode.ExternalDependencyFailure);
+      checkout.stderr.trim() ||
+      checkout.stdout.trim() ||
+      `git checkout base failed (exit ${checkout.exitCode})`;
+    emitGitError(task, "git.sync_base", "base_checkout_failed", message);
+    return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
   }
 
   emit(task, "tool.result", "info", `Base branch ${baseBranch} synced`, {
@@ -703,11 +694,6 @@ async function syncBaseBranch(
     output: { baseBranch },
   });
   return { ok: true };
-}
-
-async function localBranchExists(workspacePath: string, branchName: string): Promise<boolean> {
-  const result = await runGit(workspacePath, ["show-ref", "--verify", `refs/heads/${branchName}`]);
-  return result.exitCode === 0;
 }
 
 async function cleanAgentRuntimeArtifacts(workspacePath: string): Promise<void> {
