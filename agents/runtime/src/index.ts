@@ -88,15 +88,30 @@ async function main(): Promise<number> {
   // ── Resolve a run strategy: cache first, then detection ──────────────────────
   let strategy = await readCache(workspacePath);
   if (strategy) {
-    emit(task.value, "agent.progress", "info", "Using cached runtime strategy", {
-      strategy: strategy as unknown as JsonValue,
-    });
-  } else {
+    const staleReason = await staleCachedStrategyReason(workspacePath, strategy);
+    if (staleReason) {
+      emit(task.value, "agent.progress", "warn", "Ignoring stale cached runtime strategy", {
+        reason: staleReason,
+        strategy: strategy as unknown as JsonValue,
+      });
+      strategy = null;
+    } else {
+      emit(task.value, "agent.progress", "info", "Using cached runtime strategy", {
+        strategy: strategy as unknown as JsonValue,
+      });
+    }
+  }
+
+  if (!strategy) {
     strategy = await detectStrategy(workspacePath);
     if (strategy) {
       emit(task.value, "agent.progress", "info", `Detected runtime strategy: ${strategy.kind}`, {
         strategy: strategy as unknown as JsonValue,
       });
+      // Persist the freshly detected candidate before starting it. If a previous
+      // cache was stale, this overwrites the bad guide even when startup later
+      // fails, so the repo does not keep teaching future runs the wrong command.
+      await writeCache(task.value, workspacePath, { ...strategy, source: "detected" });
     }
   }
 
@@ -124,9 +139,6 @@ async function main(): Promise<number> {
     // Non-zero so the orchestrator finishes the run without merging.
     return ExitCode.PartialSuccessAttentionRequired;
   }
-
-  // Persist the working strategy for next time (create/update .anchorage).
-  await writeCache(task.value, workspacePath, { ...strategy, source: "detected" });
 
   const preview = buildRuntimePreview({
     status: "running",
@@ -247,6 +259,37 @@ async function readCache(workspacePath: string): Promise<RuntimeStrategy | null>
   return null;
 }
 
+async function staleCachedStrategyReason(
+  workspacePath: string,
+  strategy: RuntimeStrategy,
+): Promise<string | null> {
+  if (strategy.source !== "cache" || strategy.kind !== "node") return null;
+  if (!(await isNextProject(workspacePath))) return null;
+  if (!usesProductionStart(strategy.startCommand)) return null;
+  const requiredServerFiles = path.join(workspacePath, ".next", "required-server-files.json");
+  if (await fileExists(requiredServerFiles)) return null;
+  return "cached Next.js production start requires .next/required-server-files.json, but this workspace has no production build";
+}
+
+async function isNextProject(workspacePath: string): Promise<boolean> {
+  const pkgPath = path.join(workspacePath, "package.json");
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(await fs.readFile(pkgPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const deps = {
+    ...((pkg.dependencies as Record<string, unknown>) ?? {}),
+    ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
+  };
+  return Object.hasOwn(deps, "next");
+}
+
+function usesProductionStart(command: string): boolean {
+  return /\bnext\s+start\b/.test(command) || /\brun\s+start\b/.test(command);
+}
+
 async function writeCache(
   task: TaskEnvelope,
   workspacePath: string,
@@ -262,12 +305,72 @@ async function writeCache(
     emit(task, "agent.progress", "info", "Persisted runtime strategy to .anchorage/runtime.json", {
       cachePath,
     });
+    await commitAndPushRuntimeGuide(task, workspacePath);
   } catch (error) {
     // Non-fatal: a read-only workspace just means no speed-up next time.
     emit(task, "agent.progress", "warn", "Could not persist runtime strategy (non-fatal)", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function commitAndPushRuntimeGuide(task: TaskEnvelope, workspacePath: string): Promise<void> {
+  const relativePath = path.posix.join(ANCHORAGE_DIR, CACHE_FILE);
+
+  const add = await runGit(workspacePath, ["add", "--force", "--", relativePath]);
+  if (add.exitCode !== 0) {
+    emitGitWarning(task, "git.add", "runtime_guide_add_failed", gitMessage(add));
+    return;
+  }
+
+  const diff = await runGit(workspacePath, ["diff", "--cached", "--quiet", "--", relativePath]);
+  if (diff.exitCode === 0) {
+    emit(task, "agent.progress", "info", "Runtime guide already up to date in git", {
+      path: relativePath,
+    });
+    return;
+  }
+
+  const name = process.env.GIT_AUTHOR_NAME || "Anchorage Agent";
+  const email = process.env.GIT_AUTHOR_EMAIL || "agent@anchorage.dev";
+  const commit = await runGit(workspacePath, [
+    "-c",
+    `user.name=${name}`,
+    "-c",
+    `user.email=${email}`,
+    "commit",
+    "-m",
+    "Record local runtime strategy",
+    "--",
+    relativePath,
+  ]);
+  if (commit.exitCode !== 0) {
+    emitGitWarning(task, "git.commit", "runtime_guide_commit_failed", gitMessage(commit));
+    return;
+  }
+
+  const branch = await currentBranch(workspacePath);
+  if (!branch) {
+    emitGitWarning(
+      task,
+      "git.push",
+      "runtime_guide_push_skipped",
+      "could not determine current branch",
+    );
+    return;
+  }
+
+  const push = await pushCurrentBranch(task, workspacePath, branch);
+  if (!push.ok) {
+    emitGitWarning(task, "git.push", "runtime_guide_push_failed", push.reason);
+    return;
+  }
+
+  emit(task, "tool.result", "info", "Runtime guide committed and pushed", {
+    tool: "git.push",
+    success: true,
+    output: { path: relativePath, branch },
+  });
 }
 
 // ── Strategy detection ────────────────────────────────────────────────────────
@@ -558,8 +661,13 @@ function probeOnce(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: 3_000 }, (res) => {
       res.resume();
-      // Any HTTP response means something is listening.
-      resolve((res.statusCode ?? 0) > 0);
+      // A 5xx means the server is listening but the app is erroring (e.g.
+      // `next start` with no prior build → required-server-files.json missing).
+      // That is NOT a usable preview, so don't report it as healthy — only
+      // 2xx/3xx/4xx count as ready. Otherwise a broken app (or a stale process
+      // still bound to the port) gets surfaced to the user as "running".
+      const code = res.statusCode ?? 0;
+      resolve(code > 0 && code < 500);
     });
     req.on("error", () => resolve(false));
     req.on("timeout", () => {
@@ -588,6 +696,96 @@ async function readLogTail(logPath: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+interface CommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runGit(workspacePath: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, { cwd: workspacePath, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (error) => resolve({ exitCode: 127, stdout: "", stderr: error.message }));
+    child.on("close", (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
+}
+
+async function currentBranch(workspacePath: string): Promise<string | null> {
+  const result = await runGit(workspacePath, ["symbolic-ref", "--short", "HEAD"]);
+  const branch = result.stdout.trim();
+  return result.exitCode === 0 && branch ? branch : null;
+}
+
+async function pushCurrentBranch(
+  task: TaskEnvelope,
+  workspacePath: string,
+  branch: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const originResult = await runGit(workspacePath, ["remote", "get-url", "origin"]);
+  const origin = originResult.stdout.trim();
+  if (originResult.exitCode !== 0 || !origin) return { ok: false, reason: "no origin remote" };
+
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const pushTarget = authenticatedPushUrl(origin, token);
+  if (!pushTarget) return { ok: false, reason: "unsupported remote or missing GitHub token" };
+
+  emit(task, "tool.requested", "info", "Pushing runtime guide commit", {
+    tool: "git.push",
+    input: { branch, remote: redactUrl(origin) },
+  });
+
+  const push = await runGit(workspacePath, ["push", pushTarget, `${branch}:${branch}`]);
+  if (push.exitCode !== 0) return { ok: false, reason: redactToken(gitMessage(push), token) };
+  return { ok: true };
+}
+
+function authenticatedPushUrl(origin: string, token: string | undefined): string | null {
+  if (!token) return null;
+  const httpsOrigin = githubHttpsOrigin(origin);
+  if (!httpsOrigin) return null;
+  const withoutCreds = httpsOrigin.replace(/^https:\/\/([^@/]*@)?/, "");
+  return `https://x-access-token:${token}@${withoutCreds}`;
+}
+
+function githubHttpsOrigin(origin: string): string | null {
+  if (origin.startsWith("https://")) return origin;
+  const sshMatch = /^git@github\.com:([^/]+)\/(.+)$/.exec(origin);
+  if (!sshMatch) return null;
+  const [, owner, repo] = sshMatch;
+  return `https://github.com/${owner}/${repo}`;
+}
+
+function redactUrl(url: string): string {
+  return url.replace(/\/\/[^@/]*@/, "//");
+}
+
+function redactToken(text: string, token: string | undefined): string {
+  if (!token) return text;
+  return text.split(token).join("***");
+}
+
+function gitMessage(result: CommandResult): string {
+  return result.stderr.trim() || result.stdout.trim() || `git failed (exit ${result.exitCode})`;
+}
+
+function emitGitWarning(task: TaskEnvelope, tool: string, code: string, message: string): void {
+  emit(task, "tool.result", "warn", "Runtime guide git operation did not complete", {
+    tool,
+    success: false,
+    output: { error: { code, message } },
+  });
 }
 
 function delay(ms: number): Promise<void> {

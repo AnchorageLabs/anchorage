@@ -29,6 +29,30 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Ignore stale cached Next.js production-start runtime strategies.
+
+**Intent:** Runtime preview no longer gets stuck trying to run `next start` in a clean workspace that has no `.next/required-server-files.json`. When a cached node strategy points at a Next.js production start but the production build artifact is absent, the runtime agent now ignores the cache, warns, falls back to detection, and writes the newly detected strategy to `.anchorage/runtime.json` before attempting startup so the repo guide is corrected even if startup later fails. Runtime now also stages only `.anchorage/runtime.json`, commits it when changed, and best-effort pushes the current branch so the local-run guide is included in the repository and PR instead of remaining only a worker-local cache.
+
+**Files touched:**
+- agents/runtime/src/index.ts
+- CHANGELOG.md
+
+**Reason:** user report — `anchorage-labs-web` reached the runtime agent, but preview returned 500s for 90s because cached `next start` looked for `.next/required-server-files.json` in a fresh runtime workspace.
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Let PR opening reuse an existing PR after a no-op code retry.
+
+**Intent:** If a feedback-loop coder retry reports `pushSkippedReason=no_changes` and has no commit to publish, `pr-opener` now checks whether an open PR already exists for the branch. When it does, the agent completes successfully with a warning and emits a fresh `pr.opened` artifact for that existing PR instead of failing with `branch_not_pushed`.
+
+**Files touched:**
+- agents/pr-opener/src/index.ts
+- CHANGELOG.md
+
+**Reason:** user report — after reviewer-requested changes, the second apply-code produced no commit and PR opening failed the run even though the original branch/PR already existed.
+
+**Author:** Sol Soletti
+
 ### 2026-06-07 — Flush agent events with a partial-write-safe writer so a large event can't corrupt the stream.
 
 **Intent:** The coder emitted an `agent.output` ("Code change result created") whose data inlined the full unified diff — and when the diff included a regenerated `package-lock.json` it ran ~146KB. `writeSync(1, …)` did a partial write on the stdout pipe, truncating the JSON mid-string; the runner's NDJSON parser rejected the whole stream and failed the step with a non-retryable GenericFailure (so retry never kicked in). Two fixes: (1) a shared `writeAllSync(fd, data)` helper in `@anchorage/sdk` that loops until every byte is flushed (retrying EAGAIN/EINTR), now used by the coder's `emit`; (2) the coder's `agent.output` event is now compact — it omits `diff`/`fileDiffs` (which still travel in the `code.change.result` artifact the worker inlines from disk), so no single event balloons.
