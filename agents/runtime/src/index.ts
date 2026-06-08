@@ -666,6 +666,14 @@ function startDetached(
       stdio: ["ignore", out, out],
       env: {
         ...process.env,
+        // The orchestrator worker image bakes NODE_ENV=production for the agent
+        // runtime, and a detached dev server inherits it. A dev-start command
+        // (e.g. `next dev`) MUST run in development mode: under NODE_ENV=production
+        // Next.js does production-only file lookups (.next/required-server-files.json
+        // -> ENOENT) and its dev CSS/PostCSS pipeline silently no-ops, so global
+        // CSS like `@tailwind` fails to parse and the preview 500s. Force
+        // development for dev starts so the previewed app behaves as in local dev.
+        ...(usesDevStart(command) ? { NODE_ENV: "development" } : {}),
         ...(port ? { PORT: String(port) } : {}),
         // Bind to all interfaces, not 127.0.0.1. When the agent runs inside a
         // container (the orchestrator worker), a server bound to localhost is
