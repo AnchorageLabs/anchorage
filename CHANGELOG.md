@@ -29,9 +29,33 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Reuse existing branch PR before attempting PR creation.
+
+**Intent:** `pr-opener` now checks for an existing open PR for the branch before calling GitHub's create-PR endpoint. Retry/re-entry paths no longer depend on GitHub returning a 422 first before idempotently reusing the PR.
+
+**Files touched:**
+- agents/pr-opener/src/index.ts
+- CHANGELOG.md
+
+**Reason:** user report — web issue #20 already had PR #21 open, but a later PR-open attempt surfaced GitHub's `POST /pulls` 422 as a runner preflight failure instead of cleanly reusing the existing PR.
+
+**Author:** Sol Soletti
+
+### 2026-06-07 — Make coder base sync robust to existing base branches and runtime leftovers.
+
+**Intent:** Coder base-branch sync no longer masks checkout failures as `fatal: a branch named 'main' already exists`. Before switching to the base branch it removes agent-generated runtime/build leftovers (`.next`, `.anchorage/runtime.log`), restoring any tracked/staged runtime log first so old dirty workspaces do not block checkout. It then only attempts `git switch -c <base>` when the local base branch truly does not exist. If the branch exists but checkout still fails, the real checkout error is surfaced.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- CHANGELOG.md
+
+**Reason:** user report — a new web pipeline failed at `git.sync_base` with `base_checkout_failed` / `fatal: a branch named 'main' already exists` after previous runtime preview attempts left workspace state behind.
+
+**Author:** Sol Soletti
+
 ### 2026-06-07 — Ignore stale cached Next.js production-start runtime strategies.
 
-**Intent:** Runtime preview no longer gets stuck trying to run `next start` in a clean workspace that has no `.next/required-server-files.json`. When a cached node strategy points at a Next.js production start but the production build artifact is absent, the runtime agent now ignores the cache, warns, falls back to detection, and writes the newly detected strategy to `.anchorage/runtime.json` before attempting startup so the repo guide is corrected even if startup later fails. Runtime now also stages only `.anchorage/runtime.json`, commits it when changed, and best-effort pushes the current branch so the local-run guide is included in the repository and PR instead of remaining only a worker-local cache. For Next.js dev previews, runtime removes stale `.next` sandbox build output before `npm run dev` so a corrupted production-build directory from earlier test/revision steps cannot make the dev preview 500 forever.
+**Intent:** Runtime preview no longer gets stuck trying to run `next start` in a clean workspace that has no `.next/required-server-files.json`. When a cached node strategy points at a Next.js production start but the production build artifact is absent, the runtime agent now ignores the cache, warns, falls back to detection, and writes the newly detected strategy to `.anchorage/runtime.json` before attempting startup so the repo guide is corrected even if startup later fails. Runtime now also stages only `.anchorage/runtime.json`, commits it when changed, and best-effort pushes the current branch so the local-run guide is included in the repository and PR instead of remaining only a worker-local cache. Runtime logs are now written under the artifact/temp area instead of inside the target repository, so `.anchorage/runtime.log` no longer dirties the worktree or blocks later branch switches. For Next.js dev previews, runtime removes stale `.next` sandbox build output before `npm run dev` so a corrupted production-build directory from earlier test/revision steps cannot make the dev preview 500 forever. Before launching a preview, runtime also frees the configured preview port so stale detached dev servers from previous runs cannot block or divert the new server. Node previews now default to port 3100 instead of 3000 to avoid the most common local-development collision while still allowing `ANCHORAGE_RUNTIME_PORT` overrides.
 
 **Files touched:**
 - agents/runtime/src/index.ts

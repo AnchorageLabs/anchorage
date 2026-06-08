@@ -28,6 +28,7 @@ let eventSequence = 0;
 const ANCHORAGE_DIR = ".anchorage";
 const CACHE_FILE = "runtime.json";
 const LOG_FILE = "runtime.log";
+const DEFAULT_NODE_PREVIEW_PORT = 3100;
 
 // Readiness budgets per strategy. A docker-compose stack may need to build
 // images; a static server is up almost immediately.
@@ -251,12 +252,23 @@ async function readCache(workspacePath: string): Promise<RuntimeStrategy | null>
   try {
     const parsed = JSON.parse(raw) as Partial<RuntimeStrategy>;
     if (typeof parsed.kind === "string" && typeof parsed.startCommand === "string") {
-      return { ...(parsed as RuntimeStrategy), source: "cache" };
+      return normalizeCachedStrategy({ ...(parsed as RuntimeStrategy), source: "cache" });
     }
   } catch {
     // Corrupt cache — fall back to detection.
   }
   return null;
+}
+
+function normalizeCachedStrategy(strategy: RuntimeStrategy): RuntimeStrategy {
+  if (strategy.kind !== "node" || !usesDevStart(strategy.startCommand)) return strategy;
+  const port =
+    Number(process.env.ANCHORAGE_RUNTIME_PORT) ||
+    (strategy.port === 3000 || strategy.port === undefined
+      ? DEFAULT_NODE_PREVIEW_PORT
+      : strategy.port);
+  if (strategy.port === port && strategy.url === `http://localhost:${port}`) return strategy;
+  return { ...strategy, port, url: `http://localhost:${port}` };
 }
 
 async function staleCachedStrategyReason(
@@ -479,8 +491,8 @@ function guessNodePort(pkg: Record<string, unknown>, scriptBody: string): number
     Object.keys(deps).some((d) => d === name || d.startsWith(`${name}/`));
   if (has("vite")) return 5173;
   if (has("@angular-devkit") || has("@angular")) return 4200;
-  if (has("next") || has("react-scripts") || has("nuxt")) return 3000;
-  return 3000;
+  if (has("next") || has("react-scripts") || has("nuxt")) return DEFAULT_NODE_PREVIEW_PORT;
+  return DEFAULT_NODE_PREVIEW_PORT;
 }
 
 async function detectStatic(workspacePath: string): Promise<RuntimeStrategy | null> {
@@ -526,8 +538,9 @@ async function startStrategy(
     if (!cleanup.ok) return cleanup;
   }
 
-  const logPath = path.join(workspacePath, ANCHORAGE_DIR, LOG_FILE);
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
+  const logPath = await runtimeLogPath(task);
+
+  if (strategy.port) await freePreviewPort(task, strategy.port);
 
   emit(task, "tool.requested", "info", `Starting solution: ${strategy.startCommand}`, {
     tool: "shell.exec",
@@ -602,8 +615,40 @@ async function cleanStaleNodeBuildOutput(
   return { ok: true };
 }
 
+async function runtimeLogPath(task: TaskEnvelope): Promise<string> {
+  const logRoot =
+    process.env.ANCHORAGE_ARTIFACT_DIR ??
+    path.join(os.tmpdir(), "anchorage-agent-artifacts", task.run.id);
+  const dir = path.join(logRoot, "runtime-logs");
+  await fs.mkdir(dir, { recursive: true });
+  return path.join(dir, LOG_FILE);
+}
+
 function usesDevStart(command: string): boolean {
   return /\bnext\s+dev\b/.test(command) || /\brun\s+dev\b/.test(command);
+}
+
+async function freePreviewPort(task: TaskEnvelope, port: number): Promise<void> {
+  emit(task, "tool.requested", "info", "Checking preview port before launch", {
+    tool: "shell.exec",
+    input: { command: `fuser -k ${port}/tcp || true`, port },
+  });
+
+  await new Promise<void>((resolve) => {
+    const child = spawn(
+      "sh",
+      ["-c", `command -v fuser >/dev/null 2>&1 && fuser -k ${port}/tcp || true`],
+      { stdio: "ignore" },
+    );
+    child.on("error", () => resolve());
+    child.on("close", () => resolve());
+  });
+
+  emit(task, "tool.result", "info", "Preview port is ready for launch", {
+    tool: "shell.exec",
+    success: true,
+    output: { port },
+  });
 }
 
 /** Spawn a detached, unref'd process group so the server outlives the agent. */
