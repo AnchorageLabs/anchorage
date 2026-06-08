@@ -659,8 +659,20 @@ async function syncBaseBranch(
     return failure("base_fetch_failed", message, ExitCode.ExternalDependencyFailure);
   }
 
+  await cleanAgentRuntimeArtifacts(workspacePath);
+
   const switchExisting = await runGit(workspacePath, ["switch", baseBranch]);
   if (switchExisting.exitCode !== 0) {
+    const exists = await localBranchExists(workspacePath, baseBranch);
+    if (exists) {
+      const message =
+        switchExisting.stderr.trim() ||
+        switchExisting.stdout.trim() ||
+        `git switch ${baseBranch} failed (exit ${switchExisting.exitCode})`;
+      emitGitError(task, "git.sync_base", "base_checkout_failed", message);
+      return failure("base_checkout_failed", message, ExitCode.ExternalDependencyFailure);
+    }
+
     const switchNew = await runGit(workspacePath, [
       "switch",
       "-c",
@@ -691,6 +703,25 @@ async function syncBaseBranch(
     output: { baseBranch },
   });
   return { ok: true };
+}
+
+async function localBranchExists(workspacePath: string, branchName: string): Promise<boolean> {
+  const result = await runGit(workspacePath, ["show-ref", "--verify", `refs/heads/${branchName}`]);
+  return result.exitCode === 0;
+}
+
+async function cleanAgentRuntimeArtifacts(workspacePath: string): Promise<void> {
+  await runGit(workspacePath, [
+    "restore",
+    "--worktree",
+    "--staged",
+    "--",
+    ".anchorage/runtime.log",
+  ]);
+  await fs.rm(path.join(workspacePath, ".next"), { force: true, recursive: true }).catch(() => {});
+  await fs
+    .rm(path.join(workspacePath, ".anchorage", "runtime.log"), { force: true })
+    .catch(() => {});
 }
 
 interface DeliveryResult {

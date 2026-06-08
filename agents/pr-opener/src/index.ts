@@ -101,6 +101,36 @@ async function main(): Promise<number> {
 
   const prContent = await generatePrContent(task.value, input.value);
 
+  const existingBeforeCreate = await findOpenPrForBranch(octokit, owner, repoName, branchName);
+  if (existingBeforeCreate) {
+    emit(task.value, "tool.result", "info", "Existing PR found before create", {
+      tool: "github.pulls.list",
+      success: true,
+      output: {
+        prNumber: existingBeforeCreate.number,
+        prUrl: existingBeforeCreate.html_url,
+        branchName,
+      },
+    });
+    const output: PrOpenedResult = {
+      prNumber: existingBeforeCreate.number,
+      prUrl: existingBeforeCreate.html_url,
+      branchName,
+      baseBranch,
+      title: existingBeforeCreate.title,
+      changedFiles,
+    };
+    emit(task.value, "agent.output", "info", "Existing PR reused", output);
+    const artifact = await writeResultArtifact(task.value, output);
+    emit(task.value, "artifact.created", "info", "PR opened artifact created", artifact);
+    emit(task.value, "agent.completed", "info", "pr-opener completed with existing PR", {
+      prNumber: existingBeforeCreate.number,
+      prUrl: existingBeforeCreate.html_url,
+      branchName,
+    });
+    return ExitCode.Success;
+  }
+
   emit(task.value, "tool.requested", "info", "Creating GitHub PR", {
     tool: "github.pulls.create",
     input: { owner, repo: repoName, head: branchName, base: baseBranch, title: prContent.title },
