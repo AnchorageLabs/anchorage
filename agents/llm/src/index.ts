@@ -10,6 +10,10 @@ import {
 } from "./tools/providers/param-support.js";
 import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from "./tools/types.js";
 
+export {
+  contextRepoPromptBlock,
+  contextReposFromEnvelope,
+} from "./tools/builtin/context-repos.js";
 export { discoveryTools } from "./tools/builtin/discovery.js";
 export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
 export { shellTools } from "./tools/builtin/shell.js";
@@ -26,6 +30,7 @@ export type {
   BudgetConfig,
   BudgetState,
   ContentBlock,
+  ContextRepoMount,
   ContextSnapshot,
   LoopMessage,
   ProviderAdapter,

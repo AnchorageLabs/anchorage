@@ -45,6 +45,17 @@ export interface ProtocolEvent {
   data: JsonObject;
 }
 
+/** A read-only repository mounted for cross-repo context (never a commit target). */
+export interface ContextRepo {
+  owner: string;
+  name: string;
+  defaultBranch?: string;
+  /** Absolute read-only clone path on the worker. */
+  root: string;
+  /** Optional "why this repo is included" hint, surfaced to the agent. */
+  note?: string;
+}
+
 export interface TaskEnvelope {
   protocolVersion: string;
   task: {
@@ -68,6 +79,12 @@ export interface TaskEnvelope {
     name: string;
     defaultBranch: string;
   };
+  /**
+   * Read-only repositories mounted alongside the primary workspace for
+   * cross-repo context. Present only on tasks whose agent has the `repo.read`
+   * capability; absent for single-repo runs. Never a commit target.
+   */
+  contextRepos?: ContextRepo[];
   input: JsonObject;
   capabilities: string[];
   policy?: JsonObject & {

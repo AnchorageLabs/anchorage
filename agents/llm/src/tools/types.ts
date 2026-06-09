@@ -88,9 +88,23 @@ export type ToolHandlerResult =
 
 // ── Tool execution context ──────────────────────────────────────────────────
 
+/**
+ * A read-only repository mounted for cross-repo reads. Addressed by `ref`
+ * ("owner/name") via the optional `repo` argument on the read tools; reads
+ * resolve under `root`, which is cloned read-only so it can never be written.
+ */
+export interface ContextRepoMount {
+  ref: string;
+  root: string;
+  note?: string;
+}
+
 export interface ToolContext {
   // Workspace root for the run. Repo-read / shell tools sandbox here.
   workspacePath: string;
+  // Read-only context repos for this run, addressable via the read tools' `repo`
+  // argument. Empty/undefined for single-repo runs.
+  contextRepos?: ContextRepoMount[];
   // Capability set granted by the run envelope; used by handlers for
   // secondary checks (the runtime already filtered the catalog by capability).
   capabilities: ReadonlySet<string>;
@@ -172,6 +186,8 @@ export interface RunWithToolsRequest {
   capabilities?: Iterable<string>;
   env?: Record<string, string>;
   workspacePath: string;
+  // Read-only context repos forwarded to the ToolContext (optional).
+  contextRepos?: ContextRepoMount[];
   // Observer for structured tool events; mirrors the protocol's tool.requested
   // / tool.result emission shape so callers can pipe directly to stdout.
   onEvent?: ToolEventEmitter;

@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
+import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { symbolTools } from "./symbols.js";
 
 // ── Path safety ─────────────────────────────────────────────────────────────
@@ -84,7 +85,9 @@ async function readFileHandler(input: JsonObject, ctx: ToolContext): Promise<Too
   if (!requestedPath) {
     return { ok: false, code: "invalid_input", message: "read_file requires a 'path' string." };
   }
-  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = resolveInsideWorkspace(repoRes.root, requestedPath);
   if (!safe) {
     return {
       ok: false,
@@ -93,7 +96,8 @@ async function readFileHandler(input: JsonObject, ctx: ToolContext): Promise<Too
     };
   }
 
-  const budgetCheck = checkFileBudget(ctx.budget, safe.relativePath);
+  const budgetKey = repoScopedKey(repoRes, safe.relativePath);
+  const budgetCheck = checkFileBudget(ctx.budget, budgetKey);
   if (!budgetCheck.ok) {
     return {
       ok: false,
@@ -144,12 +148,18 @@ async function readFileHandler(input: JsonObject, ctx: ToolContext): Promise<Too
     body = `${body.slice(0, READ_FILE_MAX_BYTES)}\n…[truncated at ${READ_FILE_MAX_BYTES} bytes]`;
   }
 
-  recordFile(ctx.budget, safe.relativePath, body.length);
+  recordFile(ctx.budget, budgetKey, body.length);
+  const label = repoRes.isContext ? `${repoRes.ref}:${safe.relativePath}` : safe.relativePath;
   return {
     ok: true,
-    output: `=== ${safe.relativePath}${rangeNote} ===\n${body}`,
+    output: `=== ${label}${rangeNote} ===\n${body}`,
     bytesOut: body.length,
-    meta: { path: safe.relativePath, bytes: body.length, totalBytes: stats.size },
+    meta: {
+      path: safe.relativePath,
+      repo: repoRes.ref,
+      bytes: body.length,
+      totalBytes: stats.size,
+    },
   };
 }
 
@@ -172,6 +182,7 @@ export const readFileTool: ToolDefinition = {
     required: ["path"],
     properties: {
       path: { type: "string", description: "Workspace-relative path." },
+      repo: repoParamSchema,
       line_range: {
         type: "array",
         items: { type: "integer", minimum: 1 },
@@ -189,7 +200,9 @@ export const readFileTool: ToolDefinition = {
 
 async function listDirHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHandlerResult> {
   const requestedPath = typeof input.path === "string" ? input.path : "";
-  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = resolveInsideWorkspace(repoRes.root, requestedPath);
   if (!safe) {
     return {
       ok: false,
@@ -213,7 +226,7 @@ async function listDirHandler(input: JsonObject, ctx: ToolContext): Promise<Tool
     args.push(glob);
   }
 
-  const result = await runGit(ctx.workspacePath, args);
+  const result = await runGit(repoRes.root, args);
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -251,6 +264,7 @@ export const listDirTool: ToolDefinition = {
     additionalProperties: false,
     properties: {
       path: { type: "string", description: "Workspace-relative dir. Empty = repo root." },
+      repo: repoParamSchema,
       glob: { type: "string", description: "Optional glob pattern (git pathspec syntax)." },
       max_entries: { type: "integer", minimum: 1, maximum: 5000 },
     },
@@ -267,7 +281,9 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
     return { ok: false, code: "invalid_input", message: "grep requires a 'pattern' string." };
   }
   const requestedPath = typeof input.path === "string" ? input.path : "";
-  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = resolveInsideWorkspace(repoRes.root, requestedPath);
   if (!safe) {
     return {
       ok: false,
@@ -299,7 +315,7 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
     args.push(safe.relativePath === "." ? includeGlob : `${safe.relativePath}/${includeGlob}`);
   }
 
-  const result = await runGit(ctx.workspacePath, args, 200_000);
+  const result = await runGit(repoRes.root, args, 200_000);
   // exit 1 = no matches; not an error
   if (result.exitCode !== 0 && result.exitCode !== 1) {
     return {
@@ -340,6 +356,7 @@ export const grepTool: ToolDefinition = {
     properties: {
       pattern: { type: "string", description: "Extended regex pattern." },
       path: { type: "string", description: "Optional workspace-relative dir to limit search." },
+      repo: repoParamSchema,
       include_glob: { type: "string", description: "Optional glob (git pathspec)." },
       max_matches: { type: "integer", minimum: 1, maximum: 500 },
     },
@@ -352,7 +369,9 @@ export const grepTool: ToolDefinition = {
 
 async function gitLogHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHandlerResult> {
   const requestedPath = typeof input.path === "string" ? input.path : "";
-  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = resolveInsideWorkspace(repoRes.root, requestedPath);
   if (!safe) {
     return {
       ok: false,
@@ -377,7 +396,7 @@ async function gitLogHandler(input: JsonObject, ctx: ToolContext): Promise<ToolH
     args.push("--", safe.relativePath);
   }
 
-  const result = await runGit(ctx.workspacePath, args, 200_000);
+  const result = await runGit(repoRes.root, args, 200_000);
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -409,6 +428,7 @@ export const gitLogTool: ToolDefinition = {
     additionalProperties: false,
     properties: {
       path: { type: "string", description: "Workspace-relative path. Empty = whole repo." },
+      repo: repoParamSchema,
       since: {
         type: "string",
         description: "git --since value (e.g. '30.days.ago', '2026-01-01').",
@@ -428,7 +448,9 @@ async function gitShowHandler(input: JsonObject, ctx: ToolContext): Promise<Tool
     return { ok: false, code: "invalid_input", message: "git_show requires a valid commit sha." };
   }
   const requestedPath = typeof input.path === "string" ? input.path : "";
-  const safe = requestedPath ? resolveInsideWorkspace(ctx.workspacePath, requestedPath) : null;
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = requestedPath ? resolveInsideWorkspace(repoRes.root, requestedPath) : null;
   if (requestedPath && !safe) {
     return {
       ok: false,
@@ -441,7 +463,7 @@ async function gitShowHandler(input: JsonObject, ctx: ToolContext): Promise<Tool
   if (safe && safe.relativePath !== "." && safe.relativePath !== "") {
     args.push("--", safe.relativePath);
   }
-  const result = await runGit(ctx.workspacePath, args, 300_000);
+  const result = await runGit(repoRes.root, args, 300_000);
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -468,6 +490,7 @@ export const gitShowTool: ToolDefinition = {
     properties: {
       sha: { type: "string", description: "Commit SHA (4–40 hex chars)." },
       path: { type: "string", description: "Optional workspace-relative path to filter." },
+      repo: repoParamSchema,
     },
   },
   capability: "repo.read",
@@ -494,7 +517,9 @@ async function gitDiffHandler(input: JsonObject, ctx: ToolContext): Promise<Tool
     };
   }
   const requestedPath = typeof input.path === "string" ? input.path : "";
-  const safe = requestedPath ? resolveInsideWorkspace(ctx.workspacePath, requestedPath) : null;
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = requestedPath ? resolveInsideWorkspace(repoRes.root, requestedPath) : null;
   if (requestedPath && !safe) {
     return {
       ok: false,
@@ -507,7 +532,7 @@ async function gitDiffHandler(input: JsonObject, ctx: ToolContext): Promise<Tool
   if (safe && safe.relativePath !== "." && safe.relativePath !== "") {
     args.push("--", safe.relativePath);
   }
-  const result = await runGit(ctx.workspacePath, args, 300_000);
+  const result = await runGit(repoRes.root, args, 300_000);
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -535,6 +560,7 @@ export const gitDiffTool: ToolDefinition = {
       ref_a: { type: "string" },
       ref_b: { type: "string" },
       path: { type: "string" },
+      repo: repoParamSchema,
     },
   },
   capability: "repo.read",

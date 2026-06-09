@@ -128,6 +128,7 @@ export async function runWithTools(
       } else {
         const ctx: ToolContext = {
           workspacePath: request.workspacePath,
+          contextRepos: request.contextRepos,
           capabilities,
           env,
           budget,

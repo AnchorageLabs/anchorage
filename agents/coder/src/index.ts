@@ -7,6 +7,8 @@ import path from "node:path";
 import process from "node:process";
 import {
   type ContextSnapshot,
+  contextRepoPromptBlock,
+  contextReposFromEnvelope,
   discoveryTools,
   type LlmConfig,
   llmEventInput,
@@ -368,9 +370,10 @@ async function driveCoderLoop(
   ];
 
   const maxTokensPerTurn = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS_PER_TURN ?? 8000);
+  const contextMounts = contextReposFromEnvelope(task.contextRepos);
 
   const result = await runWithTools(provider.value, {
-    system: coderSystemPrompt(),
+    system: coderSystemPrompt() + contextRepoPromptBlock(contextMounts),
     messages: [
       {
         role: "user",
@@ -384,6 +387,7 @@ async function driveCoderLoop(
     ],
     tools,
     workspacePath: input.workspacePath,
+    contextRepos: contextMounts,
     capabilities: new Set(task.capabilities ?? []),
     env: { ...process.env } as Record<string, string>,
     maxTokensPerTurn,

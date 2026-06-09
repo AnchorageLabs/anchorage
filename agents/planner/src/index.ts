@@ -6,6 +6,8 @@ import path from "node:path";
 import process from "node:process";
 import {
   type ContextSnapshot,
+  contextRepoPromptBlock,
+  contextReposFromEnvelope,
   discoveryTools,
   llmEventInput,
   providerFromLlmConfig,
@@ -286,6 +288,7 @@ async function createPlan(
 
   const workspacePath = pickWorkspacePath(task);
   const tools = collectPlannerTools(task, workspacePath);
+  const contextMounts = contextReposFromEnvelope(task.contextRepos);
 
   emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
     tool: config.value.tool,
@@ -297,10 +300,11 @@ async function createPlan(
   });
 
   const result = await runWithTools(provider.value, {
-    system: plannerSystemPrompt(workspacePath !== null),
+    system: plannerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts),
     messages: [{ role: "user", content: plannerUserPrompt(issue) }],
     tools,
     workspacePath: workspacePath ?? process.cwd(),
+    contextRepos: contextMounts,
     capabilities: new Set(task.capabilities ?? []),
     env: scrubbedEnv(),
     // Larger cap so a verbose Opus plan isn't clipped mid-JSON (the truncation
