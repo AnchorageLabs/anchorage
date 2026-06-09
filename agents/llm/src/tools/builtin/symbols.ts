@@ -14,6 +14,7 @@ import {
   type SymbolRef,
 } from "../symbols/engine.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
+import { repoParamSchema, resolveRepoRoot } from "./context-repos.js";
 
 // Candidate-file and result caps keep a single call bounded on large repos.
 const MAX_CANDIDATE_FILES = 40;
@@ -99,9 +100,13 @@ async function findReferencesHandler(
     };
   }
 
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const root = repoRes.root;
+
   let scope: string | null = null;
   if (typeof input.path === "string" && input.path.trim().length > 0) {
-    const safe = resolveInsideWorkspace(ctx.workspacePath, input.path);
+    const safe = resolveInsideWorkspace(root, input.path);
     if (!safe) {
       return {
         ok: false,
@@ -112,7 +117,7 @@ async function findReferencesHandler(
     scope = safe.relativePath;
   }
 
-  const candidates = (await gitGrepFiles(ctx.workspacePath, symbol, scope)).filter(
+  const candidates = (await gitGrepFiles(root, symbol, scope)).filter(
     (file) => grammarForPath(file) !== null,
   );
   if (candidates.length === 0)
@@ -129,7 +134,7 @@ async function findReferencesHandler(
       capped = true;
       break;
     }
-    const abs = path.resolve(ctx.workspacePath, rel);
+    const abs = path.resolve(root, rel);
     const hits = await findReferencesInFile(abs, rel, symbol);
     if (hits === null) continue; // unsupported/parse failure for this file
     parsedAny = true;
@@ -193,6 +198,7 @@ export const findReferencesTool: ToolDefinition = {
         type: "string",
         description: "Optional workspace-relative dir/file to limit the scan.",
       },
+      repo: repoParamSchema,
     },
   },
   capability: "repo.read",
@@ -211,7 +217,9 @@ async function symbolOutlineHandler(
   if (!requestedPath) {
     return { ok: false, code: "invalid_input", message: "symbol_outline requires a 'path'." };
   }
-  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  const repoRes = resolveRepoRoot(input, ctx);
+  if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
+  const safe = resolveInsideWorkspace(repoRes.root, requestedPath);
   if (!safe) {
     return {
       ok: false,
@@ -253,6 +261,7 @@ export const symbolOutlineTool: ToolDefinition = {
     required: ["path"],
     properties: {
       path: { type: "string", description: "Workspace-relative file path." },
+      repo: repoParamSchema,
     },
   },
   capability: "repo.read",

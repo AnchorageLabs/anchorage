@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  contextRepoPromptBlock,
+  contextReposFromEnvelope,
   type ContextSnapshot,
   discoveryTools,
   type LlmConfig,
@@ -454,12 +456,14 @@ async function requestReview(
     tools.push(...discoveryTools, ...repoReadTools);
   }
   tools.push(...webTools);
+  const contextMounts = contextReposFromEnvelope(task.contextRepos);
 
   const result = await runWithTools(provider.value, {
-    system: reviewerSystemPrompt(workspacePath !== null),
+    system: reviewerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts),
     messages: [{ role: "user", content: reviewerUserPrompt(pr) }],
     tools,
     workspacePath: workspacePath ?? process.cwd(),
+    contextRepos: contextMounts,
     capabilities: new Set(task.capabilities ?? []),
     env: { ...process.env } as Record<string, string>,
     maxTokensPerTurn: 4000,
