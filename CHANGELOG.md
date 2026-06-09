@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-09 — Planner recovers from non-JSON plans with a bounded re-ask; raise max tokens.
+
+**Intent:** When the planner LLM wraps its plan in prose or stops short of valid JSON, the run no longer fails immediately with `llm_plan_failed`. The planner now does one bounded re-ask — reusing the context it already gathered, with tools off — that asks for ONLY the JSON object, then parses again before failing. `maxTokensPerTurn` is also raised from 4096 to 8192 so a verbose Opus plan is not clipped mid-JSON (a common cause of the "did not contain a JSON object" error). Together these unblock instruction/issue runs that flaked on the plan-output contract.
+
+**Files touched:**
+- agents/planner/src/index.ts
+- CHANGELOG.md
+
+**Reason:** user report — an instruction-driven pipeline failed at the planner with `{"code":"llm_plan_failed","message":"LLM response did not contain a JSON object."}`.
+
+**Author:** Sol Soletti
+
 ### 2026-06-07 — Reuse existing branch PR before attempting PR creation.
 
 **Intent:** `pr-opener` now checks for an existing open PR for the branch before calling GitHub's create-PR endpoint. Retry/re-entry paths no longer depend on GitHub returning a 422 first before idempotently reusing the PR.
