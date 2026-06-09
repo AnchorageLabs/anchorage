@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-07 — Add self-contained 3D spinning logo demo to examples/hero-logo/
+
+**Intent:** Introduce a standalone vanilla Three.js (CDN) demo page that extrudes the Anchorage anchor SVG logo into a 3D mesh, auto-spins it on the Y-axis, respects `prefers-reduced-motion`, is responsive via ResizeObserver, supports dark/light mode via `data-theme` and `prefers-color-scheme`, and lazy-initialises via IntersectionObserver. A companion TypeScript module (`scene-config.ts`) exports pure functions for reduced-motion detection, pixel-ratio clamping, theme selection, and scene parameters so the logic is unit-testable via the existing Vitest setup in `sdk/typescript/`. No new npm packages are added; Three.js is loaded via CDN in the HTML file only.
+
+**Files touched:**
+- examples/hero-logo/logo.svg
+- examples/hero-logo/scene-config.ts
+- examples/hero-logo/index.html
+- examples/hero-logo/package.json
+- examples/hero-logo/tsconfig.json
+- sdk/typescript/tests/hero-logo.test.ts
+- pnpm-workspace.yaml
+- CHANGELOG.md
+
+**Reason:** issue #126
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-07 — Reuse existing branch PR before attempting PR creation.
 
 **Intent:** `pr-opener` now checks for an existing open PR for the branch before calling GitHub's create-PR endpoint. Retry/re-entry paths no longer depend on GitHub returning a 422 first before idempotently reusing the PR.

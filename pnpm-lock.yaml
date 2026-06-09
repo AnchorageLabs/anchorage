@@ -238,6 +238,8 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
 
+  examples/hero-logo: {}
+
   protocol:
     dependencies:
       ajv:
