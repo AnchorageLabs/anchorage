@@ -303,7 +303,9 @@ async function createPlan(
     workspacePath: workspacePath ?? process.cwd(),
     capabilities: new Set(task.capabilities ?? []),
     env: scrubbedEnv(),
-    maxTokensPerTurn: 4096,
+    // Larger cap so a verbose Opus plan isn't clipped mid-JSON (the truncation
+    // was a common cause of "did not contain a JSON object").
+    maxTokensPerTurn: 8192,
     temperature: 0.2,
     onEvent: (event) => emitToolEvent(task, event),
   });
@@ -317,7 +319,44 @@ async function createPlan(
     );
   }
 
-  const rawPlan = parsePlanJson(result.finalText);
+  let rawPlan = parsePlanJson(result.finalText);
+  let snapshot = result.snapshot;
+
+  // Bounded re-ask: models occasionally wrap the plan in prose or stop short of
+  // valid JSON. Reuse the context they already gathered and ask once more for
+  // JSON only (tools off — no more exploration needed) before failing the run.
+  if (!rawPlan.ok) {
+    emit(task, "tool.requested", "warn", "Plan was not valid JSON; re-asking for JSON only", {
+      tool: config.value.tool,
+      input: { reason: rawPlan.message },
+    });
+    const retry = await runWithTools(provider.value, {
+      system: plannerSystemPrompt(workspacePath !== null),
+      messages: [
+        ...result.messages,
+        {
+          role: "user",
+          content:
+            "Your last message was not valid JSON. Reply with ONLY the JSON object that matches the requested plan shape — no prose, no markdown, no code fences.",
+        },
+      ],
+      tools: [],
+      workspacePath: workspacePath ?? process.cwd(),
+      capabilities: new Set(task.capabilities ?? []),
+      env: scrubbedEnv(),
+      maxTokensPerTurn: 8192,
+      temperature: 0,
+      onEvent: (event) => emitToolEvent(task, event),
+    });
+    if (retry.ok) {
+      const reparsed = parsePlanJson(retry.finalText);
+      if (reparsed.ok) {
+        rawPlan = reparsed;
+        snapshot = retry.snapshot;
+      }
+    }
+  }
+
   if (!rawPlan.ok) {
     emitLlmFailure(task, config.value.tool, rawPlan.message);
     return failure("invalid_llm_plan_json", rawPlan.message, ExitCode.ExternalDependencyFailure);
@@ -330,15 +369,15 @@ async function createPlan(
     output: {
       ...llmEventInput(config.value),
       stopReason: result.stopReason,
-      toolTurns: result.snapshot.toolTurns,
-      filesRead: result.snapshot.filesRead.length,
-      webCalls: result.snapshot.webCalls,
-      inputTokens: result.snapshot.inputTokensTotal,
-      outputTokens: result.snapshot.outputTokensTotal,
+      toolTurns: snapshot.toolTurns,
+      filesRead: snapshot.filesRead.length,
+      webCalls: snapshot.webCalls,
+      inputTokens: snapshot.inputTokensTotal,
+      outputTokens: snapshot.outputTokensTotal,
     },
   });
 
-  return { ok: true, value: plan, snapshot: result.snapshot };
+  return { ok: true, value: plan, snapshot };
 }
 
 function pickWorkspacePath(task: TaskEnvelope): string | null {
