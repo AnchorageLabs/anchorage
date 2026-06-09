@@ -154,7 +154,12 @@ async function readFileHandler(input: JsonObject, ctx: ToolContext): Promise<Too
     ok: true,
     output: `=== ${label}${rangeNote} ===\n${body}`,
     bytesOut: body.length,
-    meta: { path: safe.relativePath, repo: repoRes.ref, bytes: body.length, totalBytes: stats.size },
+    meta: {
+      path: safe.relativePath,
+      repo: repoRes.ref,
+      bytes: body.length,
+      totalBytes: stats.size,
+    },
   };
 }
 

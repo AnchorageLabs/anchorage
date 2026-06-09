@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  type ContextSnapshot,
   contextRepoPromptBlock,
   contextReposFromEnvelope,
-  type ContextSnapshot,
   discoveryTools,
   type LlmConfig,
   llmEventInput,

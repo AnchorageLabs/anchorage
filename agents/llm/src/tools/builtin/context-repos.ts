@@ -33,7 +33,10 @@ export function resolveRepoRoot(input: JsonObject, ctx: ToolContext): RepoRootRe
 }
 
 /** Budget key for a read, namespaced by context-repo ref to avoid collisions. */
-export function repoScopedKey(res: { ref: string; isContext: boolean }, relativePath: string): string {
+export function repoScopedKey(
+  res: { ref: string; isContext: boolean },
+  relativePath: string,
+): string {
   return res.isContext ? `${res.ref}:${relativePath}` : relativePath;
 }
 
@@ -42,9 +45,7 @@ export function repoScopedKey(res: { ref: string; isContext: boolean }, relative
  * mounts the loop consumes. Filters out malformed entries; returns [] when none.
  */
 export function contextReposFromEnvelope(
-  repos:
-    | ReadonlyArray<{ owner?: string; name?: string; root?: string; note?: string }>
-    | undefined,
+  repos: ReadonlyArray<{ owner?: string; name?: string; root?: string; note?: string }> | undefined,
 ): ContextRepoMount[] {
   if (!repos) return [];
   const mounts: ContextRepoMount[] = [];
@@ -76,7 +77,7 @@ export function contextRepoPromptBlock(mounts: ContextRepoMount[] | undefined): 
     "CONTEXT REPOSITORIES (read-only):",
     "You have read-only access to additional repositories for reference only:",
     ...lines,
-    "Pass the `repo` argument (e.g. repo: \"owner/name\") to read_file / list_dir / grep /",
+    'Pass the `repo` argument (e.g. repo: "owner/name") to read_file / list_dir / grep /',
     "find_references / symbol_outline to read from them. You CANNOT write to them and MUST",
     "NOT widen the task's scope to them — they exist to inform changes you make in the",
     "primary repo, which is the only repo you commit to. Do not assume their code exists in",
