@@ -191,6 +191,12 @@ export interface RunWithToolsRequest {
   // Observer for structured tool events; mirrors the protocol's tool.requested
   // / tool.result emission shape so callers can pipe directly to stdout.
   onEvent?: ToolEventEmitter;
+  // Name of the tool whose invocation ends the loop. The call is not dispatched
+  // to a handler: its input is returned verbatim as `finalToolInput`. This lets
+  // agents receive their final answer as provider-validated structured JSON
+  // instead of parsing free text. The named tool must still be present in
+  // `tools` so the model sees its schema.
+  terminalTool?: string;
 }
 
 export interface ContextSnapshot {
@@ -232,6 +238,10 @@ export type RunWithToolsResult =
   | {
       ok: true;
       finalText: string;
+      // Present iff the run ended via `terminalTool`: the verbatim input of that
+      // call. Callers should validate it defensively — provider-side schema
+      // enforcement is strong but not contractual on every provider.
+      finalToolInput?: JsonObject;
       stopReason: string | null;
       messages: LoopMessage[];
       toolCalls: ToolCallRecord[];
@@ -239,7 +249,12 @@ export type RunWithToolsResult =
     }
   | {
       ok: false;
-      code: "budget_exceeded" | "provider_error" | "invalid_tool_call" | "model_loop_divergent";
+      code:
+        | "budget_exceeded"
+        | "provider_error"
+        | "invalid_tool_call"
+        | "model_loop_divergent"
+        | "terminal_tool_not_called";
       message: string;
       reason?: BudgetExceededReason;
       messages: LoopMessage[];
