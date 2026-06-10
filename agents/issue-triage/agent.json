@@ -1,12 +1,12 @@
 {
   "name": "issue-triage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "protocolVersion": "0.1",
-  "description": "Triages a GitHub issue: classifies scope, type, priority, readiness, and agent-eligibility. Optionally applies labels.",
+  "description": "Triages a GitHub issue: classifies scope, type, priority, readiness, and agent-eligibility. Optionally applies labels and posts an idempotent triage comment.",
   "taskTypes": ["issue.triage"],
   "inputs": ["issue.summary"],
   "outputs": ["issue.triage.result"],
   "requires": ["llm.plan", "repo.read", "web.read"],
   "binary": "./dist/index.js",
-  "timeout": 120
+  "timeout": 500
 }
