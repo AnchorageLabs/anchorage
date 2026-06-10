@@ -62,7 +62,63 @@ async function main(): Promise<number> {
     );
   }
 
-  const commands = parseCommands(task.value.input.commands ?? task.value.input.checks);
+  // Resolution order: explicit input.commands win; with none provided, detect
+  // the project's own test command from its manifests. A run must never "pass"
+  // by silently executing nothing — if detection also finds nothing, the report
+  // says skipped:true out loud (and strict mode refuses to continue).
+  let commandSource: "input" | "detected" = "input";
+  let commands = parseCommands(task.value.input.commands ?? task.value.input.checks);
+  if (!commands.ok && commands.code === "missing_commands") {
+    const detected = await detectTestCommands(workspacePath);
+    if (detected.length > 0) {
+      commandSource = "detected";
+      commands = { ok: true, value: detected };
+      emit(
+        task.value,
+        "agent.output",
+        "info",
+        "No test commands provided; detected from project manifests",
+        { detectedCommands: detected.map((c) => ({ name: c.name, command: c.command })) },
+      );
+    } else {
+      const strict = /^(true|1|yes|on)$/i.test(
+        (process.env.ANCHORAGE_TESTER_REQUIRE_TESTS ?? "").trim(),
+      );
+      const report: TestReport = {
+        passed: !strict,
+        skipped: true,
+        skipReason:
+          "No test commands were provided and none could be detected from the repository manifests.",
+        checkedAt: new Date().toISOString(),
+        results: [],
+      };
+      emit(
+        task.value,
+        "agent.output",
+        "warn",
+        "TESTS SKIPPED — nothing was executed. The pipeline's test gate did not verify this change.",
+        report,
+      );
+      const skippedArtifact = await writeArtifact(task.value, report);
+      emit(task.value, "artifact.created", "info", "Test report artifact created", skippedArtifact);
+      if (strict) {
+        emit(task.value, "agent.failed", "error", "No tests to run (strict mode)", {
+          error: {
+            code: "no_tests_found",
+            message:
+              "ANCHORAGE_TESTER_REQUIRE_TESTS is set and no test commands were provided or detected.",
+          },
+          artifact: skippedArtifact,
+        });
+        return ExitCode.PartialSuccessAttentionRequired;
+      }
+      emit(task.value, "agent.completed", "warn", "tester completed WITHOUT running any tests", {
+        artifact: skippedArtifact,
+        skipped: true,
+      });
+      return ExitCode.Success;
+    }
+  }
   if (!commands.ok) return fail(task.value, commands);
 
   const results: TestCommandResult[] = [];
@@ -90,6 +146,7 @@ async function main(): Promise<number> {
 
   const report: TestReport = {
     passed: results.every((result) => result.passed),
+    commandSource,
     checkedAt: new Date().toISOString(),
     results,
   };
@@ -185,6 +242,62 @@ function parseCommands(
   }
 
   return { ok: true, value: commands };
+}
+
+// ── Test-command detection ────────────────────────────────────────────────────
+// Mirrors the manifest knowledge in agent-llm's detect_project, kept local so
+// the deterministic tester stays dependency-light. First match wins; every
+// command is the ecosystem's own idiom, never an invented script.
+
+const NPM_PLACEHOLDER_TEST = /echo .Error: no test specified./;
+
+async function detectTestCommands(workspacePath: string): Promise<TestCommand[]> {
+  const read = async (rel: string): Promise<string | null> =>
+    fs.readFile(path.join(workspacePath, rel), "utf8").catch(() => null);
+  const exists = async (rel: string): Promise<boolean> =>
+    fs
+      .stat(path.join(workspacePath, rel))
+      .then(() => true)
+      .catch(() => false);
+
+  const packageJsonRaw = await read("package.json");
+  if (packageJsonRaw) {
+    try {
+      const manifest = JSON.parse(packageJsonRaw) as {
+        scripts?: Record<string, string>;
+        packageManager?: string;
+      };
+      const script = manifest.scripts?.test;
+      if (script && !NPM_PLACEHOLDER_TEST.test(script)) {
+        const pm = manifest.packageManager?.startsWith("pnpm")
+          ? "pnpm"
+          : manifest.packageManager?.startsWith("yarn")
+            ? "yarn"
+            : (await exists("pnpm-lock.yaml"))
+              ? "pnpm"
+              : (await exists("yarn.lock"))
+                ? "yarn"
+                : "npm";
+        return [{ name: "test", command: `${pm} test` }];
+      }
+    } catch {
+      // unparseable manifest — fall through to other ecosystems
+    }
+  }
+
+  if (await exists("go.mod")) return [{ name: "go-test", command: "go test ./..." }];
+  if (await exists("Cargo.toml")) return [{ name: "cargo-test", command: "cargo test" }];
+  if (await exists("mix.exs")) return [{ name: "mix-test", command: "mix test" }];
+  if ((await exists("pytest.ini")) || (await exists("tests")) || (await exists("test"))) {
+    const pyproject = await read("pyproject.toml");
+    if (pyproject !== null || (await exists("pytest.ini")) || (await exists("setup.py"))) {
+      return [{ name: "pytest", command: "python -m pytest -q" }];
+    }
+  }
+  const makefile = await read("Makefile");
+  if (makefile && /^test:/m.test(makefile)) return [{ name: "make-test", command: "make test" }];
+
+  return [];
 }
 
 async function runTestCommand(
@@ -446,6 +559,11 @@ type TestReport = ProtocolEvent["data"] & {
   passed: boolean;
   checkedAt: string;
   results: TestCommandResult[];
+  /** "input" = commands came from the envelope; "detected" = from manifests. */
+  commandSource?: "input" | "detected";
+  /** True when nothing was executed — the gate verified NOTHING for this run. */
+  skipped?: boolean;
+  skipReason?: string;
 };
 
 interface CommandResult {
