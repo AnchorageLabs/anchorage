@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — Tester detects the project's test command; skipping is loud, never silent.
+
+**Intent:** The tester no longer needs `input.commands` to do real work. With no commands provided it detects the project's own test idiom from manifests (package.json `scripts.test` with the right package manager — skipping npm's placeholder script —, `go test ./...`, `cargo test`, `mix test`, pytest, `make test`) and runs that, recording `commandSource:"detected"` in the report. When nothing can be detected, it emits a warn-level "TESTS SKIPPED — nothing was executed" output and a `test.report` with `skipped:true` + reason, so a run can never look test-verified while having executed nothing; setting `ANCHORAGE_TESTER_REQUIRE_TESTS=true` turns that case into a failure (exit 9). Telemetry showed the gate was vacuous: all 28 observed tester executions ran zero commands in ~0s because the orchestrator filled in an `echo` noop.
+
+**Files touched:**
+- agents/tester/src/index.ts
+- CHANGELOG.md
+
+**Reason:** OpenObserve run analysis 2026-06-10 — 28/28 tester spans exit 0 with ~0s duration (the orchestrator's `echo` noop default); matches the agent-context audit's "empty input = silent no-op" finding. Companion orchestrator change removes the noop default.
+
+**Author:** Sol Soletti
+
 ### 2026-06-09 — Planner recovers from non-JSON plans with a bounded re-ask; raise max tokens.
 
 **Intent:** When the planner LLM wraps its plan in prose or stops short of valid JSON, the run no longer fails immediately with `llm_plan_failed`. The planner now does one bounded re-ask — reusing the context it already gathered, with tools off — that asks for ONLY the JSON object, then parses again before failing. `maxTokensPerTurn` is also raised from 4096 to 8192 so a verbose Opus plan is not clipped mid-JSON (a common cause of the "did not contain a JSON object" error). Together these unblock instruction/issue runs that flaked on the plan-output contract.
