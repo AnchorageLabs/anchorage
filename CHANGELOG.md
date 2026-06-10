@@ -29,6 +29,24 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — First-touch triage: terminal-tool structured output, richer verdict, idempotent issue comment.
+
+**Intent:** The triage agent's verdict is now provider-validated structured JSON instead of parsed free text, and triage becomes a real first touch on the issue. `runWithTools` gains terminal-tool mode: a designated tool call (here `submit_triage`) ends the loop and its input IS the result — the brittle brace-matching JSON parser is deleted, and a model that finishes with plain text gets exactly one nudge before the run fails cleanly. The triage verdict gains `duplicateOf`, `questions` (2–4 specific asks when readiness is `needs-detail`), and `confidence` — all additive, so existing consumers are unaffected. When `github.write` is granted, triage now upserts a single marker-keyed comment on the issue (triage card; clarifying questions as a checklist; duplicate pointer) so the author always sees what the system decided; retries and re-runs converge on one comment. Triage also accepts `input.clarifications` (author replies relayed by an orchestrator) and re-triages with the full exchange in context.
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/test/terminal-tool.test.mjs
+- agents/issue-triage/src/index.ts
+- agents/issue-triage/src/comment.ts
+- agents/issue-triage/agent.json
+- agents/issue-triage/test/comment.test.mjs
+- CHANGELOG.md
+
+**Reason:** ADR-0030 (first-touch triage gate + terminal-tool structured submission); first-touch assessment finding that the triage output was free-text-parsed and invisible to the issue author.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-09 — Planner recovers from non-JSON plans with a bounded re-ask; raise max tokens.
 
 **Intent:** When the planner LLM wraps its plan in prose or stops short of valid JSON, the run no longer fails immediately with `llm_plan_failed`. The planner now does one bounded re-ask — reusing the context it already gathered, with tools off — that asks for ONLY the JSON object, then parses again before failing. `maxTokensPerTurn` is also raised from 4096 to 8192 so a verbose Opus plan is not clipped mid-JSON (a common cause of the "did not contain a JSON object" error). Together these unblock instruction/issue runs that flaked on the plan-output contract.
