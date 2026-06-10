@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
+import { cartographerTools } from "./cartographer.js";
 import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { symbolTools } from "./symbols.js";
 
@@ -693,6 +694,10 @@ export const repoReadTools: ToolDefinition[] = [
   // already gets repoReadTools (planner, coder, reviewer, issue-triage) gains
   // them automatically; they fail closed to grep when unavailable.
   ...symbolTools,
+  // Cartographer tools answer from the persisted whole-repo index (impact /
+  // tests_for) and fail closed to the symbol tools when the cartographer CLI
+  // is not installed (ANCHORAGE_CARTOGRAPHER_BIN or PATH).
+  ...cartographerTools,
 ];
 
 export const repoWriteTools: ToolDefinition[] = [writeFileTool, deleteFileTool];

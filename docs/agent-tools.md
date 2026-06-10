@@ -37,6 +37,10 @@ The loop drives `model → tool calls → model → ...` until the model returns
 | `git_diff(ref_a, ref_b, [path])` | `repo.read` | 300 KB stdout cap |
 | `detect_project()` | `repo.read` | Inspects manifests, reports language/test/build/lint |
 | `read_repo_manifest()` | `repo.read` | Returns `AGENTS.md` / `CLAUDE.md` / `.anchorage/context.md` if present; no error on absence |
+| `find_references(symbol, [path])` | `repo.read` | tree-sitter per-call scan; 40 candidate files / 80 refs; fails closed to grep |
+| `symbol_outline(path)` | `repo.read` | tree-sitter; definitions in one file; fails closed to read_file |
+| `impact(symbol)` | `repo.read` | cartographer persisted index: defs, refs, transitive dependents (crosses barrels/workspace packages), covering tests; fails closed to find_references |
+| `tests_for(path)` | `repo.read` | cartographer index: tests importing the file (transitively) + name-mirrored; fails closed |
 | `write_file(path, content)` | `workspace.write` | 1 MB content cap; full-file replace |
 | `delete_file(path)` | `workspace.write` | — |
 | `shell_exec(command, [cwd], [timeout_ms])` | `shell.exec` | 60s default / 600s cap; stdout 100 KB / stderr 16 KB; scrubbed env |
@@ -60,6 +64,9 @@ All budgets are enforced inside `runWithTools` and can be tuned per-run with env
 | `ANCHORAGE_TOOL_MAX_SHELL_CALLS` | 20 | `shell_exec` invocations |
 | `ANCHORAGE_TOOL_WEB_ENABLED` | `false` | Master switch for web tools |
 | `ANCHORAGE_SHELL_ENV_PASSTHROUGH` | (empty) | Comma-separated extra env names allowed into `shell_exec` |
+| `ANCHORAGE_TOOL_SYMBOLS_ENABLED` | `true` | Master switch for `find_references` / `symbol_outline` |
+| `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED` | `true` | Master switch for `impact` / `tests_for` |
+| `ANCHORAGE_CARTOGRAPHER_BIN` | (empty) | Path to the cartographer CLI (a `.js` entry runs under node); unset falls back to `cartographer` on PATH, and a missing binary just fails the tools closed |
 
 Hitting any budget produces a `RunWithToolsResult` with `ok: false`, `code: "budget_exceeded"`, and a `reason` enum identifying the cap that fired. Agents surface this as `agent.failed` with `code: "tool_budget_exceeded"`.
 

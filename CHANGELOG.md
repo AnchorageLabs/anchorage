@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — Add cartographer-backed `impact` and `tests_for` tools to the repo.read surface.
+
+**Intent:** Every reasoning agent that gets `repoReadTools` (planner, coder, reviewer, issue-triage) gains two tools answered from cartographer's persisted whole-repo symbol index (`.anchorage/index/symbols.db`, delta-refreshed by content hash on each call): `impact(symbol)` returns the blast radius of changing a symbol — definitions, referencing files with lines, transitive dependents via the import graph (crossing barrel re-exports and workspace package boundaries, which the per-call `find_references` scan cannot see), and the covering test files; `tests_for(path)` returns the tests that import a source file (transitively) plus name-mirrored tests. This closes the "coder breaks a caller / reviewer misses the blast radius / tester runs nothing relevant" gap named in the agent-context audit, with zero LLM tokens spent on the answers. Both tools fail closed to the existing symbol tools when the cartographer CLI is absent (`ANCHORAGE_CARTOGRAPHER_BIN` or PATH), and `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED=false` switches them off — an unconfigured environment behaves exactly as before.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/cartographer.ts
+- agents/llm/src/tools/builtin/repo.ts
+- docs/agent-tools.md
+- CHANGELOG.md
+
+**Reason:** agent-context audit recommendation (anchorage-internal/audits/agent-context-audit.md §2–3: symbol-level who-references-what, reviewer first) within the ADR-0023/0024 boundary — the index is built from the caller's workspace at run time by the open cartographer CLI, never a shipped index; follows the cartographer repo gaining `index|impact|tests-for` commands (cartographer CHANGELOG, unreleased).
+
+**Author:** Sol Soletti
+
 ### 2026-06-10 — First-touch triage: terminal-tool structured output, richer verdict, idempotent issue comment.
 
 **Intent:** The triage agent's verdict is now provider-validated structured JSON instead of parsed free text, and triage becomes a real first touch on the issue. `runWithTools` gains terminal-tool mode: a designated tool call (here `submit_triage`) ends the loop and its input IS the result — the brittle brace-matching JSON parser is deleted, and a model that finishes with plain text gets exactly one nudge before the run fails cleanly. The triage verdict gains `duplicateOf`, `questions` (2–4 specific asks when readiness is `needs-detail`), and `confidence` — all additive, so existing consumers are unaffected. When `github.write` is granted, triage now upserts a single marker-keyed comment on the issue (triage card; clarifying questions as a checklist; duplicate pointer) so the author always sees what the system decided; retries and re-runs converge on one comment. Triage also accepts `input.clarifications` (author replies relayed by an orchestrator) and re-triages with the full exchange in context.
