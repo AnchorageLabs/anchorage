@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — Tester detects the project's test command; skipping is loud, never silent.
+
+**Intent:** The tester no longer needs `input.commands` to do real work. With no commands provided it detects the project's own test idiom from manifests (package.json `scripts.test` with the right package manager — skipping npm's placeholder script —, `go test ./...`, `cargo test`, `mix test`, pytest, `make test`) and runs that, recording `commandSource:"detected"` in the report. When nothing can be detected, it emits a warn-level "TESTS SKIPPED — nothing was executed" output and a `test.report` with `skipped:true` + reason, so a run can never look test-verified while having executed nothing; setting `ANCHORAGE_TESTER_REQUIRE_TESTS=true` turns that case into a failure (exit 9). Telemetry showed the gate was vacuous: all 28 observed tester executions ran zero commands in ~0s because the orchestrator filled in an `echo` noop.
+
+**Files touched:**
+- agents/tester/src/index.ts
+- CHANGELOG.md
+
+**Reason:** OpenObserve run analysis 2026-06-10 — 28/28 tester spans exit 0 with ~0s duration (the orchestrator's `echo` noop default); matches the agent-context audit's "empty input = silent no-op" finding. Companion orchestrator change removes the noop default.
+
+**Author:** Sol Soletti
+
 ### 2026-06-10 — Add cartographer-backed `impact` and `tests_for` tools to the repo.read surface.
 
 **Intent:** Every reasoning agent that gets `repoReadTools` (planner, coder, reviewer, issue-triage) gains two tools answered from cartographer's persisted whole-repo symbol index (`.anchorage/index/symbols.db`, delta-refreshed by content hash on each call): `impact(symbol)` returns the blast radius of changing a symbol — definitions, referencing files with lines, transitive dependents via the import graph (crossing barrel re-exports and workspace package boundaries, which the per-call `find_references` scan cannot see), and the covering test files; `tests_for(path)` returns the tests that import a source file (transitively) plus name-mirrored tests. This closes the "coder breaks a caller / reviewer misses the blast radius / tester runs nothing relevant" gap named in the agent-context audit, with zero LLM tokens spent on the answers. Both tools fail closed to the existing symbol tools when the cartographer CLI is absent (`ANCHORAGE_CARTOGRAPHER_BIN` or PATH), and `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED=false` switches them off — an unconfigured environment behaves exactly as before.
