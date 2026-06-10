@@ -42,6 +42,7 @@ export async function runWithTools(
 
   const messages: LoopMessage[] = [...request.messages];
   const toolCalls: ToolCallRecord[] = [];
+  let terminalNudgeUsed = false;
 
   while (true) {
     const turnCheck = checkTurnBudget(budget);
@@ -85,7 +86,71 @@ export async function runWithTools(
     messages.push(assistantMessage);
 
     const toolUses = turnResult.content.filter(isToolUseBlock);
+
+    // Terminal-tool mode: the named call ends the loop and its input IS the
+    // result. It is never dispatched to a handler, but it still emits the
+    // standard event pair so the ledger records how the run finished. If the
+    // model bundled other tool calls into the same turn they are not executed —
+    // the answer has already been submitted.
+    const terminalUse = request.terminalTool
+      ? toolUses.find((use) => use.name === request.terminalTool)
+      : undefined;
+    if (terminalUse) {
+      const turnNumber = budget.turns;
+      emit({
+        kind: "tool.requested",
+        tool: terminalUse.name,
+        input: boundInputForEvent(terminalUse.input),
+        turn: turnNumber,
+      });
+      emit({
+        kind: "tool.result",
+        tool: terminalUse.name,
+        success: true,
+        durationMs: 0,
+        output: { ok: true, accepted: true },
+        turn: turnNumber,
+      });
+      toolCalls.push({
+        name: terminalUse.name,
+        input: terminalUse.input,
+        ok: true,
+        durationMs: 0,
+        turn: turnNumber,
+      });
+      return {
+        ok: true,
+        finalText: extractText(turnResult.content),
+        finalToolInput: terminalUse.input,
+        stopReason: turnResult.stopReason,
+        messages,
+        toolCalls,
+        snapshot: snapshotOf(budget, toolCalls),
+      };
+    }
+
     if (toolUses.length === 0) {
+      if (request.terminalTool) {
+        // The model tried to finish with plain text. Nudge it once — a cheap
+        // correction beats failing the whole run — then give up so a divergent
+        // model can't loop forever.
+        if (!terminalNudgeUsed) {
+          terminalNudgeUsed = true;
+          messages.push({
+            role: "user",
+            content: `You must finish by calling the \`${request.terminalTool}\` tool with your final answer. Plain text answers are not accepted. Call it now.`,
+          });
+          continue;
+        }
+        return {
+          ok: false,
+          code: "terminal_tool_not_called",
+          message: `Model ended with text twice without calling required terminal tool '${request.terminalTool}'.`,
+          messages,
+          toolCalls,
+          snapshot: snapshotOf(budget, toolCalls),
+        };
+      }
       // Terminal turn — no tool calls; return the model's final text.
       const finalText = extractText(turnResult.content);
       return {
