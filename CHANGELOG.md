@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — Add cartographer-backed `impact` and `tests_for` tools to the repo.read surface.
+
+**Intent:** Every reasoning agent that gets `repoReadTools` (planner, coder, reviewer, issue-triage) gains two tools answered from cartographer's persisted whole-repo symbol index (`.anchorage/index/symbols.db`, delta-refreshed by content hash on each call): `impact(symbol)` returns the blast radius of changing a symbol — definitions, referencing files with lines, transitive dependents via the import graph (crossing barrel re-exports and workspace package boundaries, which the per-call `find_references` scan cannot see), and the covering test files; `tests_for(path)` returns the tests that import a source file (transitively) plus name-mirrored tests. This closes the "coder breaks a caller / reviewer misses the blast radius / tester runs nothing relevant" gap named in the agent-context audit, with zero LLM tokens spent on the answers. Both tools fail closed to the existing symbol tools when the cartographer CLI is absent (`ANCHORAGE_CARTOGRAPHER_BIN` or PATH), and `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED=false` switches them off — an unconfigured environment behaves exactly as before.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/cartographer.ts
+- agents/llm/src/tools/builtin/repo.ts
+- docs/agent-tools.md
+- CHANGELOG.md
+
+**Reason:** agent-context audit recommendation (anchorage-internal/audits/agent-context-audit.md §2–3: symbol-level who-references-what, reviewer first) within the ADR-0023/0024 boundary — the index is built from the caller's workspace at run time by the open cartographer CLI, never a shipped index; follows the cartographer repo gaining `index|impact|tests-for` commands (cartographer CHANGELOG, unreleased).
+
+**Author:** Sol Soletti
+
 ### 2026-06-09 — Planner recovers from non-JSON plans with a bounded re-ask; raise max tokens.
 
 **Intent:** When the planner LLM wraps its plan in prose or stops short of valid JSON, the run no longer fails immediately with `llm_plan_failed`. The planner now does one bounded re-ask — reusing the context it already gathered, with tools off — that asks for ONLY the JSON object, then parses again before failing. `maxTokensPerTurn` is also raised from 4096 to 8192 so a verbose Opus plan is not clipped mid-JSON (a common cause of the "did not contain a JSON object" error). Together these unblock instruction/issue runs that flaked on the plan-output contract.
