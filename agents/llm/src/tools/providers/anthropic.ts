@@ -14,6 +14,7 @@ import type {
   UserMessage,
 } from "../types.js";
 import { isTemperatureUnsupported } from "./param-support.js";
+import { sendWithRateLimitRetry } from "./retry.js";
 
 export interface AnthropicProviderConfig {
   apiKey: string;
@@ -62,7 +63,10 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
 
       let response: Response;
       try {
-        response = await send(true);
+        // 429/overload retries happen inside the turn (honouring retry-after):
+        // failing the turn would discard the agent's whole assembled context
+        // over a wait measured in seconds.
+        response = await sendWithRateLimitRetry(() => send(true));
       } catch (error) {
         return {
           ok: false,
@@ -75,7 +79,7 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
       // Opus 4.7+ reject `temperature` (and top_p/top_k) — retry once without it.
       if (!response.ok && typeof input.temperature === "number" && isTemperatureUnsupported(text)) {
         try {
-          response = await send(false);
+          response = await sendWithRateLimitRetry(() => send(false));
           text = await response.text();
         } catch (error) {
           return {

@@ -16,6 +16,7 @@ import {
   isTemperatureUnsupported,
   wantsMaxCompletionTokens,
 } from "./param-support.js";
+import { sendWithRateLimitRetry } from "./retry.js";
 
 export interface OpenAiProviderConfig {
   apiKey: string;
@@ -82,7 +83,9 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
       let response: Response;
       let text: string;
       try {
-        response = await send();
+        // 429/overload retries happen inside the turn (honouring retry-after)
+        // before the param-compatibility retries below — see retry.ts.
+        response = await sendWithRateLimitRetry(send);
         text = await response.text();
         for (let attempt = 0; attempt < 2 && !response.ok; attempt++) {
           let changed = false;
@@ -101,7 +104,7 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
             changed = true;
           }
           if (!changed) break;
-          response = await send();
+          response = await sendWithRateLimitRetry(send);
           text = await response.text();
         }
       } catch (error) {

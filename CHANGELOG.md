@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — LLM providers retry rate limits inside the turn, honouring retry-after.
+
+**Intent:** A 429/overload from Anthropic or an OpenAI-compatible gateway no longer fails the whole agent task. The HTTP providers now retry retryable statuses (429, 500, 502, 503, 504, 529) up to 3 times inside the turn, sleeping per the server's `retry-after` header (seconds or HTTP-date, capped at 60s) or exponential backoff — so a per-minute org rate window costs seconds of waiting instead of discarding the agent's assembled context and re-running the step from scratch. Bedrock keeps the AWS SDK's built-in adaptive retries.
+
+**Files touched:**
+- agents/llm/src/tools/providers/retry.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/openai.ts
+- CHANGELOG.md
+
+**Reason:** OpenObserve run analysis 2026-06-10 — rate limits were the #1 failure class (16 direct `rate_limit_error` agent.failed events; 32 coder exit-6 spans averaging 26s, the fast-fail 429 signature), and workflow-level 5s/10s retries landed inside the same rate window and died identically.
+
+**Author:** Sol Soletti
+
 ### 2026-06-10 — Tester detects the project's test command; skipping is loud, never silent.
 
 **Intent:** The tester no longer needs `input.commands` to do real work. With no commands provided it detects the project's own test idiom from manifests (package.json `scripts.test` with the right package manager — skipping npm's placeholder script —, `go test ./...`, `cargo test`, `mix test`, pytest, `make test`) and runs that, recording `commandSource:"detected"` in the report. When nothing can be detected, it emits a warn-level "TESTS SKIPPED — nothing was executed" output and a `test.report` with `skipped:true` + reason, so a run can never look test-verified while having executed nothing; setting `ANCHORAGE_TESTER_REQUIRE_TESTS=true` turns that case into a failure (exit 9). Telemetry showed the gate was vacuous: all 28 observed tester executions ran zero commands in ~0s because the orchestrator filled in an `echo` noop.
