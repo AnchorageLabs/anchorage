@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-10 — LLM providers retry rate limits inside the turn, honouring retry-after.
+
+**Intent:** A 429/overload from Anthropic or an OpenAI-compatible gateway no longer fails the whole agent task. The HTTP providers now retry retryable statuses (429, 500, 502, 503, 504, 529) up to 3 times inside the turn, sleeping per the server's `retry-after` header (seconds or HTTP-date, capped at 60s) or exponential backoff — so a per-minute org rate window costs seconds of waiting instead of discarding the agent's assembled context and re-running the step from scratch. Bedrock keeps the AWS SDK's built-in adaptive retries.
+
+**Files touched:**
+- agents/llm/src/tools/providers/retry.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/openai.ts
+- CHANGELOG.md
+
+**Reason:** OpenObserve run analysis 2026-06-10 — rate limits were the #1 failure class (16 direct `rate_limit_error` agent.failed events; 32 coder exit-6 spans averaging 26s, the fast-fail 429 signature), and workflow-level 5s/10s retries landed inside the same rate window and died identically.
+
+**Author:** Sol Soletti
+
 ### 2026-06-09 — Planner recovers from non-JSON plans with a bounded re-ask; raise max tokens.
 
 **Intent:** When the planner LLM wraps its plan in prose or stops short of valid JSON, the run no longer fails immediately with `llm_plan_failed`. The planner now does one bounded re-ask — reusing the context it already gathered, with tools off — that asks for ONLY the JSON object, then parses again before failing. `maxTokensPerTurn` is also raised from 4096 to 8192 so a verbose Opus plan is not clipped mid-JSON (a common cause of the "did not contain a JSON object" error). Together these unblock instruction/issue runs that flaked on the plan-output contract.
