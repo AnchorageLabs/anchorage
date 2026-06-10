@@ -89,7 +89,8 @@ test("plain-text finish gets one nudge, then succeeds when the model complies", 
   assert.equal(result.ok, true);
   assert.deepEqual(result.finalToolInput, answer);
   const nudge = result.messages.find(
-    (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("submit_answer"),
+    (m) =>
+      m.role === "user" && typeof m.content === "string" && m.content.includes("submit_answer"),
   );
   assert.ok(nudge, "nudge message should be in the transcript");
 });
