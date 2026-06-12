@@ -60,6 +60,8 @@ Monorepo, eight top-level modules. The split exists so the protocol spec can mov
 | `deploy-watch` | `deploy.watch` | Input-driven status record |
 | `smoke-test-runner` | `smoke_test.run` | HTTP/shell smoke checks |
 | `issue-closer` | `issue.close` | GitHub API; posts workflow summary comment |
+| `notion-reader` | `notion.task.read` | Notion API; emits pipeline-compatible `issue.summary` from a Notion page |
+| `notion-writer` | `notion.task.update` | Notion API; posts workflow summary comment and sets page status |
 
 ## §4. How to run / develop
 

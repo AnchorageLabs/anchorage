@@ -1,0 +1,12 @@
+{
+  "name": "notion-writer",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Posts a workflow summary comment on a Notion page and updates its status.",
+  "taskTypes": ["notion.task.update"],
+  "inputs": ["notion.page", "workflow.summary"],
+  "outputs": ["notion.task.updated"],
+  "requires": ["notion.write"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

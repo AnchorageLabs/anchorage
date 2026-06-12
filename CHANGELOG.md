@@ -29,6 +29,29 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-12 — Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
+
+**Intent:** Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
+
+**Files touched:**
+- agents/notion-reader/agent.json
+- agents/notion-reader/package.json
+- agents/notion-reader/tsconfig.json
+- agents/notion-reader/src/index.ts
+- agents/notion-writer/agent.json
+- agents/notion-writer/package.json
+- agents/notion-writer/tsconfig.json
+- agents/notion-writer/src/index.ts
+- examples/tasks/notion-task-read.json
+- examples/tasks/notion-task-update.json
+- agents/README.md
+- AGENTS.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-12): make Anchorage run on Notion. Uses namespaced custom task types per protocol/SPEC.md §9 — no protocol change.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-10 — LLM providers retry rate limits inside the turn, honouring retry-after.
 
 **Intent:** A 429/overload from Anthropic or an OpenAI-compatible gateway no longer fails the whole agent task. The HTTP providers now retry retryable statuses (429, 500, 502, 503, 504, 529) up to 3 times inside the turn, sleeping per the server's `retry-after` header (seconds or HTTP-date, capped at 60s) or exponential backoff — so a per-minute org rate window costs seconds of waiting instead of discarding the agent's assembled context and re-running the step from scratch. Bedrock keeps the AWS SDK's built-in adaptive retries.

@@ -1,0 +1,12 @@
+{
+  "name": "notion-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads a Notion page work item and emits a structured issue summary.",
+  "taskTypes": ["notion.task.read"],
+  "inputs": ["notion.page"],
+  "outputs": ["issue.summary", "issue.metadata"],
+  "requires": ["notion.read"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}
