@@ -1,0 +1,35 @@
+{
+  "protocolVersion": "0.1",
+  "task": {
+    "id": "task_example_notion_task_read",
+    "type": "notion.task.read",
+    "createdAt": "2026-06-12T00:00:00Z",
+    "deadlineAt": null
+  },
+  "run": {
+    "id": "run_example_notion_task_read",
+    "attempt": 1,
+    "correlationId": "corr_example_notion_task_read"
+  },
+  "actor": {
+    "requestedBy": "developer",
+    "agent": "notion-reader"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "AnchorageLabs",
+    "name": "anchorage",
+    "defaultBranch": "main"
+  },
+  "input": {
+    "pageId": "https://www.notion.so/anchoragelabs/Fix-login-redirect-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+  },
+  "capabilities": ["notion.read"],
+  "policy": {
+    "maxDurationSeconds": 120
+  },
+  "context": {
+    "parentTaskId": null,
+    "priorArtifacts": []
+  }
+}

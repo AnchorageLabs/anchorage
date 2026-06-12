@@ -29,6 +29,28 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-12 — Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
+
+**Intent:** Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
+
+**Files touched:**
+- agents/notion-reader/agent.json
+- agents/notion-reader/package.json
+- agents/notion-reader/tsconfig.json
+- agents/notion-reader/src/index.ts
+- agents/notion-writer/agent.json
+- agents/notion-writer/package.json
+- agents/notion-writer/tsconfig.json
+- agents/notion-writer/src/index.ts
+- examples/tasks/notion-task-read.json
+- examples/tasks/notion-task-update.json
+- agents/README.md
+- AGENTS.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-12): make Anchorage run on Notion. Uses namespaced custom task types per protocol/SPEC.md §9 — no protocol change.
+
+**Author:** Sol Soletti
+
 ### 2026-06-12 — `anchorage run` leaves a task-scoped run-manifest.json (flight recorder).
 
 **Intent:** Standalone agent runs become queryable after the fact without the orchestrator. The SDK gains `buildTaskRunManifest` — a tolerant fold of a task's protocol events into one manifest: runId, taskId/type, agent, repository, exit code, timing, LLM provider/models/tokens (context.snapshot totals preferred over per-call sums to avoid double counting), tool-call stats by tool, files read, artifacts produced, and errors (agent.failed + failed tool results). The runner writes it as `run-manifest.json` beside the run's artifacts (ANCHORAGE_ARTIFACT_DIR or the agents' tmpdir default) after event-stream validation; a write failure is non-fatal and never changes the agent's exit code. Companion to the orchestrator's full-run manifest (private repo, same date).

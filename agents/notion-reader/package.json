@@ -1,0 +1,25 @@
+{
+  "name": "@anchorage/agent-notion-reader",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "notion-reader": "./dist/index.js"
+  },
+  "files": [
+    "agent.json",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anchorage/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1"
+  }
+}
