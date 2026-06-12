@@ -38,7 +38,9 @@ function cartographerEnabled(env: Record<string, string>): boolean {
 // ANCHORAGE_CARTOGRAPHER_BIN points at the CLI (a .js entry runs under node);
 // unset falls back to `cartographer` on PATH. A spawn error fails closed, so
 // an unconfigured environment simply doesn't offer index answers.
-function cartographerCommand(env: Record<string, string>): { cmd: string; baseArgs: string[] } {
+export function cartographerCommand(
+  env: Record<string, string>,
+): { cmd: string; baseArgs: string[] } {
   const bin = env.ANCHORAGE_CARTOGRAPHER_BIN?.trim();
   if (bin && bin.length > 0) {
     return bin.endsWith(".js") ? { cmd: "node", baseArgs: [bin] } : { cmd: bin, baseArgs: [] };

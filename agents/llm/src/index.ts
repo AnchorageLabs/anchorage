@@ -15,6 +15,7 @@ export {
   contextReposFromEnvelope,
 } from "./tools/builtin/context-repos.js";
 export { discoveryTools } from "./tools/builtin/discovery.js";
+export { repoContextPromptBlock } from "./tools/builtin/repo-context.js";
 export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
 export { shellTools } from "./tools/builtin/shell.js";
 export { symbolTools } from "./tools/builtin/symbols.js";
