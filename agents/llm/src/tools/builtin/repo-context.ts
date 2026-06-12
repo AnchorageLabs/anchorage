@@ -83,16 +83,38 @@ function formatDigest(context: { [key: string]: Json }): string {
   const patterns = strList(repo.workspacePatterns);
   if (patterns.length > 0) lines.push(`workspace packages: ${patterns.join(", ")}`);
 
+  // Detection-gap warnings demote a null command from "checked, absent" to
+  // "unknown — verify yourself". Asserting absence the scanner couldn't prove
+  // is how a Go monorepo shipped a non-compiling PR: cmd:test->none told the
+  // gate there was nothing to run.
+  const warnings = strList(context.warnings, 6);
+  const gapKeys = new Set(
+    warnings
+      .map((w) => w.match(/treat cmd:(\w+) as UNKNOWN/)?.[1])
+      .filter((k): k is string => k !== undefined),
+  );
   const commands = isObject(context.commands) ? context.commands : {};
   const commandLines: string[] = [];
+  let hasGaps = false;
   for (const key of ["install", "build", "typecheck", "lint", "format", "test", "check"]) {
     const value = commands[key];
     if (typeof value === "string") commandLines.push(`  ${key}: ${value}`);
-    else if (value === null) commandLines.push(`  ${key}: (none — checked, absent)`);
+    else if (gapKeys.has(key)) {
+      commandLines.push(`  ${key}: UNKNOWN — detection gap; find and run it yourself`);
+      hasGaps = true;
+    } else if (value === null) commandLines.push(`  ${key}: (none — checked, absent)`);
   }
   if (commandLines.length > 0) {
-    lines.push("commands (authoritative — use these to verify, do not rediscover):");
+    lines.push(
+      hasGaps
+        ? "commands (detected where bound; UNKNOWN entries MUST be discovered and verified):"
+        : "commands (authoritative — use these to verify, do not rediscover):",
+    );
     lines.push(...commandLines);
+  }
+  if (warnings.length > 0) {
+    lines.push("scanner warnings (facts above may be incomplete):");
+    for (const warning of warnings) lines.push(`  - ${warning}`);
   }
 
   const entryPoints = Array.isArray(context.entryPoints) ? context.entryPoints : [];
@@ -174,11 +196,12 @@ export async function repoContextPromptBlock(
 
   return [
     "",
-    "REPO CONTEXT (pre-computed by cartographer; authoritative):",
+    "REPO CONTEXT (pre-computed by cartographer):",
     digest,
-    "These facts are already verified against the current tree. Do NOT spend tool calls",
-    "rediscovering them (detect_project, read_repo_manifest, or reading package.json /",
-    "CI config for the facts above). '(none — checked, absent)' means genuinely absent —",
-    "do not go looking for it. For anything NOT listed here, inspect the repo as usual.",
+    "Bound facts (those with values) are verified against the current tree — do NOT spend",
+    "tool calls rediscovering them. '(none — checked, absent)' means checked and absent.",
+    "'UNKNOWN' or any scanner warning means detection could not see that area: treat it as",
+    "unverified, discover it yourself, and NEVER skip a build/test step because it is",
+    "UNKNOWN here. For anything not listed, inspect the repo as usual.",
   ].join("\n");
 }
