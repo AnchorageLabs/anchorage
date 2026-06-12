@@ -16,6 +16,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { publicPreviewUrl } from "./preview-url.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -522,10 +523,14 @@ async function startStrategy(
   strategy: RuntimeStrategy,
   workspacePath: string,
 ): Promise<StartResult | StartFailure> {
-  const url = strategy.url ?? (strategy.port ? `http://localhost:${strategy.port}` : null);
-  if (!url) {
+  // localUrl is what the agent itself connects to (readiness probing); the
+  // reported URL is what flows back to the orchestrator's previewUrl field and
+  // may be overridden with a publicly reachable address.
+  const localUrl = strategy.url ?? (strategy.port ? `http://localhost:${strategy.port}` : null);
+  if (!localUrl) {
     return { ok: false, error: "strategy has no resolvable preview URL/port to probe" };
   }
+  const reportedUrl = publicPreviewUrl(localUrl);
 
   // Node projects need their dependencies installed before the dev server runs.
   if (strategy.kind === "node") {
@@ -558,17 +563,17 @@ async function startStrategy(
   }
 
   const timeout = READY_TIMEOUT_MS[strategy.kind] ?? 90_000;
-  emit(task, "agent.progress", "info", `Waiting for ${url} to become reachable`, {
-    url,
+  emit(task, "agent.progress", "info", `Waiting for ${localUrl} to become reachable`, {
+    url: localUrl,
     timeoutMs: timeout,
   });
-  const ready = await waitForUrl(url, timeout);
+  const ready = await waitForUrl(localUrl, timeout);
   if (!ready) {
     await teardown(strategy, workspacePath);
     const tail = await readLogTail(logPath);
     return {
       ok: false,
-      error: `preview did not respond at ${url} within ${Math.round(timeout / 1000)}s${
+      error: `preview did not respond at ${localUrl} within ${Math.round(timeout / 1000)}s${
         tail ? `\n--- last runtime log lines ---\n${tail}` : ""
       }`,
     };
@@ -577,9 +582,9 @@ async function startStrategy(
   emit(task, "tool.result", "info", "Solution is reachable", {
     tool: "shell.exec",
     success: true,
-    output: { url },
+    output: { url: localUrl },
   });
-  return { ok: true, previewUrl: url };
+  return { ok: true, previewUrl: reportedUrl };
 }
 
 async function cleanStaleNodeBuildOutput(
