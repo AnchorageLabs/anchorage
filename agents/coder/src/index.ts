@@ -864,6 +864,14 @@ async function commitChanges(
     "--ignore-unmatch",
     ...IGNORED_ARTIFACT_DIRS,
   ]);
+  // Cartographer's scan artifacts are run infrastructure, not the change. Reset
+  // any .anchorage/ index entries back to HEAD: new files unstage, refresh
+  // churn to committed context drops out, and a repo that deliberately commits
+  // its context keeps it at HEAD — nothing is staged as deleted (which a
+  // `git rm --cached` of tracked paths would do). Without this, a target repo
+  // PR shipped .anchorage/repo-context.* including its env-var inventory
+  // (teramot-aleph#1097).
+  await runGit(workspacePath, ["reset", "-q", "HEAD", "--", ".anchorage"]);
 
   // Capture the effective diff of everything just staged (added, modified, and
   // deleted files) against the branch point. This authoritative diff travels
