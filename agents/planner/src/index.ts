@@ -11,6 +11,7 @@ import {
   discoveryTools,
   llmEventInput,
   providerFromLlmConfig,
+  repoContextPromptBlock,
   repoReadTools,
   resolveLlmConfig,
   runWithTools,
@@ -289,6 +290,10 @@ async function createPlan(
   const workspacePath = pickWorkspacePath(task);
   const tools = collectPlannerTools(task, workspacePath);
   const contextMounts = contextReposFromEnvelope(task.contextRepos);
+  // Pre-computed repo facts (cartographer). Refreshes the artifact (no-op on an
+  // unchanged tree) and saves the model its orientation tool turns. Empty
+  // string when unavailable — the discovery tools cover the gap.
+  const repoFacts = workspacePath ? await repoContextPromptBlock(workspacePath, scrubbedEnv()) : "";
 
   emit(task, "tool.requested", "info", "Requesting implementation plan from LLM", {
     tool: config.value.tool,
@@ -300,7 +305,8 @@ async function createPlan(
   });
 
   const result = await runWithTools(provider.value, {
-    system: plannerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts),
+    system:
+      plannerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts) + repoFacts,
     messages: [{ role: "user", content: plannerUserPrompt(issue) }],
     tools,
     workspacePath: workspacePath ?? process.cwd(),

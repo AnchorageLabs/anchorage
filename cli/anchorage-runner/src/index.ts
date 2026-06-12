@@ -2,10 +2,12 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
   type AgentManifest,
+  buildTaskRunManifest,
   ExitCode,
   parseNdjsonEvents,
   type TaskEnvelope,
@@ -40,7 +42,7 @@ async function main(): Promise<number> {
     return compatibility.exitCode;
   }
 
-  return runAgent(agent.value, rawTask);
+  return runAgent(agent.value, task.value, rawTask);
 }
 
 function printUsage(): void {
@@ -164,7 +166,11 @@ function checkAgentCompatibility(
   return { ok: true };
 }
 
-async function runAgent(agent: ResolvedAgent, rawTask: string): Promise<number> {
+async function runAgent(
+  agent: ResolvedAgent,
+  task: TaskEnvelope,
+  rawTask: string,
+): Promise<number> {
   const binaryPath = path.resolve(agent.manifestDir, agent.manifest.binary);
   const command = binaryPath.endsWith(".js") ? process.execPath : binaryPath;
   const args = binaryPath.endsWith(".js") ? [binaryPath] : [];
@@ -223,7 +229,43 @@ async function runAgent(agent: ResolvedAgent, rawTask: string): Promise<number> 
     return ExitCode.GenericFailure;
   }
 
+  // Flight recorder: leave a task-scoped run-manifest.json next to the run's
+  // artifacts so standalone runs are queryable without the orchestrator.
+  // Best-effort — a manifest write failure never changes the agent's outcome.
+  await writeRunManifest(agent, task, parsed.events, exitCode).catch((error) => {
+    console.error(
+      `run-manifest.json write failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+
   return exitCode;
+}
+
+/**
+ * Write the task's manifest into the same directory the agents use for their
+ * artifacts (ANCHORAGE_ARTIFACT_DIR, or the agents' shared tmpdir default), so
+ * the manifest lands beside the run's other outputs.
+ */
+async function writeRunManifest(
+  agent: ResolvedAgent,
+  task: TaskEnvelope,
+  events: Parameters<typeof buildTaskRunManifest>[0]["events"],
+  exitCode: number,
+): Promise<void> {
+  const manifest = buildTaskRunManifest({
+    task,
+    agent: agent.manifest.name,
+    events,
+    exitCode,
+    generator: "anchorage-runner",
+  });
+  const dir =
+    process.env.ANCHORAGE_ARTIFACT_DIR ??
+    path.join(os.tmpdir(), "anchorage-agent-artifacts", task.run.id);
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, "run-manifest.json");
+  await fs.writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  console.error(`run manifest: ${file}`);
 }
 
 function printValidationErrors(errors: readonly unknown[]): void {
