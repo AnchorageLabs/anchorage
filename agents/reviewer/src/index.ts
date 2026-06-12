@@ -12,6 +12,7 @@ import {
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
+  repoContextPromptBlock,
   repoReadTools,
   resolveLlmConfig,
   runWithTools,
@@ -457,9 +458,18 @@ async function requestReview(
   }
   tools.push(...webTools);
   const contextMounts = contextReposFromEnvelope(task.contextRepos);
+  // Pre-computed repo facts (cartographer). Refreshes the artifact (no-op on an
+  // unchanged tree) and saves the model its orientation tool turns. Empty
+  // string when unavailable — the discovery tools cover the gap.
+  const repoFacts = workspacePath
+    ? await repoContextPromptBlock(workspacePath, { ...process.env } as Record<string, string>)
+    : "";
 
   const result = await runWithTools(provider.value, {
-    system: reviewerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts),
+    system:
+      reviewerSystemPrompt(workspacePath !== null) +
+      contextRepoPromptBlock(contextMounts) +
+      repoFacts,
     messages: [{ role: "user", content: reviewerUserPrompt(pr) }],
     tools,
     workspacePath: workspacePath ?? process.cwd(),

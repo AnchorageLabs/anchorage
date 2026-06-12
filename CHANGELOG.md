@@ -29,6 +29,37 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-12 — `anchorage run` leaves a task-scoped run-manifest.json (flight recorder).
+
+**Intent:** Standalone agent runs become queryable after the fact without the orchestrator. The SDK gains `buildTaskRunManifest` — a tolerant fold of a task's protocol events into one manifest: runId, taskId/type, agent, repository, exit code, timing, LLM provider/models/tokens (context.snapshot totals preferred over per-call sums to avoid double counting), tool-call stats by tool, files read, artifacts produced, and errors (agent.failed + failed tool results). The runner writes it as `run-manifest.json` beside the run's artifacts (ANCHORAGE_ARTIFACT_DIR or the agents' tmpdir default) after event-stream validation; a write failure is non-fatal and never changes the agent's exit code. Companion to the orchestrator's full-run manifest (private repo, same date).
+
+**Files touched:**
+- sdk/typescript/src/run-manifest.ts
+- sdk/typescript/src/index.ts
+- cli/anchorage-runner/src/index.ts
+- CHANGELOG.md
+
+**Reason:** ADR-0031 (run-manifest flight recorder); four-layer product thesis — Layer 3, pipeline iteration discussion 2026-06-11/12.
+
+**Author:** Sol Soletti
+
+### 2026-06-12 — Reasoning agents start every run with cartographer's repo facts pre-injected.
+
+**Intent:** The planner, coder, and reviewer no longer spend their first tool turns rediscovering the repo (detect_project, package.json, AGENTS.md). A new `repoContextPromptBlock` in agent-llm refreshes `.anchorage/repo-context.json` via `cartographer scan` (fingerprint-cached — a no-op on an unchanged tree, so the artifact stays current with every run) and injects a compact digest (~450 tokens) of stack, authoritative build/test/typecheck commands, entry points, agent contracts, and CI into the system prompt. Verification commands in plans now come from cartographer's evidence-ranked facts instead of model inference. Fails closed: no binary or no artifact yields an empty block and agents orient themselves with the discovery tools as before. Gate with `ANCHORAGE_REPO_CONTEXT_ENABLED=false`; binary resolved via `ANCHORAGE_CARTOGRAPHER_BIN` or PATH.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/repo-context.ts
+- agents/llm/src/tools/builtin/cartographer.ts
+- agents/llm/src/index.ts
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+- agents/reviewer/src/index.ts
+- CHANGELOG.md
+
+**Reason:** FTA plan Phase 2 (cartographer README "Status": orchestrator integration); pipeline iteration discussion 2026-06-11/12 — reduce orientation token tax and make verificationCommands authoritative.
+
+**Author:** Sol Soletti
+
 ### 2026-06-10 — LLM providers retry rate limits inside the turn, honouring retry-after.
 
 **Intent:** A 429/overload from Anthropic or an OpenAI-compatible gateway no longer fails the whole agent task. The HTTP providers now retry retryable statuses (429, 500, 502, 503, 504, 529) up to 3 times inside the turn, sleeping per the server's `retry-after` header (seconds or HTTP-date, capped at 60s) or exponential backoff — so a per-minute org rate window costs seconds of waiting instead of discarding the agent's assembled context and re-running the step from scratch. Bedrock keeps the AWS SDK's built-in adaptive retries.
