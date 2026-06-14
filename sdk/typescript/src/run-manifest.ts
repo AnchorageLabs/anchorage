@@ -122,7 +122,8 @@ export function buildTaskRunManifest(input: {
 
     if (e.type === "tool.result" && data) {
       const tool = str(data.tool) ?? "unknown";
-      const entry = (byTool[tool] ??= { calls: 0, failures: 0 });
+      byTool[tool] ??= { calls: 0, failures: 0 };
+      const entry = byTool[tool];
       entry.calls++;
       toolTotal++;
       if (data.success !== true) {

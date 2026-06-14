@@ -329,7 +329,7 @@ async function readOptionalJsonArtifact(
   artifactType: string,
 ): Promise<JsonObject | null> {
   const artifact = task.context?.priorArtifacts?.find((a) => a.artifactType === artifactType);
-  if (!artifact || !artifact.uri.startsWith("file://")) return null;
+  if (!artifact?.uri.startsWith("file://")) return null;
   try {
     const parsed = JSON.parse(await fs.readFile(new URL(artifact.uri), "utf8"));
     return isObject(parsed) ? parsed : null;
@@ -375,10 +375,10 @@ async function driveCoderLoop(
   // Pre-computed repo facts (cartographer). Refreshes the artifact (no-op on an
   // unchanged tree) and saves the model its orientation tool turns. Empty
   // string when unavailable — the discovery tools cover the gap.
-  const repoFacts = await repoContextPromptBlock(
-    input.workspacePath,
-    { ...process.env } as Record<string, string>,
-  );
+  const repoFacts = await repoContextPromptBlock(input.workspacePath, { ...process.env } as Record<
+    string,
+    string
+  >);
 
   const result = await runWithTools(provider.value, {
     system: coderSystemPrompt() + contextRepoPromptBlock(contextMounts) + repoFacts,

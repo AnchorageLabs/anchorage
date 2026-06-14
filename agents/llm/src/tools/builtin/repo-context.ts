@@ -77,7 +77,9 @@ function formatDigest(context: { [key: string]: Json }): string {
     str(repo.runtime),
     str(arch.pattern),
   ].filter((v): v is string => v !== null);
-  lines.push(`repo: ${str(repo.name) ?? "(unnamed)"} — ${repoBits.join(", ") || "(unknown stack)"}`);
+  lines.push(
+    `repo: ${str(repo.name) ?? "(unnamed)"} — ${repoBits.join(", ") || "(unknown stack)"}`,
+  );
   const layers = strList(arch.layers);
   if (layers.length > 0) lines.push(`layers: ${layers.join(", ")}`);
   const patterns = strList(repo.workspacePatterns);
@@ -124,7 +126,9 @@ function formatDigest(context: { [key: string]: Json }): string {
       if (!isObject(entry)) continue;
       const taskTypes = strList(entry.taskTypes, 4);
       const suffix = taskTypes.length > 0 ? ` [${taskTypes.join(", ")}]` : "";
-      lines.push(`  ${str(entry.id) ?? "?"} (${str(entry.kind) ?? "?"}) ${str(entry.path) ?? ""}${suffix}`);
+      lines.push(
+        `  ${str(entry.id) ?? "?"} (${str(entry.kind) ?? "?"}) ${str(entry.path) ?? ""}${suffix}`,
+      );
     }
     if (entryPoints.length > MAX_ENTRY_POINTS) {
       lines.push(`  +${entryPoints.length - MAX_ENTRY_POINTS} more`);

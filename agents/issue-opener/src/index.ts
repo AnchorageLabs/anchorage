@@ -381,7 +381,7 @@ function resolveInput(task: TaskEnvelope): { ok: true; value: ResolvedInput } | 
       ExitCode.InvalidInput,
     );
   }
-  if (!task.repository || !task.repository.owner || !task.repository.name) {
+  if (!task.repository?.owner || !task.repository?.name) {
     return detail(
       "missing_repository",
       "task.repository.owner and task.repository.name are required.",
