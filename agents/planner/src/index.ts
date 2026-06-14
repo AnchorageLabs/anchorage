@@ -306,7 +306,9 @@ async function createPlan(
 
   const result = await runWithTools(provider.value, {
     system:
-      plannerSystemPrompt(workspacePath !== null) + contextRepoPromptBlock(contextMounts) + repoFacts,
+      plannerSystemPrompt(workspacePath !== null) +
+      contextRepoPromptBlock(contextMounts) +
+      repoFacts,
     messages: [{ role: "user", content: plannerUserPrompt(issue) }],
     tools,
     workspacePath: workspacePath ?? process.cwd(),

@@ -129,8 +129,7 @@ async function parseInput(
   task: TaskEnvelope,
 ): Promise<{ ok: true; value: NotionUpdateInput } | WriterFailure> {
   const page = isObject(task.input.page) ? task.input.page : task.input;
-  const pageId =
-    parsePageId(page.pageId ?? page.pageUrl) ?? (await resolvePriorPageId(task));
+  const pageId = parsePageId(page.pageId ?? page.pageUrl) ?? (await resolvePriorPageId(task));
   if (!pageId) {
     return failure(
       "invalid_page_id",
@@ -329,7 +328,10 @@ function parsePageId(value: JsonValue | undefined): null | string {
   const candidate = value.trim();
 
   const fromUrl = candidate.includes("notion.so")
-    ? (candidate.split("?")[0]?.match(/[0-9a-f]{32}(?![0-9a-f])/gi)?.at(-1) ?? null)
+    ? (candidate
+        .split("?")[0]
+        ?.match(/[0-9a-f]{32}(?![0-9a-f])/gi)
+        ?.at(-1) ?? null)
     : null;
   const raw = (fromUrl ?? candidate).replaceAll("-", "");
   if (!/^[0-9a-f]{32}$/i.test(raw)) return null;
@@ -356,9 +358,12 @@ async function notionRequest(
   const data = (await response.json().catch(() => null)) as JsonValue | null;
   if (!response.ok) {
     const apiMessage = isObject(data) ? readString(data.message) : null;
-    throw new Error(`Notion API ${response.status} on ${requestPath}: ${apiMessage ?? "request failed"}`);
+    throw new Error(
+      `Notion API ${response.status} on ${requestPath}: ${apiMessage ?? "request failed"}`,
+    );
   }
-  if (!isObject(data)) throw new Error(`Notion API returned a non-object response on ${requestPath}`);
+  if (!isObject(data))
+    throw new Error(`Notion API returned a non-object response on ${requestPath}`);
   return data;
 }
 

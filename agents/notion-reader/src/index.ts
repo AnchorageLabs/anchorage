@@ -184,7 +184,10 @@ function parsePageId(value: JsonValue | undefined): null | string {
   const candidate = value.trim();
 
   const fromUrl = candidate.includes("notion.so")
-    ? (candidate.split("?")[0]?.match(/[0-9a-f]{32}(?![0-9a-f])/gi)?.at(-1) ?? null)
+    ? (candidate
+        .split("?")[0]
+        ?.match(/[0-9a-f]{32}(?![0-9a-f])/gi)
+        ?.at(-1) ?? null)
     : null;
   const raw = (fromUrl ?? candidate).replaceAll("-", "");
   if (!/^[0-9a-f]{32}$/i.test(raw)) return null;
@@ -203,9 +206,12 @@ async function notionGet(token: string, requestPath: string): Promise<JsonObject
   const data = (await response.json().catch(() => null)) as JsonValue | null;
   if (!response.ok) {
     const apiMessage = isObject(data) ? readString(data.message) : null;
-    throw new Error(`Notion API ${response.status} on ${requestPath}: ${apiMessage ?? "request failed"}`);
+    throw new Error(
+      `Notion API ${response.status} on ${requestPath}: ${apiMessage ?? "request failed"}`,
+    );
   }
-  if (!isObject(data)) throw new Error(`Notion API returned a non-object response on ${requestPath}`);
+  if (!isObject(data))
+    throw new Error(`Notion API returned a non-object response on ${requestPath}`);
   return data;
 }
 
@@ -269,9 +275,7 @@ function renderBlock(block: JsonObject): null | string {
 
 function richTextToPlain(value: JsonValue | undefined): string {
   if (!Array.isArray(value)) return "";
-  return value
-    .map((item) => (isObject(item) ? (readString(item.plain_text) ?? "") : ""))
-    .join("");
+  return value.map((item) => (isObject(item) ? (readString(item.plain_text) ?? "") : "")).join("");
 }
 
 function extractTitle(properties: JsonObject): null | string {
@@ -320,7 +324,11 @@ function extractStatus(properties: JsonObject): null | string {
   }
   for (const [name, property] of Object.entries(properties)) {
     if (!isObject(property)) continue;
-    if (property.type === "select" && name.toLowerCase() === "status" && isObject(property.select)) {
+    if (
+      property.type === "select" &&
+      name.toLowerCase() === "status" &&
+      isObject(property.select)
+    ) {
       return readString(property.select.name);
     }
   }
