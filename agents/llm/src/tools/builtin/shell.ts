@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { checkShellBudget, recordShell } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
+import { cleanTerminalOutput, shellCleanEnabled } from "./output-clean.js";
 
 // Env names that must never reach the spawned shell. Adding to this list is
 // always safe; removing is a security decision and warrants review.
@@ -140,7 +141,15 @@ async function shellExecHandler(input: JsonObject, ctx: ToolContext): Promise<To
 
   const result = await spawnBounded(invocation);
 
+  // Budget accounting tracks the RAW bytes the command actually produced.
   recordShell(ctx.budget, result.stdout.length + result.stderr.length);
+
+  // Strip terminal control noise (ANSI, CR progress frames, blank-line runs)
+  // before the output reaches the model — lossless, and a large saving on
+  // installer/test/build logs. Gated by ANCHORAGE_SHELL_CLEAN (default on).
+  const clean = shellCleanEnabled(ctx.env);
+  const stdout = cleanTerminalOutput(result.stdout, clean);
+  const stderr = cleanTerminalOutput(result.stderr, clean);
 
   const printableCommand =
     typeof input.command === "string" ? input.command : (input.command as string[]).join(" ");
@@ -148,9 +157,9 @@ async function shellExecHandler(input: JsonObject, ctx: ToolContext): Promise<To
   const body =
     `=== shell_exec exit=${result.exitCode}${result.timedOut ? " (timed out)" : ""} ===\n` +
     `$ ${printableCommand}\n` +
-    (result.stdout.length > 0 ? `--- stdout ---\n${result.stdout}\n` : "") +
-    (result.stderr.length > 0 ? `--- stderr ---\n${result.stderr}\n` : "") +
-    (result.stdout.length === 0 && result.stderr.length === 0 ? "(no output)\n" : "");
+    (stdout.length > 0 ? `--- stdout ---\n${stdout}\n` : "") +
+    (stderr.length > 0 ? `--- stderr ---\n${stderr}\n` : "") +
+    (stdout.length === 0 && stderr.length === 0 ? "(no output)\n" : "");
 
   return {
     ok: true,
@@ -163,6 +172,7 @@ async function shellExecHandler(input: JsonObject, ctx: ToolContext): Promise<To
       cwd: path.relative(ctx.workspacePath, cwd) || ".",
       stdoutBytes: result.stdout.length,
       stderrBytes: result.stderr.length,
+      cleanedBytes: stdout.length + stderr.length,
     },
   };
 }

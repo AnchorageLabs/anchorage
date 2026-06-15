@@ -41,6 +41,7 @@ The loop drives `model → tool calls → model → ...` until the model returns
 | `symbol_outline(path)` | `repo.read` | tree-sitter; definitions in one file; fails closed to read_file |
 | `impact(symbol)` | `repo.read` | cartographer persisted index: defs, refs, transitive dependents (crosses barrels/workspace packages), covering tests; fails closed to find_references |
 | `tests_for(path)` | `repo.read` | cartographer index: tests importing the file (transitively) + name-mirrored; fails closed |
+| `repo_map([max_results])` | `repo.read` | local import-in-degree ranking of source files + their top symbols; one-call orientation; 40 files default; fails closed |
 | `write_file(path, content)` | `workspace.write` | 1 MB content cap; full-file replace |
 | `delete_file(path)` | `workspace.write` | — |
 | `shell_exec(command, [cwd], [timeout_ms])` | `shell.exec` | 60s default / 600s cap; stdout 100 KB / stderr 16 KB; scrubbed env |
@@ -67,6 +68,11 @@ All budgets are enforced inside `runWithTools` and can be tuned per-run with env
 | `ANCHORAGE_TOOL_SYMBOLS_ENABLED` | `true` | Master switch for `find_references` / `symbol_outline` |
 | `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED` | `true` | Master switch for `impact` / `tests_for` |
 | `ANCHORAGE_CARTOGRAPHER_BIN` | (empty) | Path to the cartographer CLI (a `.js` entry runs under node); unset falls back to `cartographer` on PATH, and a missing binary just fails the tools closed |
+| `ANCHORAGE_LLM_PROMPT_CACHE` | `true` | Prompt caching: Anthropic caches system + tool catalog + the per-turn conversation prefix; Bedrock inserts Converse `cachePoint` blocks (transparently dropped on models that reject them). Lossless. |
+| `ANCHORAGE_TOOL_DEDUP` | `true` | Collapse a tool result that is byte-for-byte identical to an earlier one this run into a back-reference (≥500 B, successful string outputs). The original stays in context once — lossless. |
+| `ANCHORAGE_SHELL_CLEAN` | `true` | Strip terminal control noise (ANSI codes, carriage-return progress frames, blank-line runs, trailing whitespace) from `shell_exec` output before the model sees it. Lossless. |
+| `ANCHORAGE_TOOL_CONTEXT_NUDGE` | `true` | When a context-miss signal fires (repeated grep, grep→read churn, file-read cap), append a one-time guidance note to that tool result steering the model to `find_references` / `impact` / `repo_map`. Additive guidance only — lossless. Fired nudges are reported in `snapshot.contextNudges`. |
+| `ANCHORAGE_TOOL_CONTEXT_ENFORCE` | `false` | **Aggressive, opt-in.** Refuse a `grep` that repeats a pattern already searched this run (returns an error steering to `find_references`/`impact`). Off by default because it can block a legitimate re-grep. |
 
 Hitting any budget produces a `RunWithToolsResult` with `ok: false`, `code: "budget_exceeded"`, and a `reason` enum identifying the cap that fired. Agents surface this as `agent.failed` with `code: "tool_budget_exceeded"`.
 

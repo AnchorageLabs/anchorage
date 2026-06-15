@@ -44,6 +44,35 @@ export async function runWithTools(
   const toolCalls: ToolCallRecord[] = [];
   let terminalNudgeUsed = false;
 
+  // Lossless history dedup: agents routinely re-read a file or re-run a grep
+  // they already issued (the repeatedSymbolGrep / grepReadChurn signals measure
+  // exactly this). When a tool produces output byte-for-byte identical to an
+  // earlier result THIS RUN, the duplicate copy is replaced with a short
+  // back-reference — the full content is still present once, earlier in the
+  // conversation, so the model loses nothing. Only the newest result is ever
+  // rewritten; history stays byte-identical, so a written cache prefix keeps
+  // hitting. Maps identical output → the tool name of its first occurrence.
+  const dedupEnabled = !/^(false|0|no|off)$/i.test((env.ANCHORAGE_TOOL_DEDUP ?? "").trim());
+  const seenOutputs = new Map<string, string>();
+
+  // Context-miss guard: turn the diagnostic signals (repeatedSymbolGrep,
+  // grepReadChurn, filesReadCapHit) into in-loop action instead of end-of-run
+  // instrumentation. SAFE TIER (default on): the first time a signal fires,
+  // append a one-time, clearly-marked nudge to that tool's result steering the
+  // model to the precise tools (find_references / impact / repo_map). It only
+  // adds guidance — removes nothing — so it cannot degrade the run. AGGRESSIVE
+  // TIER (opt-in via ANCHORAGE_TOOL_CONTEXT_ENFORCE, default OFF): a grep
+  // repeating a pattern already searched is refused before dispatch. Left off by
+  // default so the standard pipeline is never blocked from a legitimate re-grep.
+  const nudgeEnabled = !/^(false|0|no|off)$/i.test((env.ANCHORAGE_TOOL_CONTEXT_NUDGE ?? "").trim());
+  const enforceEnabled = /^(true|1|yes|on)$/i.test(
+    (env.ANCHORAGE_TOOL_CONTEXT_ENFORCE ?? "").trim(),
+  );
+  const seenGrepPatterns = new Set<string>();
+  const nudgesFired = new Set<string>();
+  let grepReadChurn = 0;
+  let prevToolName: string | null = null;
+
   while (true) {
     const turnCheck = checkTurnBudget(budget);
     if (!turnCheck.ok) {
@@ -54,7 +83,7 @@ export async function runWithTools(
         reason: turnCheck.reason,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget, toolCalls),
+        snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
       };
     }
 
@@ -73,7 +102,7 @@ export async function runWithTools(
         message: `${provider.name} (${provider.model}): ${turnResult.message}`,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget, toolCalls),
+        snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
       };
     }
 
@@ -125,7 +154,7 @@ export async function runWithTools(
         stopReason: turnResult.stopReason,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget, toolCalls),
+        snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
       };
     }
 
@@ -148,7 +177,7 @@ export async function runWithTools(
           message: `Model ended with text twice without calling required terminal tool '${request.terminalTool}'.`,
           messages,
           toolCalls,
-          snapshot: snapshotOf(budget, toolCalls),
+          snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
         };
       }
       // Terminal turn — no tool calls; return the model's final text.
@@ -159,7 +188,7 @@ export async function runWithTools(
         stopReason: turnResult.stopReason,
         messages,
         toolCalls,
-        snapshot: snapshotOf(budget, toolCalls),
+        snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
       };
     }
 
@@ -182,9 +211,24 @@ export async function runWithTools(
         turn: turnNumber,
       });
 
+      const grepPattern =
+        use.name === "grep" && typeof use.input.pattern === "string" ? use.input.pattern : null;
+      const duplicateGrep = grepPattern !== null && seenGrepPatterns.has(grepPattern);
+
       const startedAt = Date.now();
       let outcome: ToolHandlerResult;
-      if (!tool) {
+      if (enforceEnabled && duplicateGrep) {
+        // Aggressive tier (opt-in): refuse a grep that repeats a pattern already
+        // searched this run — it would return the same matches.
+        outcome = {
+          ok: false,
+          code: "context_guard_duplicate_grep",
+          message:
+            `You already ran grep for /${grepPattern}/ this run; re-running returns the same ` +
+            `matches. Use find_references or impact to resolve a named symbol, or repo_map for ` +
+            `an overview. (Set ANCHORAGE_TOOL_CONTEXT_ENFORCE=false to allow repeats.)`,
+        };
+      } else if (!tool) {
         outcome = {
           ok: false,
           code: "unknown_tool",
@@ -239,15 +283,90 @@ export async function runWithTools(
         turn: turnNumber,
       });
 
+      let content: string | ContentBlock[] = outcome.ok
+        ? outcome.output
+        : `${outcome.code}: ${outcome.message}`;
+      // Dedup only successful, sizeable, string outputs: errors carry per-call
+      // context, and collapsing a tiny output would cost more than it saves.
+      if (
+        outcome.ok &&
+        dedupEnabled &&
+        typeof content === "string" &&
+        content.length >= DEDUP_MIN_BYTES
+      ) {
+        const priorTool = seenOutputs.get(content);
+        if (priorTool !== undefined) content = dedupNotice(priorTool);
+        else seenOutputs.set(content, use.name);
+      }
+
+      // ── Context-miss signals → one-time lossless nudge ──────────────────────
+      // Track grep→read_file churn across calls/turns.
+      if (use.name === "read_file" && prevToolName === "grep") grepReadChurn += 1;
+      // Pick the first applicable signal (most specific first). repeated_grep is
+      // skipped under enforce mode — there the duplicate was already refused.
+      let signal: string | null = null;
+      if (duplicateGrep && !enforceEnabled) signal = "repeated_grep";
+      else if (grepReadChurn >= CONTEXT_CHURN_NUDGE_AT) signal = "grep_read_churn";
+      else if (Number.isFinite(budget.maxFiles) && budget.filesRead.size >= budget.maxFiles)
+        signal = "files_read_cap";
+      if (nudgeEnabled && signal && !nudgesFired.has(signal) && typeof content === "string") {
+        nudgesFired.add(signal);
+        content = `${content}\n\n${contextNudge(signal)}`;
+      }
+      if (grepPattern !== null) seenGrepPatterns.add(grepPattern);
+      prevToolName = use.name;
+
       resultBlocks.push({
         type: "tool_result",
         tool_use_id: use.id,
-        content: outcome.ok ? outcome.output : `${outcome.code}: ${outcome.message}`,
+        content,
         ...(outcome.ok ? {} : { is_error: true }),
       });
     }
 
     messages.push({ role: "user", content: resultBlocks });
+  }
+}
+
+// Minimum output size worth deduping. Below this the back-reference notice
+// would be comparable to (or larger than) the content it replaces.
+const DEDUP_MIN_BYTES = 500;
+
+function dedupNotice(priorTool: string): string {
+  return (
+    `[Repeated content omitted to save context: byte-for-byte identical to the ` +
+    `output of an earlier \`${priorTool}\` call already shown above in this ` +
+    `conversation. Refer to that earlier result.]`
+  );
+}
+
+// After this many grep→read_file adjacencies, nudge once toward symbol tools.
+const CONTEXT_CHURN_NUDGE_AT = 3;
+
+// One-time guidance appended to a tool result when a context-miss signal fires.
+// Purely additive — it suggests cheaper tools, never withholds anything.
+function contextNudge(signal: string): string {
+  switch (signal) {
+    case "repeated_grep":
+      return (
+        "[context guard] You've grepped this pattern before in this run. To locate where a " +
+        "named symbol is defined or used, `find_references` and `impact` are exact (and cheaper " +
+        "than re-grepping); `repo_map` gives a one-call overview of the core files. Guidance only."
+      );
+    case "grep_read_churn":
+      return (
+        "[context guard] You're alternating grep → read_file repeatedly. `find_references` / " +
+        "`impact` return a symbol's definition and call sites directly, and `repo_map` ranks the " +
+        "most-depended-on files — using them will cut the back-and-forth. Guidance only."
+      );
+    case "files_read_cap":
+      return (
+        "[context guard] You're near the unique-file read cap for this run. Prefer `impact` / " +
+        "`tests_for` / `repo_map` to target the few files that matter rather than reading more " +
+        "broadly. Guidance only."
+      );
+    default:
+      return "[context guard] Consider find_references / impact / repo_map to narrow context.";
   }
 }
 
@@ -296,6 +415,7 @@ function snapshotOf(
     outputTokensTotal: number;
   },
   toolCalls: ToolCallRecord[],
+  nudgesFired: string[],
 ): ContextSnapshot {
   const miss = computeMissSignals(budget, toolCalls);
   return {
@@ -309,6 +429,7 @@ function snapshotOf(
     filesReadCapHit: miss.filesReadCapHit,
     repeatedSymbolGrep: miss.repeatedSymbolGrep,
     grepReadChurn: miss.grepReadChurn,
+    contextNudges: nudgesFired,
   };
 }
 
