@@ -12,6 +12,7 @@ import {
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
+  ROLE_DEFAULTS,
   repoContextPromptBlock,
   repoReadTools,
   resolveLlmConfig,
@@ -428,12 +429,7 @@ function resolveRepo(value: JsonObject, repository: TaskEnvelope["repository"]):
 }
 
 function resolveReviewerLlmConfig(): { ok: true; value: LlmConfig } | ReviewerFailure {
-  const config = resolveLlmConfig({
-    role: "reviewer",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4.1",
-  });
+  const config = resolveLlmConfig(ROLE_DEFAULTS.reviewer);
   if (!config.ok) {
     return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }

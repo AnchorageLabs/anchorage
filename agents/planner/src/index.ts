@@ -11,6 +11,7 @@ import {
   discoveryTools,
   llmEventInput,
   providerFromLlmConfig,
+  ROLE_DEFAULTS,
   repoContextPromptBlock,
   repoReadTools,
   resolveLlmConfig,
@@ -272,12 +273,7 @@ async function createPlan(
   task: TaskEnvelope,
   issue: IssueSummary,
 ): Promise<{ ok: true; value: ImplementationPlan; snapshot: ContextSnapshot } | PlannerFailure> {
-  const config = resolveLlmConfig({
-    role: "planner",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4.1",
-  });
+  const config = resolveLlmConfig(ROLE_DEFAULTS.planner);
   if (!config.ok) {
     return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }

@@ -13,6 +13,7 @@ import {
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
+  ROLE_DEFAULTS,
   repoContextPromptBlock,
   repoReadTools,
   repoWriteTools,
@@ -339,12 +340,7 @@ async function readOptionalJsonArtifact(
 }
 
 function resolveCoderLlmConfig(): { ok: true; value: LlmConfig } | CoderFailure {
-  const config = resolveLlmConfig({
-    role: "coder",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4.1",
-  });
+  const config = resolveLlmConfig(ROLE_DEFAULTS.coder);
   if (!config.ok) {
     return failure("missing_llm_api_key", config.message, ExitCode.MissingCapability);
   }

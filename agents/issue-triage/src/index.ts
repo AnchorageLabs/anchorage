@@ -8,6 +8,7 @@ import {
   discoveryTools,
   llmEventInput,
   providerFromLlmConfig,
+  ROLE_DEFAULTS,
   repoReadTools,
   resolveLlmConfig,
   runWithTools,
@@ -46,12 +47,7 @@ async function main(): Promise<number> {
 
   emit(task.value, "agent.started", "info", "issue-triage started", { agentVersion });
 
-  const llmConfig = resolveLlmConfig({
-    role: "triage",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4o",
-  });
+  const llmConfig = resolveLlmConfig(ROLE_DEFAULTS.triage);
 
   if (!llmConfig.ok) {
     emit(task.value, "agent.failed", "error", "Missing LLM credentials", {

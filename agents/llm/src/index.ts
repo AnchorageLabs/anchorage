@@ -10,6 +10,8 @@ import {
 } from "./tools/providers/param-support.js";
 import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from "./tools/types.js";
 
+export type { AgentRole } from "./role-defaults.js";
+export { ROLE_DEFAULTS } from "./role-defaults.js";
 export {
   contextRepoPromptBlock,
   contextReposFromEnvelope,
@@ -54,6 +56,60 @@ type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
 
 export type LlmProvider = "anthropic" | "aws-bedrock" | "openai";
+
+/**
+ * Named presets for OpenAI-compatible providers. Setting
+ * `ANCHORAGE_LLM_PROVIDER=<preset>` resolves to the generic `openai` adapter
+ * pre-filled with the right base URL, credential env, and default model — so a
+ * newcomer never needs to know the "use openai + a base URL" handshake. Raw
+ * `openai` + `OPENAI_BASE_URL` stays the escape hatch for anything not listed
+ * here. Adding a provider = one row below. See MODEL_PROVIDER_WIRING.md §5A.
+ */
+interface OpenAiPreset {
+  /** Preset name (matches the `ANCHORAGE_LLM_PROVIDER` value). */
+  name: string;
+  /** Default base URL; overridden by `OPENAI_BASE_URL` or `baseUrlEnv`. */
+  baseUrl?: string;
+  /** Optional env var that supplies the base URL (e.g. self-hosted gateways). */
+  baseUrlEnv?: string;
+  /** Preferred credential env; falls back to `OPENAI_API_KEY`. */
+  apiKeyEnv: string;
+  /** Default model id when no `ANCHORAGE_*_MODEL` override is present. */
+  defaultModel: string;
+}
+
+const OPENAI_COMPAT_PRESETS: Record<string, OpenAiPreset> = {
+  openrouter: {
+    name: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    defaultModel: "anthropic/claude-sonnet-4-6",
+  },
+  deepseek: {
+    name: "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    apiKeyEnv: "DEEPSEEK_API_KEY",
+    defaultModel: "deepseek-chat",
+  },
+  moonshot: {
+    name: "moonshot",
+    baseUrl: "https://api.moonshot.ai/v1",
+    apiKeyEnv: "MOONSHOT_API_KEY",
+    defaultModel: "kimi-k2",
+  },
+  opencode: {
+    name: "opencode",
+    baseUrlEnv: "OPENCODE_BASE_URL",
+    apiKeyEnv: "OPENCODE_API_KEY",
+    defaultModel: "",
+  },
+};
+
+interface ResolvedProvider {
+  provider: LlmProvider;
+  /** Set when an OpenAI-compatible preset was named; drives base URL/key/model. */
+  preset?: OpenAiPreset;
+}
 
 export interface LlmRoleDefaults {
   role: string;
@@ -108,13 +164,13 @@ export function resolveLlmConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig
   const provider = resolveProvider();
   if (!provider.ok) return { ok: false, message: provider.message };
 
-  switch (provider.value) {
+  switch (provider.value.provider) {
     case "anthropic":
       return resolveAnthropicConfig(defaults);
     case "aws-bedrock":
       return resolveBedrockConfig(defaults);
     case "openai":
-      return resolveOpenAiConfig(defaults);
+      return resolveOpenAiConfig(defaults, provider.value.preset);
   }
 }
 
@@ -217,21 +273,24 @@ export function llmEventInput(
   return value;
 }
 
-function resolveProvider(): LlmResult<LlmProvider> {
+function resolveProvider(): LlmResult<ResolvedProvider> {
   const explicit = process.env.ANCHORAGE_LLM_PROVIDER;
   if (explicit && explicit.trim().length > 0) {
     const provider = normalizeProvider(explicit);
     if (provider) return { ok: true, value: provider };
+    const presets = Object.keys(OPENAI_COMPAT_PRESETS).join(", ");
     return {
       ok: false,
-      message: "ANCHORAGE_LLM_PROVIDER must be one of anthropic, openai, bedrock.",
+      message: `ANCHORAGE_LLM_PROVIDER must be one of anthropic, openai, bedrock, or a known preset (${presets}).`,
     };
   }
 
   // No explicit provider: infer from available credentials.
-  if (process.env.ANTHROPIC_API_KEY) return { ok: true, value: "anthropic" };
-  if (process.env.OPENAI_API_KEY) return { ok: true, value: "openai" };
-  if (hasBedrockAuth()) return { ok: true, value: "aws-bedrock" };
+  if (process.env.ANTHROPIC_API_KEY) return { ok: true, value: { provider: "anthropic" } };
+  if (process.env.OPENAI_API_KEY) return { ok: true, value: { provider: "openai" } };
+  const preset = inferPresetFromCredentials();
+  if (preset) return { ok: true, value: { provider: "openai", preset } };
+  if (hasBedrockAuth()) return { ok: true, value: { provider: "aws-bedrock" } };
 
   return {
     ok: false,
@@ -241,19 +300,33 @@ function resolveProvider(): LlmResult<LlmProvider> {
   };
 }
 
-function normalizeProvider(value: string): null | LlmProvider {
-  switch (value.trim().toLowerCase()) {
+function normalizeProvider(value: string): null | ResolvedProvider {
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
     case "anthropic":
     case "claude":
-      return "anthropic";
+      return { provider: "anthropic" };
     case "aws-bedrock":
     case "bedrock":
-      return "aws-bedrock";
+      return { provider: "aws-bedrock" };
     case "openai":
-      return "openai";
-    default:
-      return null;
+      return { provider: "openai" };
   }
+  const preset = OPENAI_COMPAT_PRESETS[normalized];
+  if (preset) return { provider: "openai", preset };
+  return null;
+}
+
+/**
+ * When no provider is named, fall back to a preset whose dedicated key env is
+ * present (e.g. `DEEPSEEK_API_KEY`). Checked after ANTHROPIC/OPENAI so the
+ * generic paths keep priority; first match by registry order wins.
+ */
+function inferPresetFromCredentials(): OpenAiPreset | undefined {
+  for (const preset of Object.values(OPENAI_COMPAT_PRESETS)) {
+    if (process.env[preset.apiKeyEnv]) return preset;
+  }
+  return undefined;
 }
 
 function resolveAnthropicConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
@@ -293,19 +366,35 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
   };
 }
 
-function resolveOpenAiConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
-  const apiKey = process.env.OPENAI_API_KEY;
+function resolveOpenAiConfig(
+  defaults: LlmRoleDefaults,
+  preset?: OpenAiPreset,
+): LlmResult<LlmConfig> {
+  // Preset key env takes priority, then the generic OPENAI_API_KEY fallback.
+  const apiKey = (preset ? process.env[preset.apiKeyEnv] : undefined) || process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return { ok: false, message: "Set OPENAI_API_KEY for the OpenAI provider." };
+    const message = preset
+      ? `Set ${preset.apiKeyEnv} (or OPENAI_API_KEY) for the ${preset.name} provider.`
+      : "Set OPENAI_API_KEY for the OpenAI provider.";
+    return { ok: false, message };
   }
+
+  // Base URL precedence: explicit OPENAI_BASE_URL > preset's baseUrlEnv >
+  // preset's static baseUrl > OpenAI default. The preset's default model is the
+  // fallback only when the agent's own openaiModel is unset.
+  const presetBaseUrl =
+    (preset?.baseUrlEnv ? process.env[preset.baseUrlEnv] : undefined) || preset?.baseUrl;
+  const fallbackModel = preset?.defaultModel || defaults.openaiModel || "gpt-4.1";
 
   return {
     ok: true,
     value: {
       provider: "openai",
       apiKey,
-      baseUrl: trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
-      model: resolveModel(defaults, defaults.openaiModel || "gpt-4.1"),
+      baseUrl: trimTrailingSlash(
+        process.env.OPENAI_BASE_URL || presetBaseUrl || "https://api.openai.com/v1",
+      ),
+      model: resolveModel(defaults, fallbackModel),
       tool: "openai.chat.completions",
     },
   };

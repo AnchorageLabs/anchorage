@@ -9,6 +9,7 @@ import {
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
+  ROLE_DEFAULTS,
   repoReadTools,
   requestLlmCompletion,
   resolveLlmConfig,
@@ -153,12 +154,7 @@ async function exploreAndDraft(
   task: TaskEnvelope,
   input: ResolvedInput,
 ): Promise<{ ok: true; value: IssueDraft } | AgentFailureDetail> {
-  const config = resolveLlmConfig({
-    role: "issue-opener",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4.1",
-  });
+  const config = resolveLlmConfig(ROLE_DEFAULTS["issue-opener"]);
   if (!config.ok) {
     emit(
       task,

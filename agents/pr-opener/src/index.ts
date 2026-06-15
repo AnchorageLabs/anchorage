@@ -5,7 +5,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { llmEventInput, requestLlmCompletion, resolveLlmConfig } from "@anchorage/agent-llm";
+import {
+  llmEventInput,
+  ROLE_DEFAULTS,
+  requestLlmCompletion,
+  resolveLlmConfig,
+} from "@anchorage/agent-llm";
 import {
   ExitCode,
   type ProtocolEvent,
@@ -212,12 +217,7 @@ async function generatePrContent(
   // (ANCHORAGE_LLM_PROVIDER: anthropic/openai/bedrock/...). The previous
   // Bedrock-only path silently fell back to a generic "Fix issue #N" title for
   // every non-Bedrock provider.
-  const config = resolveLlmConfig({
-    role: "pr-opener",
-    anthropicModel: "claude-sonnet-4-6",
-    bedrockModel: "us.anthropic.claude-sonnet-4-6",
-    openaiModel: "gpt-4.1",
-  });
+  const config = resolveLlmConfig(ROLE_DEFAULTS["pr-opener"]);
   if (!config.ok) {
     // No LLM configured at all — deterministic fallback title/body.
     return fallbackPrContent(input);
