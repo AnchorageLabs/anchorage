@@ -224,6 +224,12 @@ export interface ContextSnapshot {
   // Count of `grep`→`read_file` adjacencies — a proxy for manual cross-file
   // chasing that a references lookup would short-circuit.
   grepReadChurn: number;
+  // Context-miss nudges that actually fired during the run (one entry per
+  // distinct signal: "repeated_grep" | "grep_read_churn" | "files_read_cap").
+  // Unlike the counts above — which are pure end-of-run instrumentation — these
+  // reflect the in-loop guidance the model was given to steer it off churn.
+  // Empty when nothing fired or nudging is disabled (ANCHORAGE_TOOL_CONTEXT_NUDGE=false).
+  contextNudges: string[];
 }
 
 export interface ToolCallRecord {

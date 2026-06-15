@@ -2,7 +2,9 @@ import {
   type ContentBlock as BedrockContentBlock,
   type Message as BedrockMessage,
   BedrockRuntimeClient,
+  type SystemContentBlock as BedrockSystemContentBlock,
   type Tool as BedrockTool,
+  CachePointType,
   ConverseCommand,
   type ConverseCommandInput,
 } from "@aws-sdk/client-bedrock-runtime";
@@ -15,12 +17,21 @@ import type {
   ProviderTurnResult,
   ToolDefinition,
 } from "../types.js";
-import { isTemperatureUnsupported } from "./param-support.js";
+import { isPromptCachingUnsupported, isTemperatureUnsupported } from "./param-support.js";
 
 export interface BedrockProviderConfig {
   model: string;
   region?: string;
+  // Insert Converse `cachePoint` blocks (system + tools + last message) so the
+  // stable prompt prefix and growing conversation history bill at the cached
+  // rate. On by default; a model that rejects caching transparently retries
+  // without it (see isPromptCachingUnsupported). Lossless either way.
+  promptCache?: boolean;
 }
+
+const CACHE_POINT: { cachePoint: { type: CachePointType } } = {
+  cachePoint: { type: CachePointType.DEFAULT },
+};
 
 /**
  * Build a ProviderAdapter that talks to AWS Bedrock via the Converse API with
@@ -37,6 +48,7 @@ export interface BedrockProviderConfig {
  */
 export function createBedrockProvider(config: BedrockProviderConfig): ProviderAdapter {
   const client = new BedrockRuntimeClient({ region: config.region });
+  const promptCache = config.promptCache ?? true;
 
   return {
     name: "aws-bedrock",
@@ -45,10 +57,13 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
       const messages = input.messages.map(toBedrockMessage);
       const tools = input.tools.map(toBedrockTool);
 
-      const send = (includeTemperature: boolean) => {
+      const send = (includeTemperature: boolean, includeCache: boolean) => {
         const commandInput: ConverseCommandInput = {
           modelId: config.model,
-          messages,
+          // A cache point after the last message turns the conversation prefix
+          // into a cache write each turn; the next turn reads the longest
+          // matching prefix. Lossless — the model sees identical content.
+          messages: includeCache ? withMessageCachePoint(messages) : messages,
           inferenceConfig: {
             maxTokens: input.maxTokens,
             ...(includeTemperature && typeof input.temperature === "number"
@@ -56,20 +71,36 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
               : {}),
           },
         };
-        if (input.system.length > 0) commandInput.system = [{ text: input.system }];
-        // Converse rejects an empty tools array; only attach when present.
-        if (tools.length > 0) commandInput.toolConfig = { tools };
+        if (input.system.length > 0) {
+          const systemBlocks: BedrockSystemContentBlock[] = [{ text: input.system }];
+          if (includeCache) systemBlocks.push(CACHE_POINT);
+          commandInput.system = systemBlocks;
+        }
+        // Converse rejects an empty tools array; only attach when present. A
+        // trailing cache point caches the (stable) tool catalog.
+        if (tools.length > 0) {
+          commandInput.toolConfig = {
+            tools: includeCache ? [...tools, CACHE_POINT] : tools,
+          };
+        }
         return client.send(new ConverseCommand(commandInput));
       };
 
+      // Caching is additive and lossless; temperature may be rejected by newer
+      // models. Either rejection triggers one narrowed retry that drops only the
+      // offending feature, so the turn never fails over a tunable.
+      let useCache = promptCache;
       let response: Awaited<ReturnType<typeof send>>;
       try {
-        response = await send(true);
+        response = await send(true, useCache);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (typeof input.temperature === "number" && isTemperatureUnsupported(message)) {
+        const dropTemp = typeof input.temperature === "number" && isTemperatureUnsupported(message);
+        const dropCache = useCache && isPromptCachingUnsupported(message);
+        if (dropTemp || dropCache) {
+          if (dropCache) useCache = false;
           try {
-            response = await send(false);
+            response = await send(!dropTemp, useCache);
           } catch (retryError) {
             return {
               ok: false,
@@ -96,6 +127,19 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
       };
     },
   };
+}
+
+// Append a cache point to the last message's content. Returns a new array with
+// the final message shallow-copied, so the original `messages` (reused by the
+// no-cache retry path) is never mutated.
+function withMessageCachePoint(messages: BedrockMessage[]): BedrockMessage[] {
+  if (messages.length === 0) return messages;
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (!last) return messages;
+  const copy = messages.slice();
+  copy[lastIndex] = { ...last, content: [...(last.content ?? []), CACHE_POINT] };
+  return copy;
 }
 
 function toBedrockTool(tool: ToolDefinition): BedrockTool {

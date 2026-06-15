@@ -37,3 +37,18 @@ export function isMaxCompletionTokensUnsupported(message: string): boolean {
 export function wantsMaxCompletionTokens(message: string): boolean {
   return /max_completion_tokens/i.test(message);
 }
+
+/**
+ * True when a Bedrock model rejects prompt caching (`cachePoint`) — older or
+ * caching-incapable models error on the cache blocks rather than ignoring them.
+ * Lets the Bedrock adapter retry once WITHOUT cache points so an unsupported
+ * model degrades to a normal (uncached) call instead of failing the turn. The
+ * cache win is lossless and additive: on models that support it we keep it; on
+ * those that don't we transparently drop it.
+ */
+export function isPromptCachingUnsupported(message: string): boolean {
+  return (
+    /cachepoint|cache point|prompt cach/i.test(message) &&
+    /(unsupported|not\s+support|not\s+allowed|invalid|unknown|does\s+not)/i.test(message)
+  );
+}

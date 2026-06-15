@@ -44,8 +44,19 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
           model: config.model,
           max_tokens: input.maxTokens,
           system: [systemBlock(input.system, promptCache)],
-          messages: input.messages.map(toAnthropicMessage),
-          tools: input.tools.map(toAnthropicTool),
+          // Incremental (multi-turn) caching: the breakpoint on the last message
+          // writes a cache of the whole conversation prefix each turn, and the
+          // next turn reads the longest matching cached prefix — so after turn 1
+          // the bulk of the (growing) history is billed at the cached rate. The
+          // breakpoint only marks where to WRITE the cache; the model sees the
+          // exact same content, so this is lossless.
+          messages: withConversationCacheBreakpoint(
+            input.messages.map(toAnthropicMessage),
+            promptCache,
+          ),
+          // Tool schemas are large and stable for the whole run; caching them
+          // (breakpoint on the last tool) removes them from the per-turn bill.
+          tools: withToolCacheBreakpoint(input.tools.map(toAnthropicTool), promptCache),
         };
         if (includeTemperature && typeof input.temperature === "number") {
           body.temperature = input.temperature;
@@ -129,6 +140,42 @@ function systemBlock(text: string, promptCache: boolean): JsonObject {
   const block: JsonObject = { type: "text", text };
   if (promptCache) block.cache_control = { type: "ephemeral" };
   return block;
+}
+
+// Mark the final tool's schema with a cache breakpoint so the whole tool
+// catalog (stable across the run) is served from cache after the first turn.
+// Mutates the freshly-mapped tool objects in place; no-op when caching is off
+// or there are no tools.
+function withToolCacheBreakpoint(tools: JsonObject[], promptCache: boolean): JsonObject[] {
+  if (!promptCache || tools.length === 0) return tools;
+  const last = tools[tools.length - 1];
+  if (last) last.cache_control = { type: "ephemeral" };
+  return tools;
+}
+
+// Attach a cache breakpoint to the last content block of the last message.
+// `cache_control` must sit on a block, so a string-content message is widened
+// into a single text block first. Mutates the freshly-mapped message objects;
+// never touches earlier messages, so a previously-written cache prefix stays
+// byte-identical and keeps hitting.
+function withConversationCacheBreakpoint(
+  messages: JsonObject[],
+  promptCache: boolean,
+): JsonObject[] {
+  if (!promptCache || messages.length === 0) return messages;
+  const last = messages[messages.length - 1];
+  if (!last) return messages;
+  if (typeof last.content === "string") {
+    last.content = [{ type: "text", text: last.content, cache_control: { type: "ephemeral" } }];
+    return messages;
+  }
+  if (Array.isArray(last.content) && last.content.length > 0) {
+    const block = last.content[last.content.length - 1];
+    if (block && typeof block === "object" && !Array.isArray(block)) {
+      (block as JsonObject).cache_control = { type: "ephemeral" };
+    }
+  }
+  return messages;
 }
 
 function toAnthropicTool(tool: ToolDefinition): JsonObject {

@@ -169,7 +169,11 @@ export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdap
     case "aws-bedrock":
       return {
         ok: true,
-        value: createBedrockProvider({ model: config.model, region: config.region }),
+        value: createBedrockProvider({
+          model: config.model,
+          region: config.region,
+          promptCache: process.env.ANCHORAGE_LLM_PROMPT_CACHE !== "false",
+        }),
       };
   }
 }

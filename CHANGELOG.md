@@ -29,6 +29,49 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-15 — The context-miss signals now act during the run: when an agent churns (repeated grep, grep→read loops, file-read cap) it gets a one-time nudge toward the precise tools, instead of the signals only being logged at the end.
+
+**Intent:** The tool loop already computed `repeatedSymbolGrep`, `grepReadChurn`, and `filesReadCapHit`, but only as end-of-run instrumentation that "nothing acts on." They now drive behaviour in two tiers. SAFE tier (default on, `ANCHORAGE_TOOL_CONTEXT_NUDGE`): the first time a signal fires, a one-time, clearly-marked note is appended to that tool's result steering the model to `find_references` / `impact` / `repo_map`. It only adds guidance — removes nothing — so it cannot degrade a run, and it cuts the wasted grep/read turns that inflate token use. The fired nudges are reported on the run snapshot (`snapshot.contextNudges`) for metrics. AGGRESSIVE tier (opt-in, default off, `ANCHORAGE_TOOL_CONTEXT_ENFORCE`): a grep repeating a pattern already searched this run is refused before dispatch — left off by default so the standard pipeline is never blocked from a legitimate re-grep.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/types.ts
+- docs/agent-tools.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-15): the token-saving initiative's diagnostic signals were being computed but left unused; wire them into the loop as observability + a lossless nudge (and an opt-in enforcement), per the standing "no pipeline degradation" constraint.
+
+**Author:** Sol Soletti
+
+### 2026-06-15 — More token savings: shell output is stripped of terminal noise before the model sees it, and a new `repo_map` tool gives one-call repo orientation — both lossless.
+
+**Intent:** Two further no-degradation token reductions on the agent tool surface. (1) `shell_exec` output is normalized before reaching the model: ANSI/VT escape codes, carriage-return progress frames (the "10%\r60%\r100%" animation a TTY only ever shows the last frame of), runs of blank lines, and trailing whitespace are removed. This is what a human would have seen on screen, so it is lossless — but it cuts installer/test/build logs substantially. (2) A new opt-in `repo_map` tool returns a ranked structural overview of the repo — source files ordered by import in-degree (a cheap, reliable PageRank proxy) with each file's top-level symbols — so a reasoning agent can orient in one call instead of a flurry of `list_dir`/`grep`/`read_file` probes. It is computed locally (no external binary), purely additive (the model chooses to call it; the ranking is a heuristic it still verifies by reading), and fails closed. Both have env off-switches (`ANCHORAGE_SHELL_CLEAN=false`, and `repo_map` is simply unused if the model ignores it).
+
+**Files touched:**
+- agents/llm/src/tools/builtin/output-clean.ts
+- agents/llm/src/tools/builtin/shell.ts
+- agents/llm/src/tools/builtin/repo-map.ts
+- agents/llm/src/tools/builtin/repo.ts
+- docs/agent-tools.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-15): continue the token-saving initiative with ranks #3 (tool-output compression) and #4 (cartographer-style ranked context) — implemented in their lossless / non-degrading forms per the standing "no pipeline degradation" constraint.
+
+**Author:** Sol Soletti
+
+### 2026-06-15 — Agent runs cost fewer tokens: the tool loop now caches the prompt prefix across turns on every provider and stops re-sending duplicate tool output, with no change to what the model sees.
+
+**Intent:** Multi-turn agent runs (coder, planner, reviewer, issue-triage) bill far fewer input tokens via two lossless savings. (1) Prompt caching now covers the tool catalog and the growing conversation prefix — not just the system block — on Anthropic, and is added to the Bedrock Converse path (system + tools + last message) where it was previously absent. (2) When a tool returns output byte-for-byte identical to an earlier result in the same run (re-read file, repeated grep), the duplicate copy is replaced with a short back-reference instead of re-sending the full payload. Both are byte-lossless to the model — it sees the same information — so pipeline quality is unchanged. Bedrock models that don't support caching transparently retry without it; both features have env off-switches (`ANCHORAGE_LLM_PROMPT_CACHE=false`, `ANCHORAGE_TOOL_DEDUP=false`).
+
+**Files touched:**
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/bedrock.ts
+- agents/llm/src/tools/providers/param-support.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/index.ts
+
+**Reason:** Direct maintainer request (Sol, 2026-06-15): implement the highest-savings, no-degradation token-reduction strategies (prompt caching + lossless history dedup) ranked top-two in the token-saving initiative.
+
+**Author:** Sol Soletti
+
 ### 2026-06-12 — Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
 
 **Intent:** Anchorage pipelines can now run on Notion: a Notion database page can be the work item that drives planning, coding, and PR delivery, with results written back to the page.
