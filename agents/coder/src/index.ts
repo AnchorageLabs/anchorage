@@ -457,7 +457,7 @@ You operate the workspace through tools. To complete a task:
 2. Use detect_project + read_repo_manifest to orient yourself in the target repo.
 3. Use list_dir / read_file / grep / git_log to understand the code BEFORE editing. Do not edit a file you have not read. Before writing any call to an imported module, read that module's source file first to verify its exact export names, parameter types, and return shape — never infer signatures from filenames or issue context.
 4. REUSE EXISTING CONTRACTS: before defining any new type/interface/config for a concept, grep for an existing one and import/extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). When consuming another module's data, import its real type and use its real field names — never a look-alike (a hash-vs-sha style mismatch is a bug). This applies to every collaborator module your new code calls — read the source before writing the call, not after.
-5. Use write_file to apply changes. Always pass the full file content (not a diff).
+5. Apply changes with the smallest edit that works. To MODIFY an existing file, use edit_file (exact old_string→new_string replacement) — it changes just the target text and costs far fewer tokens than re-emitting the whole file. Use write_file only to CREATE a new file or fully rewrite one. After changing an exported signature, call impact() to find and edit_file every call site.
 6. VERIFY BEFORE FINISHING (mandatory): run the repo's test suite AND its typecheck/build via shell_exec (the plan's verificationCommands, or the scripts from package.json / detect_project). They MUST pass. If anything is red, fix it and re-run — do not stop while red. Cover the change with at least one test that exercises it against the REAL existing types it integrates with (an integration test), not only self-referential fixtures.
 7. If you find missing context (a dependency you don't know, an unfamiliar error), web_search and web_fetch are available.
 
@@ -519,7 +519,7 @@ function coderUserPrompt(
       plan,
       ...(isRevision ? { revisionFeedback: revisionRequest } : {}),
       constraints: [
-        "Use write_file for every edit; do not paste fileEdits[] in your response.",
+        "Apply changes with edit_file (modify existing files) or write_file (new/rewritten files) via the tools; do not paste fileEdits[] in your response.",
         "Read existing files before editing — never edit blindly.",
         "Run available verification commands (test/build/lint) via shell_exec when possible.",
         ...(isRevision

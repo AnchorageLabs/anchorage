@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-16 — Agents can modify a file by exact string replacement (edit_file) instead of rewriting it whole, cutting output tokens on the dominant write path.
+
+**Intent:** The coder's only edit mechanism was `write_file` (full-file replace), so a 5-line change to a 500-line file emitted the whole file — the #1 output-token sink in apply-code. New `edit_file(path, old_string, new_string, [replace_all])` does a literal (non-regex, so `$&`/`\1` are inserted verbatim) exact-string replacement on an existing file: unique match required unless `replace_all`, fails closed with actionable errors (not found / not unique / not a file), and returns only a small summary — never the file. The coder prompt and `write_file`'s description now steer modifications to `edit_file` (and to call `impact()` to update call sites after a signature change); `write_file` is for new files / full rewrites. Output reduction is measurable via the apply-code output tokens on `context.snapshot`.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/repo.ts
+- agents/coder/src/index.ts
+- docs/agent-tools.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-16): the Anchorage Thesis names full-file `write_file` as the dominant output-token sink; a range/patch edit tool is the most direct output lever, with the cartographer (`symbol_outline`/`impact`) supplying exact ranges and call sites.
+
+**Author:** Sol Soletti
+
 ### 2026-06-16 — Token metrics now record prompt-cache reads and writes, so the cost saving from caching is measurable instead of inferred.
 
 **Intent:** The tool-loop snapshot reported input/output tokens, but on a cache-enabled run the provider only counts the UNCACHED remainder as input_tokens (the cached prefix is billed separately at ~10%). That made caching look like a ~99% input drop while the real cost saving is ~90% — and unmeasurable. The provider adapters now surface cache usage (Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Bedrock `cacheReadInputTokens` / `cacheWriteInputTokens`, OpenAI `prompt_tokens_details.cached_tokens`); `runWithTools` folds it into the budget and emits `cacheReadInputTokensTotal` / `cacheCreationInputTokensTotal` on the `context.snapshot` event, so cost-per-run is computable from the ledger (`input·P + cacheRead·0.1·P + cacheWrite·1.25·P`).

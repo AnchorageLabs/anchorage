@@ -42,7 +42,8 @@ The loop drives `model → tool calls → model → ...` until the model returns
 | `impact(symbol)` | `repo.read` | cartographer persisted index: defs, refs, transitive dependents (crosses barrels/workspace packages), covering tests; fails closed to find_references |
 | `tests_for(path)` | `repo.read` | cartographer index: tests importing the file (transitively) + name-mirrored; fails closed |
 | `repo_map([max_results])` | `repo.read` | local import-in-degree ranking of source files + their top symbols; one-call orientation; 40 files default; fails closed |
-| `write_file(path, content)` | `workspace.write` | 1 MB content cap; full-file replace |
+| `write_file(path, content)` | `workspace.write` | 1 MB content cap; full-file replace (new files / full rewrites) |
+| `edit_file(path, old_string, new_string, [replace_all])` | `workspace.write` | exact literal string replacement on an existing file; unique match unless `replace_all`; emits only the changed text — preferred for modifications (far fewer output tokens) |
 | `delete_file(path)` | `workspace.write` | — |
 | `shell_exec(command, [cwd], [timeout_ms])` | `shell.exec` | 60s default / 600s cap; stdout 100 KB / stderr 16 KB; scrubbed env |
 | `web_search(query, [max_results])` | `web.read` | Tavily → Brave → DuckDuckGo HTML, 10 results max |
