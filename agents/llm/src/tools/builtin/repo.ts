@@ -4,9 +4,27 @@ import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { cartographerTools } from "./cartographer.js";
+import { changeTools } from "./change-tools.js";
 import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { repoMapTool } from "./repo-map.js";
+import { peekIndexStore } from "../symbols/store.js";
 import { symbolTools } from "./symbols.js";
+
+// Keep an already-built symbol index in sync after a workspace write, so the
+// next impact / find_references / locate_change call in the same run sees the
+// edit (B4). Best-effort and bounded to an existing index: a write never
+// triggers a cold full build (the next read tool would build it fresh anyway),
+// and any failure is swallowed — indexing must never break a write.
+async function reindexAfterWrite(ctx: ToolContext, relPath: string): Promise<void> {
+  try {
+    const pending = peekIndexStore(ctx.workspacePath);
+    if (!pending) return;
+    const store = await pending;
+    await store?.refreshFile(relPath);
+  } catch {
+    // indexing is advisory; never surface a failure to the writer
+  }
+}
 
 // ── Path safety ─────────────────────────────────────────────────────────────
 
@@ -605,6 +623,7 @@ async function writeFileHandler(input: JsonObject, ctx: ToolContext): Promise<To
       message: error instanceof Error ? error.message : String(error),
     };
   }
+  await reindexAfterWrite(ctx, safe.relativePath);
   return {
     ok: true,
     output: `Wrote ${content.length} bytes to ${safe.relativePath}.`,
@@ -658,6 +677,7 @@ async function deleteFileHandler(input: JsonObject, ctx: ToolContext): Promise<T
       message: error instanceof Error ? error.message : String(error),
     };
   }
+  await reindexAfterWrite(ctx, safe.relativePath);
   return {
     ok: true,
     output: `Deleted ${safe.relativePath}.`,
@@ -805,6 +825,7 @@ async function editFileHandler(input: JsonObject, ctx: ToolContext): Promise<Too
     };
   }
 
+  await reindexAfterWrite(ctx, safe.relativePath);
   const replaced = replaceAll ? occurrences : 1;
   const lineDelta = lineCount(updated) - lineCount(content);
   const byteDelta = updated.length - content.length;
@@ -869,13 +890,15 @@ export const repoReadTools: ToolDefinition[] = [
   // already gets repoReadTools (planner, coder, reviewer, issue-triage) gains
   // them automatically; they fail closed to grep when unavailable.
   ...symbolTools,
-  // Cartographer tools answer from the persisted whole-repo index (impact /
-  // tests_for) and fail closed to the symbol tools when the cartographer CLI
-  // is not installed (ANCHORAGE_CARTOGRAPHER_BIN or PATH).
+  // impact / tests_for answer from the persisted whole-repo index (store.ts) and
+  // fail closed to the symbol tools when the index can't be built (no git).
   ...cartographerTools,
   // repo_map gives a one-call ranked structural overview (import in-degree) for
-  // orientation, computed locally with no external binary; fails closed.
+  // orientation, read from the same index; fails closed.
   repoMapTool,
+  // locate_change / relevant_tests turn the index toward editing: where a change
+  // for a symbol lands, and which tests cover a set of changed files.
+  ...changeTools,
 ];
 
 export const repoWriteTools: ToolDefinition[] = [writeFileTool, editFileTool, deleteFileTool];

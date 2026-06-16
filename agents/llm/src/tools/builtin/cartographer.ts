@@ -1,43 +1,49 @@
-// Cartographer-backed tools — `impact` and `tests_for`. They ride the same
-// `repo.read` surface as the per-call symbol tools, but answer from the
-// PERSISTED index that cartographer maintains at .anchorage/index/symbols.db
-// (delta-refreshed by content hash on every call), so they see the whole-repo
-// dependency graph — barrel re-exports and sibling workspace packages included
-// — instead of scanning candidate files one by one. Everything fails closed:
-// no cartographer binary, a crash, or malformed output yields a short note and
-// the model falls back to find_references / grep with no failure path.
+// Index-backed tools — `impact` and `tests_for`. They ride the same `repo.read`
+// surface as the per-call symbol tools, but answer from the PERSISTED whole-repo
+// index (store.ts), so they see the full dependency graph — barrel re-exports and
+// sibling workspace packages included — instead of scanning candidate files one
+// by one. The index is delta-refreshed by content hash, so a warm call is a hash
+// check, not a re-scan. Everything fails closed: when the index can't be built
+// the tools return a short note and the model falls back to find_references /
+// grep with no failure path.
+//
+// `cartographerCommand` remains exported for the separate repo-context facts
+// layer (repo-context.ts), which still shells out to the cartographer CLI to
+// refresh its .anchorage/repo-context.json artifact — a different concern from
+// the impact/tests_for blast-radius queries, which are now fully native.
 
-import { spawn } from "node:child_process";
+import { getIndexStore } from "../symbols/store.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { repoParamSchema, resolveRepoRoot } from "./context-repos.js";
 
-// A cold first call may build the index for the whole repo; warm calls are
-// hash checks + SQL (milliseconds). The timeout covers the cold case.
-const CARTOGRAPHER_TIMEOUT_MS = 90_000;
-
 const MAX_DEFINITIONS = 10;
 const MAX_REFERENCE_FILES = 25;
-const MAX_LINES_PER_FILE = 8;
 const MAX_DEPENDENTS = 25;
 const MAX_TESTS = 15;
 
 const FALLBACK_NOTE =
-  "Cartographer index unavailable (binary missing or query failed). " +
+  "Repository index unavailable (not a git repo or build failed). " +
   "Use find_references / grep instead.";
 
 function failClosed(message: string): ToolHandlerResult {
-  return { ok: true, output: message, bytesOut: message.length, meta: { cartographer: false } };
+  return { ok: true, output: message, bytesOut: message.length, meta: { index: false } };
 }
 
-function cartographerEnabled(env: Record<string, string>): boolean {
-  const raw = env.ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED;
-  if (raw === undefined) return true; // on by default; absence of the binary still fails closed
+function indexEnabled(env: Record<string, string>): boolean {
+  // Honors the legacy cartographer flag so existing deployment config keeps
+  // working; absence of git still fails closed regardless.
+  const raw = env.ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED ?? env.ANCHORAGE_TOOL_IMPACT_ENABLED;
+  if (raw === undefined) return true;
   return !/^(false|0|no|off)$/i.test(raw.trim());
 }
 
-// ANCHORAGE_CARTOGRAPHER_BIN points at the CLI (a .js entry runs under node);
-// unset falls back to `cartographer` on PATH. A spawn error fails closed, so
-// an unconfigured environment simply doesn't offer index answers.
+function isValidSymbol(symbol: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol);
+}
+
+// `cartographerCommand` is retained for repo-context.ts (the repo-facts layer),
+// which refreshes its own artifact via the cartographer CLI. The impact/tests_for
+// tools below no longer use it.
 export function cartographerCommand(env: Record<string, string>): {
   cmd: string;
   baseArgs: string[];
@@ -49,54 +55,10 @@ export function cartographerCommand(env: Record<string, string>): {
   return { cmd: "cartographer", baseArgs: [] };
 }
 
-function runCartographer(
-  root: string,
-  env: Record<string, string>,
-  args: string[],
-): Promise<string | null> {
-  const { cmd, baseArgs } = cartographerCommand(env);
-  return new Promise((resolve) => {
-    const child = spawn(cmd, [...baseArgs, ...args, ".", "--json"], {
-      cwd: root,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const out: Buffer[] = [];
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve(null);
-    }, CARTOGRAPHER_TIMEOUT_MS);
-    child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(out).toString("utf8"));
-    });
-  });
-}
-
-function isValidSymbol(symbol: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol);
-}
-
 // ── impact ────────────────────────────────────────────────────────────────────
 
-interface ImpactJson {
-  definitions?: { file?: string; name?: string; kind?: string; line?: number }[];
-  references?: { file?: string; lines?: number[]; isTest?: boolean }[];
-  dependents?: string[];
-  tests?: string[];
-  truncated?: boolean;
-}
-
 async function impactHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHandlerResult> {
-  if (!cartographerEnabled(ctx.env)) return failClosed(FALLBACK_NOTE);
+  if (!indexEnabled(ctx.env)) return failClosed(FALLBACK_NOTE);
 
   const symbol = typeof input.symbol === "string" ? input.symbol.trim() : "";
   if (!symbol) {
@@ -112,19 +74,11 @@ async function impactHandler(input: JsonObject, ctx: ToolContext): Promise<ToolH
   const repoRes = resolveRepoRoot(input, ctx);
   if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
 
-  const raw = await runCartographer(repoRes.root, ctx.env, ["impact", symbol]);
-  if (raw === null) return failClosed(FALLBACK_NOTE);
-  let parsed: ImpactJson;
-  try {
-    parsed = JSON.parse(raw) as ImpactJson;
-  } catch {
-    return failClosed(FALLBACK_NOTE);
-  }
+  const store = await getIndexStore(repoRes.root);
+  if (!store) return failClosed(FALLBACK_NOTE);
 
-  const definitions = parsed.definitions ?? [];
-  const references = parsed.references ?? [];
-  const dependents = parsed.dependents ?? [];
-  const tests = parsed.tests ?? [];
+  const result = store.impact(symbol);
+  const { definitions, references, dependents, tests } = result;
   if (definitions.length === 0 && references.length === 0) {
     return failClosed(`No occurrences of '${symbol}' in the index. ${FALLBACK_NOTE}`);
   }
@@ -133,13 +87,11 @@ async function impactHandler(input: JsonObject, ctx: ToolContext): Promise<ToolH
   lines.push(`definition${definitions.length === 1 ? "" : "s"}:`);
   if (definitions.length === 0) lines.push("  (none — references only)");
   for (const def of definitions.slice(0, MAX_DEFINITIONS)) {
-    lines.push(`  ${def.file}:${def.line}  ${def.kind ?? ""} ${def.name ?? ""}`.trimEnd());
+    lines.push(`  ${def.file}:${def.line}  ${def.kind} ${def.name}`.trimEnd());
   }
   lines.push(`referencing files (${references.length}):`);
   for (const ref of references.slice(0, MAX_REFERENCE_FILES)) {
-    const shown = (ref.lines ?? []).slice(0, MAX_LINES_PER_FILE).join(",");
-    const more = (ref.lines ?? []).length > MAX_LINES_PER_FILE ? ",…" : "";
-    lines.push(`  ${ref.file}:${shown}${more}${ref.isTest ? "  (test)" : ""}`);
+    lines.push(`  ${ref.file}${ref.isTest ? "  (test)" : ""}`);
   }
   if (references.length > MAX_REFERENCE_FILES) lines.push("  …");
   if (dependents.length > 0) {
@@ -152,9 +104,6 @@ async function impactHandler(input: JsonObject, ctx: ToolContext): Promise<ToolH
     for (const test of tests.slice(0, MAX_TESTS)) lines.push(`  ${test}`);
     if (tests.length > MAX_TESTS) lines.push("  …");
   }
-  if (parsed.truncated) {
-    lines.push("[truncated: common identifier — prefer a more specific exported name]");
-  }
 
   const text = lines.join("\n");
   return {
@@ -162,13 +111,12 @@ async function impactHandler(input: JsonObject, ctx: ToolContext): Promise<ToolH
     output: text,
     bytesOut: text.length,
     meta: {
-      cartographer: true,
+      index: true,
       symbol,
       definitions: definitions.length,
       referenceFiles: references.length,
       dependents: dependents.length,
       tests: tests.length,
-      truncated: parsed.truncated === true,
     },
   };
 }
@@ -177,14 +125,14 @@ export const impactTool: ToolDefinition = {
   name: "impact",
   description:
     "PREFER THIS over find_references when deciding WHERE a change lands or WHAT it can break. " +
-    "Returns the full blast radius of a symbol from cartographer's persisted whole-repo index: " +
-    "definition site(s), every referencing file with line numbers, the files that import a " +
-    "defining file (transitive — crosses barrel re-exports and workspace package boundaries, " +
-    "which per-file scans miss), and the test files covering them. ALWAYS call this before " +
-    "changing an exported function/class/type signature, and cite the dependents when reviewing " +
-    "such a change. Syntactic (identifier-matched, not type-resolved); 'symbol' must be a single " +
-    "identifier. If the index is unavailable it returns a short note; only then fall back to " +
-    "find_references.",
+    "Returns the full blast radius of a symbol from the persisted whole-repo index: definition " +
+    "site(s), every referencing file, the files that import a defining file (transitive — crosses " +
+    "barrel re-exports and workspace package boundaries, which per-file scans miss), and the test " +
+    "files covering them. ALWAYS call this before changing an exported function/class/type " +
+    "signature, and cite the dependents when reviewing such a change. Syntactic (identifier-" +
+    "matched, not type-resolved); 'symbol' must be a single identifier. For exact reference line " +
+    "numbers use find_references. If the index is unavailable it returns a short note; only then " +
+    "fall back to find_references.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -201,7 +149,7 @@ export const impactTool: ToolDefinition = {
 // ── tests_for ─────────────────────────────────────────────────────────────────
 
 async function testsForHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHandlerResult> {
-  if (!cartographerEnabled(ctx.env)) return failClosed(FALLBACK_NOTE);
+  if (!indexEnabled(ctx.env)) return failClosed(FALLBACK_NOTE);
 
   const file = typeof input.path === "string" ? input.path.trim() : "";
   if (!file) {
@@ -217,16 +165,10 @@ async function testsForHandler(input: JsonObject, ctx: ToolContext): Promise<Too
   const repoRes = resolveRepoRoot(input, ctx);
   if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
 
-  const raw = await runCartographer(repoRes.root, ctx.env, ["tests-for", file]);
-  if (raw === null) return failClosed(FALLBACK_NOTE);
-  let tests: unknown;
-  try {
-    tests = JSON.parse(raw);
-  } catch {
-    return failClosed(FALLBACK_NOTE);
-  }
-  if (!Array.isArray(tests)) return failClosed(FALLBACK_NOTE);
-  const list = tests.filter((t): t is string => typeof t === "string");
+  const store = await getIndexStore(repoRes.root);
+  if (!store) return failClosed(FALLBACK_NOTE);
+
+  const list = store.testsFor(file);
 
   const lines: string[] = [`=== tests_for: ${file} ===`];
   if (list.length === 0) {
@@ -240,18 +182,18 @@ async function testsForHandler(input: JsonObject, ctx: ToolContext): Promise<Too
     ok: true,
     output: text,
     bytesOut: text.length,
-    meta: { cartographer: true, path: file, tests: list.length },
+    meta: { index: true, path: file, tests: list.length },
   };
 }
 
 export const testsForTool: ToolDefinition = {
   name: "tests_for",
   description:
-    "Which test files cover a given source file, from cartographer's persisted index: tests that " +
-    "import it (directly or through the reverse-import closure) plus name-mirrored tests " +
-    "(foo.ts → foo.test.ts). Call this after editing a file to pick the tests worth running, and " +
-    "when reviewing to check whether a changed file has any covering tests at all. If the index " +
-    "is unavailable it returns a short note; only then infer tests from naming conventions.",
+    "Which test files cover a given source file, from the persisted index: tests that import it " +
+    "(directly or through the reverse-import closure) plus name-mirrored tests (foo.ts → " +
+    "foo.test.ts). Call this after editing a file to pick the tests worth running, and when " +
+    "reviewing to check whether a changed file has any covering tests at all. If the index is " +
+    "unavailable it returns a short note; only then infer tests from naming conventions.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
