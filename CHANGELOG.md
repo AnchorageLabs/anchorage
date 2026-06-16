@@ -29,6 +29,35 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-16 — Agents can modify a file by exact string replacement (edit_file) instead of rewriting it whole, cutting output tokens on the dominant write path.
+
+**Intent:** The coder's only edit mechanism was `write_file` (full-file replace), so a 5-line change to a 500-line file emitted the whole file — the #1 output-token sink in apply-code. New `edit_file(path, old_string, new_string, [replace_all])` does a literal (non-regex, so `$&`/`\1` are inserted verbatim) exact-string replacement on an existing file: unique match required unless `replace_all`, fails closed with actionable errors (not found / not unique / not a file), and returns only a small summary — never the file. The coder prompt and `write_file`'s description now steer modifications to `edit_file` (and to call `impact()` to update call sites after a signature change); `write_file` is for new files / full rewrites. Output reduction is measurable via the apply-code output tokens on `context.snapshot`.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/repo.ts
+- agents/coder/src/index.ts
+- docs/agent-tools.md
+
+**Reason:** Direct maintainer request (Sol, 2026-06-16): the Anchorage Thesis names full-file `write_file` as the dominant output-token sink; a range/patch edit tool is the most direct output lever, with the cartographer (`symbol_outline`/`impact`) supplying exact ranges and call sites.
+
+**Author:** Sol Soletti
+
+### 2026-06-16 — Token metrics now record prompt-cache reads and writes, so the cost saving from caching is measurable instead of inferred.
+
+**Intent:** The tool-loop snapshot reported input/output tokens, but on a cache-enabled run the provider only counts the UNCACHED remainder as input_tokens (the cached prefix is billed separately at ~10%). That made caching look like a ~99% input drop while the real cost saving is ~90% — and unmeasurable. The provider adapters now surface cache usage (Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Bedrock `cacheReadInputTokens` / `cacheWriteInputTokens`, OpenAI `prompt_tokens_details.cached_tokens`); `runWithTools` folds it into the budget and emits `cacheReadInputTokensTotal` / `cacheCreationInputTokensTotal` on the `context.snapshot` event, so cost-per-run is computable from the ledger (`input·P + cacheRead·0.1·P + cacheWrite·1.25·P`).
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/budget.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/providers/anthropic.ts
+- agents/llm/src/tools/providers/bedrock.ts
+- agents/llm/src/tools/providers/openai.ts
+
+**Reason:** Direct maintainer request (Sol, 2026-06-16): a controlled cache on/off A/B on chary #6 showed full-price input dropping 928k→131 tokens, but the cache-read volume wasn't captured so the $ saving couldn't be quantified. Closes that measurement gap in the token-economy work.
+
+**Author:** Sol Soletti
+
 ### 2026-06-15 — New notion-worker agent acts directly ON Notion (notes, tasks, databases, wikis) instead of producing code, backed by a new Notion tool catalog in agent-llm.
 
 **Intent:** Adds a Notion-native execution path. The new `notion-worker` reference agent (task `notion.task.act`) is the Notion counterpart of `coder`: it reads the work item and resolves it by operating on the Notion workspace itself — taking notes, managing tasks, organizing databases, and building structured wikis — rather than writing code or touching GitHub. It drives a tool loop over a new capability-gated Notion tool catalog in `@anchorage/agent-llm` (`notionReadTools`: search/get-page/get-block-children/get-database/query-database; `notionWriteTools`: create-page/append-blocks/update-block/delete-block/update-page-properties/create-database/update-database/post-comment), with page bodies authored as simple markdown that is converted to Notion blocks. Read tools require `notion.read`, write tools `notion.write`, so a read-only run never sees the mutating tools. The agent is bounded by the connector's integration token — it can only touch pages/databases shared with the integration. notion-worker emits a `notion.task.result` artifact; notion-writer now reads it to post the worker's real summary (and its list of applied changes) as the closing Notion comment instead of a static line.

@@ -185,9 +185,24 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         stopReason: typeof first.finish_reason === "string" ? first.finish_reason : null,
         inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
         outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+        // OpenAI reports cache hits under prompt_tokens_details.cached_tokens and
+        // (unlike Anthropic) counts them INSIDE prompt_tokens, so cacheRead here
+        // is informational, not additive. There is no explicit cache-write count.
+        cacheReadInputTokens: readCachedTokens(usage),
       };
     },
   };
+}
+
+// usage.prompt_tokens_details.cached_tokens — the cached portion of the prompt
+// (already included in prompt_tokens). 0 when absent.
+function readCachedTokens(usage: JsonObject): number {
+  const details = usage.prompt_tokens_details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    const cached = (details as JsonObject).cached_tokens;
+    if (typeof cached === "number") return cached;
+  }
+  return 0;
 }
 
 function toOpenAiTool(tool: ToolDefinition): JsonObject {

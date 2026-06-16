@@ -137,6 +137,8 @@ export interface BudgetState extends BudgetConfig {
   turns: number;
   inputTokensTotal: number;
   outputTokensTotal: number;
+  cacheReadInputTokensTotal: number;
+  cacheCreationInputTokensTotal: number;
   filesRead: Set<string>;
   webCalls: number;
   shellCalls: number;
@@ -207,6 +209,12 @@ export interface ContextSnapshot {
   shellCalls: number;
   inputTokensTotal: number;
   outputTokensTotal: number;
+  // Prompt-cache token totals across the run (0 when the provider doesn't
+  // report cache usage). cacheRead is billed ~10% of input and cacheCreation
+  // ~125%; together with inputTokensTotal (the uncached remainder) they give the
+  // full input picture needed to compute real $ savings from caching.
+  cacheReadInputTokensTotal: number;
+  cacheCreationInputTokensTotal: number;
   // ── Context-miss signals ──────────────────────────────────────────────────
   // Heuristics that hint the run was under-served by the lexical tool surface
   // (grep / read_file) and might benefit from symbol-level lookup. Emitted on
@@ -296,6 +304,12 @@ export type ProviderTurnResult =
       stopReason: string | null;
       inputTokens: number;
       outputTokens: number;
+      // Prompt-cache usage, when the provider reports it. cacheRead = prefix
+      // served from cache (billed ~10% of input); cacheCreation = tokens written
+      // to the cache on this turn (billed ~125%). Absent on providers that don't
+      // surface it; the loop folds them into the run snapshot for cost analysis.
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
     }
   | {
       ok: false;

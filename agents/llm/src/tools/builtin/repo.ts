@@ -617,8 +617,10 @@ export const writeFileTool: ToolDefinition = {
   name: "write_file",
   description:
     "Write a UTF-8 file in the workspace, creating directories as needed. Overwrites any " +
-    "existing file at the path. Use this to apply code changes during the loop; the orchestrator " +
-    "picks up the changes via git after the run.",
+    "existing file at the path. Use this to CREATE a new file or fully rewrite one. To MODIFY an " +
+    "existing file, prefer edit_file — it replaces just the target text instead of re-emitting the " +
+    "whole file, which costs far fewer output tokens. The orchestrator picks up the changes via git " +
+    "after the run.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -681,6 +683,178 @@ export const deleteFileTool: ToolDefinition = {
   handler: deleteFileHandler,
 };
 
+// ── edit_file (capability: workspace.write) ─────────────────────────────────
+// Targeted string replacement. The model emits only the changed text, not the
+// whole file — for a small change in a large file this is the single biggest
+// output-token saving (a 5-line edit no longer re-emits 500 lines). Literal
+// match/replace (never regex), so replacement text containing `$`/`\` is safe.
+
+const EDIT_FILE_MAX_BYTES = 1_000_000;
+
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let idx = haystack.indexOf(needle);
+  while (idx !== -1) {
+    count += 1;
+    idx = haystack.indexOf(needle, idx + needle.length);
+  }
+  return count;
+}
+
+function lineCount(value: string): number {
+  if (value.length === 0) return 0;
+  let lines = 1;
+  for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) === 10) lines += 1;
+  return lines;
+}
+
+async function editFileHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHandlerResult> {
+  const requestedPath = typeof input.path === "string" ? input.path : "";
+  if (!requestedPath) {
+    return { ok: false, code: "invalid_input", message: "edit_file requires a 'path' string." };
+  }
+  const oldString = typeof input.old_string === "string" ? input.old_string : null;
+  const newString = typeof input.new_string === "string" ? input.new_string : null;
+  if (oldString === null || newString === null) {
+    return {
+      ok: false,
+      code: "invalid_input",
+      message: "edit_file requires 'old_string' and 'new_string' strings.",
+    };
+  }
+  if (oldString.length === 0) {
+    return {
+      ok: false,
+      code: "invalid_input",
+      message: "edit_file 'old_string' must be non-empty. Use write_file to create a new file.",
+    };
+  }
+  if (oldString === newString) {
+    return {
+      ok: false,
+      code: "invalid_input",
+      message: "edit_file 'old_string' and 'new_string' are identical — nothing to change.",
+    };
+  }
+  const replaceAll = input.replace_all === true;
+
+  const safe = resolveInsideWorkspace(ctx.workspacePath, requestedPath);
+  if (!safe) {
+    return {
+      ok: false,
+      code: "path_outside_workspace",
+      message: `Refusing to edit outside workspace: ${requestedPath}`,
+    };
+  }
+
+  const stats = await stat(safe.absolutePath).catch(() => null);
+  if (!stats?.isFile()) {
+    return {
+      ok: false,
+      code: "not_a_file",
+      message: `${safe.relativePath} is not an existing file. Use write_file to create it.`,
+    };
+  }
+  if (stats.size > EDIT_FILE_MAX_BYTES) {
+    return {
+      ok: false,
+      code: "file_too_large",
+      message: `edit_file caps the target file at ${EDIT_FILE_MAX_BYTES} bytes; ${safe.relativePath} is ${stats.size}.`,
+    };
+  }
+
+  let content: string;
+  try {
+    content = await readFile(safe.absolutePath, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      code: "read_failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const occurrences = countOccurrences(content, oldString);
+  if (occurrences === 0) {
+    return {
+      ok: false,
+      code: "old_string_not_found",
+      message: `'old_string' not found in ${safe.relativePath}. Re-read the file and match it exactly, whitespace included.`,
+    };
+  }
+  if (occurrences > 1 && !replaceAll) {
+    return {
+      ok: false,
+      code: "old_string_not_unique",
+      message: `'old_string' matches ${occurrences} places in ${safe.relativePath}. Add surrounding context to make it unique, or set replace_all=true.`,
+    };
+  }
+
+  // Literal replacement via split/join — no regex semantics, so `$&`/`$1`/`\` in
+  // new_string are inserted verbatim. With occurrences === 1 this replaces the
+  // single match; with replace_all it replaces every one.
+  const updated = content.split(oldString).join(newString);
+
+  try {
+    await writeFile(safe.absolutePath, updated, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      code: "write_failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const replaced = replaceAll ? occurrences : 1;
+  const lineDelta = lineCount(updated) - lineCount(content);
+  const byteDelta = updated.length - content.length;
+  const summary =
+    `Edited ${safe.relativePath}: replaced ${replaced} occurrence${replaced === 1 ? "" : "s"} ` +
+    `(${lineDelta >= 0 ? "+" : ""}${lineDelta} lines, ${byteDelta >= 0 ? "+" : ""}${byteDelta} bytes).`;
+  return {
+    ok: true,
+    output: summary,
+    bytesOut: summary.length,
+    meta: {
+      path: safe.relativePath,
+      occurrences: replaced,
+      bytesBefore: content.length,
+      bytesAfter: updated.length,
+    },
+  };
+}
+
+export const editFileTool: ToolDefinition = {
+  name: "edit_file",
+  description:
+    "PREFERRED way to modify an existing file: replace an exact piece of text instead of rewriting " +
+    "the whole file. Provide old_string (the exact text to replace, with enough surrounding context " +
+    "to be unique in the file) and new_string. Only the changed text is emitted — a small edit costs " +
+    "a fraction of write_file's output tokens. old_string must match byte-for-byte (indentation and " +
+    "whitespace included): read_file or symbol_outline first to copy it exactly, and call impact() " +
+    "to find the call sites a signature change must also update. Set replace_all=true to change every " +
+    "occurrence. Use write_file only to CREATE a new file or fully rewrite one.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "old_string", "new_string"],
+    properties: {
+      path: { type: "string", description: "Workspace-relative path to an existing file." },
+      old_string: {
+        type: "string",
+        description: "Exact text to replace; must be unique in the file unless replace_all is set.",
+      },
+      new_string: { type: "string", description: "Replacement text (inserted verbatim)." },
+      replace_all: {
+        type: "boolean",
+        description: "Replace every occurrence instead of requiring a unique match. Default false.",
+      },
+    },
+  },
+  capability: "workspace.write",
+  handler: editFileHandler,
+};
+
 // ── Bundle ──────────────────────────────────────────────────────────────────
 
 export const repoReadTools: ToolDefinition[] = [
@@ -704,4 +878,4 @@ export const repoReadTools: ToolDefinition[] = [
   repoMapTool,
 ];
 
-export const repoWriteTools: ToolDefinition[] = [writeFileTool, deleteFileTool];
+export const repoWriteTools: ToolDefinition[] = [writeFileTool, editFileTool, deleteFileTool];
