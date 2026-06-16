@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-15 — New notion-worker agent acts directly ON Notion (notes, tasks, databases, wikis) instead of producing code, backed by a new Notion tool catalog in agent-llm.
+
+**Intent:** Adds a Notion-native execution path. The new `notion-worker` reference agent (task `notion.task.act`) is the Notion counterpart of `coder`: it reads the work item and resolves it by operating on the Notion workspace itself — taking notes, managing tasks, organizing databases, and building structured wikis — rather than writing code or touching GitHub. It drives a tool loop over a new capability-gated Notion tool catalog in `@anchorage/agent-llm` (`notionReadTools`: search/get-page/get-block-children/get-database/query-database; `notionWriteTools`: create-page/append-blocks/update-block/delete-block/update-page-properties/create-database/update-database/post-comment), with page bodies authored as simple markdown that is converted to Notion blocks. Read tools require `notion.read`, write tools `notion.write`, so a read-only run never sees the mutating tools. The agent is bounded by the connector's integration token — it can only touch pages/databases shared with the integration. notion-worker emits a `notion.task.result` artifact; notion-writer now reads it to post the worker's real summary (and its list of applied changes) as the closing Notion comment instead of a static line.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/notion.ts
+- agents/llm/src/index.ts
+- agents/llm/src/role-defaults.ts
+- agents/notion-worker/agent.json
+- agents/notion-worker/package.json
+- agents/notion-worker/tsconfig.json
+- agents/notion-worker/src/index.ts
+- agents/notion-worker/README.md
+- agents/notion-writer/src/index.ts
+
+**Reason:** Product requirement — the Notion connector pipeline must read from Notion and apply changes IN Notion, not materialize the work as a GitHub PR.
+
+**Author:** Sol Soletti
+
 ### 2026-06-15 — The context-miss signals now act during the run: when an agent churns (repeated grep, grep→read loops, file-read cap) it gets a one-time nudge toward the precise tools, instead of the signals only being logged at the end.
 
 **Intent:** The tool loop already computed `repeatedSymbolGrep`, `grepReadChurn`, and `filesReadCapHit`, but only as end-of-run instrumentation that "nothing acts on." They now drive behaviour in two tiers. SAFE tier (default on, `ANCHORAGE_TOOL_CONTEXT_NUDGE`): the first time a signal fires, a one-time, clearly-marked note is appended to that tool's result steering the model to `find_references` / `impact` / `repo_map`. It only adds guidance — removes nothing — so it cannot degrade a run, and it cuts the wasted grep/read turns that inflate token use. The fired nudges are reported on the run snapshot (`snapshot.contextNudges`) for metrics. AGGRESSIVE tier (opt-in, default off, `ANCHORAGE_TOOL_CONTEXT_ENFORCE`): a grep repeating a pattern already searched this run is refused before dispatch — left off by default so the standard pipeline is never blocked from a legitimate re-grep.

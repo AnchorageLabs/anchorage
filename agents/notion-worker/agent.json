@@ -1,0 +1,12 @@
+{
+  "name": "notion-worker",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Acts on a Notion workspace to satisfy a task: takes notes, manages tasks, organizes databases, and builds structured wikis via the Notion API.",
+  "taskTypes": ["notion.task.act"],
+  "inputs": ["issue.summary", "notion.page"],
+  "outputs": ["notion.task.result"],
+  "requires": ["notion.read", "notion.write", "llm.code"],
+  "binary": "./dist/index.js",
+  "timeout": 900
+}
