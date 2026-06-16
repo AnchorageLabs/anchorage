@@ -5,14 +5,9 @@
 // unsupported languages, missing grammars, oversized files, or parse errors —
 // so the model simply falls back to grep with no failure path.
 
-import { spawn } from "node:child_process";
 import path from "node:path";
-import {
-  findReferencesInFile,
-  grammarForPath,
-  outlineFile,
-  type SymbolRef,
-} from "../symbols/engine.js";
+import { findReferencesInFile, grammarForPath, outlineFile, type SymbolRef } from "../symbols/engine.js";
+import { getIndexStore } from "../symbols/store.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { repoParamSchema, resolveRepoRoot } from "./context-repos.js";
 
@@ -37,29 +32,10 @@ function resolveInsideWorkspace(workspace: string, requested: string): SafePath 
   return { absolutePath, relativePath: relativePath || "." };
 }
 
-// ── git grep -l candidate prefilter ───────────────────────────────────────────
-
-// List git-tracked files containing `symbol` as a whole word. Cheap funnel so
-// tree-sitter only parses files that could possibly reference the symbol.
-function gitGrepFiles(cwd: string, symbol: string, scope: string | null): Promise<string[]> {
-  return new Promise((resolve) => {
-    const args = ["grep", "-l", "-I", "-F", "-w", "-e", symbol];
-    if (scope && scope !== ".") args.push("--", scope);
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
-    child.on("error", () => resolve([]));
-    child.on("close", () => {
-      const files = Buffer.concat(out)
-        .toString("utf8")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-      resolve(files);
-    });
-  });
-}
-
+// Candidate files come from the persisted index's identifier→files inverted
+// lookup (no per-call git grep): the set of files that reference the symbol,
+// optionally narrowed to a path scope. tree-sitter then parses only those for
+// exact reference line numbers.
 function symbolToolsEnabled(env: Record<string, string>): boolean {
   const raw = env.ANCHORAGE_TOOL_SYMBOLS_ENABLED;
   if (raw === undefined) return true; // on by default; the engine still fails closed
@@ -117,9 +93,13 @@ async function findReferencesHandler(
     scope = safe.relativePath;
   }
 
-  const candidates = (await gitGrepFiles(root, symbol, scope)).filter(
-    (file) => grammarForPath(file) !== null,
-  );
+  const store = await getIndexStore(root);
+  if (!store) return failClosed(`No symbol index for '${symbol}'. ${FALLBACK_NOTE}`);
+  const scopePrefix = scope && scope !== "." ? scope.replace(/\/+$/, "") : null;
+  const candidates = store
+    .filesReferencing(symbol)
+    .filter((file) => grammarForPath(file) !== null)
+    .filter((file) => !scopePrefix || file === scopePrefix || file.startsWith(`${scopePrefix}/`));
   if (candidates.length === 0)
     return failClosed(`No references to '${symbol}' found. ${FALLBACK_NOTE}`);
 
@@ -228,7 +208,10 @@ async function symbolOutlineHandler(
     };
   }
 
-  const defs = await outlineFile(safe.absolutePath);
+  // Prefer the persisted index (no parse); fall back to a live parse for files
+  // not yet indexed (uncommitted, oversized, or index unavailable).
+  const store = await getIndexStore(repoRes.root);
+  const defs = store?.outline(safe.relativePath) ?? (await outlineFile(safe.absolutePath));
   if (defs === null) {
     return failClosed(`No outline for ${safe.relativePath}. ${FALLBACK_NOTE}`);
   }

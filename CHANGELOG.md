@@ -29,6 +29,29 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-16 — A native persisted symbol index replaces the external cartographer binary and powers two new edit-oriented tools, cutting the grep/read orientation rounds that inflate input tokens.
+
+**Intent:** `impact` / `tests_for` shelled out to an external `cartographer` CLI (a deploy-time dependency that fails closed when absent), and `repo_map` re-scanned every source file on every call. A new persisted index (`agents/llm/src/tools/symbols/store.ts`) maintains the whole-repo view — definitions, an identifier→files inverted index, and the import graph — at `.anchorage/index/index.json`, delta-refreshed by per-file content hash so a warm call is a hash check, not a re-scan. It is JSON, not SQLite, to avoid a native module in the agent runtime; the query surface is storage-agnostic so a SQLite/LSP backend can drop in later behind the same methods (the thesis "provider seam"). `impact`, `tests_for`, `repo_map`, `symbol_outline` and `find_references` now all answer from this index, and two new tools turn it toward editing: `locate_change` (where a symbol is defined + its direct referencing files — the concrete edit targets) and `relevant_tests` (the deduped union of covering tests for a set of changed files). After `write_file`/`edit_file`/`delete_file` the touched file is reindexed mid-run (bounded to an already-built index — a write never triggers a cold build), so the next `impact`/`find_references` call sees the coder's own edit. Planner, coder and reviewer prompts steer toward the index tools over grep. All tools keep their fail-closed contract: no git → a short note → grep.
+
+**Files touched:**
+- agents/llm/src/tools/symbols/store.ts
+- agents/llm/src/tools/symbols/engine.ts
+- agents/llm/src/tools/builtin/cartographer.ts
+- agents/llm/src/tools/builtin/repo-map.ts
+- agents/llm/src/tools/builtin/symbols.ts
+- agents/llm/src/tools/builtin/change-tools.ts
+- agents/llm/src/tools/builtin/repo.ts
+- agents/llm/test/symbols-store.test.mjs
+- agents/llm/test/change-tools.test.mjs
+- agents/llm/test/reindex-midrun.test.mjs
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+- agents/reviewer/src/index.ts
+
+**Reason:** Direct maintainer request (Sol, 2026-06-16): Fase 1 of the token-saving initiative — the Anchorage Thesis names the persisted index as the backbone with the highest leverage, because grounding edits in a whole-repo dependency graph removes the grep/read_file orientation rounds that dominate input tokens. Builds on the `edit_file` and cache-metrics work already on `[unreleased]`.
+
+**Author:** Sol Soletti
+
 ### 2026-06-16 — Agents can modify a file by exact string replacement (edit_file) instead of rewriting it whole, cutting output tokens on the dominant write path.
 
 **Intent:** The coder's only edit mechanism was `write_file` (full-file replace), so a 5-line change to a 500-line file emitted the whole file — the #1 output-token sink in apply-code. New `edit_file(path, old_string, new_string, [replace_all])` does a literal (non-regex, so `$&`/`\1` are inserted verbatim) exact-string replacement on an existing file: unique match required unless `replace_all`, fails closed with actionable errors (not found / not unique / not a file), and returns only a small summary — never the file. The coder prompt and `write_file`'s description now steer modifications to `edit_file` (and to call `impact()` to update call sites after a signature change); `write_file` is for new files / full rewrites. Output reduction is measurable via the apply-code output tokens on `context.snapshot`.

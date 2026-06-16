@@ -543,6 +543,9 @@ function reviewerSystemPrompt(hasWorkspace: boolean): string {
     ? `The post-merge workspace is mounted. Use these tools to ground your review:
 - read_repo_manifest, detect_project: project conventions.
 - read_file, list_dir, grep: inspect the changed files in context and any related code.
+- impact / find_references: when the diff changes an exported symbol, call impact on it to confirm EVERY dependent was updated — unupdated call sites that the diff missed (across barrel re-exports / package boundaries a grep would miss) are a request_changes.
+- relevant_tests: on the changed files, to check whether the change has any covering tests at all — a changed file with no covering test is worth flagging.
+- repo_map: one-call orientation on an unfamiliar repo before reading.
 - git_log on changed files: how the area has evolved before this PR.
 - git_show / git_diff: compare with earlier states.`
     : `No workspace is mounted. Use github_get_file to read related files from the same repo if you need pre-change context.`;
@@ -553,7 +556,7 @@ You will receive a PR diff, title, body, and list of changed files. Review for:
 - Scope: does the diff match the PR title/description? Are there out-of-scope changes? (Also flag committed build artifacts/dependencies like node_modules/ or dist/.)
 - Safety: no secrets, no destructive operations, no risky side effects.
 - Quality: follows existing patterns, no obvious bugs, reasonable code structure.
-- Integration (verify against the real repo, not just the diff): does the new code consume the repo's EXISTING types/contracts, or did it introduce a parallel/duplicate type for a concept that already exists (e.g. a second Commit/Config, or a look-alike with renamed fields such as hash vs sha)? grep for the existing type and confirm the field names line up. A type that cannot actually be fed by its upstream producer is a request_changes, even if it compiles in isolation.
+- Integration (verify against the real repo, not just the diff): does the new code consume the repo's EXISTING types/contracts, or did it introduce a parallel/duplicate type for a concept that already exists (e.g. a second Commit/Config, or a look-alike with renamed fields such as hash vs sha)? Use impact/find_references (or grep) on the existing type and confirm the field names line up. A type that cannot actually be fed by its upstream producer is a request_changes, even if it compiles in isolation.
 - Tests: are there tests, and do they include at least one that exercises the change against the REAL upstream types (an integration test)? Tests that only feed hand-built fixtures matching the implementation's own assumptions are self-referential and low-signal — call them out and request a real integration test.
 
 ${repoTools}

@@ -37,11 +37,13 @@ The loop drives `model → tool calls → model → ...` until the model returns
 | `git_diff(ref_a, ref_b, [path])` | `repo.read` | 300 KB stdout cap |
 | `detect_project()` | `repo.read` | Inspects manifests, reports language/test/build/lint |
 | `read_repo_manifest()` | `repo.read` | Returns `AGENTS.md` / `CLAUDE.md` / `.anchorage/context.md` if present; no error on absence |
-| `find_references(symbol, [path])` | `repo.read` | tree-sitter per-call scan; 40 candidate files / 80 refs; fails closed to grep |
-| `symbol_outline(path)` | `repo.read` | tree-sitter; definitions in one file; fails closed to read_file |
-| `impact(symbol)` | `repo.read` | cartographer persisted index: defs, refs, transitive dependents (crosses barrels/workspace packages), covering tests; fails closed to find_references |
-| `tests_for(path)` | `repo.read` | cartographer index: tests importing the file (transitively) + name-mirrored; fails closed |
-| `repo_map([max_results])` | `repo.read` | local import-in-degree ranking of source files + their top symbols; one-call orientation; 40 files default; fails closed |
+| `find_references(symbol, [path])` | `repo.read` | candidate files from the persisted index, tree-sitter for exact ref line:col; 40 files / 80 refs; fails closed to grep |
+| `symbol_outline(path)` | `repo.read` | definitions in one file, read from the index (live parse fallback for unindexed files); fails closed to read_file |
+| `impact(symbol)` | `repo.read` | persisted whole-repo index: defs, refs, transitive dependents (crosses barrels/workspace packages), covering tests; fails closed to find_references |
+| `tests_for(path)` | `repo.read` | persisted index: tests importing the file (transitively) + name-mirrored; fails closed |
+| `repo_map([max_results])` | `repo.read` | import-in-degree ranking of source files + their top symbols, from the index; one-call orientation; 40 files default; fails closed |
+| `locate_change(symbol)` | `repo.read` | persisted index: a symbol's definition site(s) + its direct referencing files — the concrete edit targets, defs first; narrower than impact; fails closed |
+| `relevant_tests(paths[])` | `repo.read` | persisted index: deduped union of covering tests for a set of changed files (importers + name-mirrored); fails closed |
 | `write_file(path, content)` | `workspace.write` | 1 MB content cap; full-file replace (new files / full rewrites) |
 | `edit_file(path, old_string, new_string, [replace_all])` | `workspace.write` | exact literal string replacement on an existing file; unique match unless `replace_all`; emits only the changed text — preferred for modifications (far fewer output tokens) |
 | `delete_file(path)` | `workspace.write` | — |
@@ -67,8 +69,8 @@ All budgets are enforced inside `runWithTools` and can be tuned per-run with env
 | `ANCHORAGE_TOOL_WEB_ENABLED` | `false` | Master switch for web tools |
 | `ANCHORAGE_SHELL_ENV_PASSTHROUGH` | (empty) | Comma-separated extra env names allowed into `shell_exec` |
 | `ANCHORAGE_TOOL_SYMBOLS_ENABLED` | `true` | Master switch for `find_references` / `symbol_outline` |
-| `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED` | `true` | Master switch for `impact` / `tests_for` |
-| `ANCHORAGE_CARTOGRAPHER_BIN` | (empty) | Path to the cartographer CLI (a `.js` entry runs under node); unset falls back to `cartographer` on PATH, and a missing binary just fails the tools closed |
+| `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED` | `true` | Master switch for `impact` / `tests_for` (now backed by the native persisted index; `ANCHORAGE_TOOL_IMPACT_ENABLED` is honored as an alias). `locate_change` / `relevant_tests` share that index. |
+| `ANCHORAGE_CARTOGRAPHER_BIN` | (empty) | Path to the cartographer CLI — now used ONLY by the separate repo-context facts layer (`.anchorage/repo-context.json`), not by `impact` / `tests_for`, which are fully native. Unset falls back to `cartographer` on PATH; a missing binary just skips the repo-context refresh. |
 | `ANCHORAGE_LLM_PROMPT_CACHE` | `true` | Prompt caching: Anthropic caches system + tool catalog + the per-turn conversation prefix; Bedrock inserts Converse `cachePoint` blocks (transparently dropped on models that reject them). Lossless. |
 | `ANCHORAGE_TOOL_DEDUP` | `true` | Collapse a tool result that is byte-for-byte identical to an earlier one this run into a back-reference (≥500 B, successful string outputs). The original stays in context once — lossless. |
 | `ANCHORAGE_SHELL_CLEAN` | `true` | Strip terminal control noise (ANSI codes, carriage-return progress frames, blank-line runs, trailing whitespace) from `shell_exec` output before the model sees it. Lossless. |

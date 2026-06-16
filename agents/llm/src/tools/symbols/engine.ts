@@ -184,6 +184,47 @@ export async function outlineFile(absPath: string): Promise<SymbolDef[] | null> 
   return defs;
 }
 
+// Cap on distinct identifier names collected per file when analyzing for the
+// persisted index — keeps the inverted name→files index bounded on huge files.
+const MAX_NAMES_PER_FILE = 2000;
+
+export interface FileAnalysis {
+  /** Top-level-ish definitions (same set as outlineFile). */
+  defs: SymbolDef[];
+  /** Distinct identifier names referenced anywhere in the file. Powers the
+   *  persisted name→files inverted index behind find_references/locate_change. */
+  names: string[];
+}
+
+/**
+ * Single-parse analysis used by the persisted index builder: extracts a file's
+ * definitions AND the distinct identifier names it references in ONE tree-sitter
+ * walk (parsing twice — once per outlineFile, once per a names pass — would
+ * double the dominant cost of indexing). Returns null when the file can't be
+ * parsed, so the indexer simply skips it (it stays grep-reachable).
+ */
+export async function analyzeFile(absPath: string): Promise<FileAnalysis | null> {
+  const parsed = await parseFile(absPath);
+  if (!parsed) return null;
+  const defs: SymbolDef[] = [];
+  const names = new Set<string>();
+  walk(parsed.root, (node) => {
+    if (isIdentifier(node.type) && names.size < MAX_NAMES_PER_FILE) {
+      names.add(node.text);
+    }
+    if (defs.length >= MAX_OUTLINE_SYMBOLS) return;
+    if (!DEFINITION_TYPE.test(node.type)) return;
+    const nameNode = definitionNameNode(node);
+    if (!nameNode) return;
+    defs.push({
+      name: nameNode.text,
+      kind: shortKind(node.type),
+      line: nameNode.startPosition.row + 1,
+    });
+  });
+  return { defs, names: [...names] };
+}
+
 export interface SymbolRef {
   file: string;
   line: number;
