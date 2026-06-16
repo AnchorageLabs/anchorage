@@ -157,6 +157,19 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
 
+  agents/notion-worker:
+    dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+
   agents/notion-writer:
     dependencies:
       '@anchorage/sdk':

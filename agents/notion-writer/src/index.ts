@@ -155,6 +155,7 @@ async function parseInput(
       ciReportUri: readString(summary.ciReportUri) ?? priorSummary.ciReportUri,
       deploymentUri: readString(summary.deploymentUri) ?? priorSummary.deploymentUri,
       smokeTestUri: readString(summary.smokeTestUri) ?? priorSummary.smokeTestUri,
+      operations: priorSummary.operations,
       artifacts: mergeStrings(readStringArray(summary.artifacts), priorSummary.artifacts),
     },
   };
@@ -181,6 +182,7 @@ async function resolvePriorSummary(task: TaskEnvelope): Promise<WorkflowSummaryI
     ciReportUri: null,
     deploymentUri: null,
     smokeTestUri: null,
+    operations: [],
     artifacts: artifacts.map((artifact) => artifact.uri),
   };
 
@@ -199,6 +201,12 @@ async function resolvePriorSummary(task: TaskEnvelope): Promise<WorkflowSummaryI
     if (artifact.artifactType === "merge.completed") {
       summary.prUrl ??= readString(data.prUrl);
       summary.commitSha ??= readString(data.sha);
+    }
+    // Notion-native flow: the notion-worker reports what it changed in Notion.
+    // Use its prose as the closing comment and list its operations.
+    if (artifact.artifactType === "notion.task.result") {
+      summary.text ??= readString(data.summary);
+      summary.operations = mergeStrings(summary.operations, readStringArray(data.operations));
     }
   }
 
@@ -302,6 +310,12 @@ function buildComment(input: NotionUpdateInput): null | string {
   if (details.length > 0) {
     lines.push("");
     for (const [label, value] of details) lines.push(`${label}: ${value}`);
+  }
+
+  if (input.operations.length > 0) {
+    lines.push("");
+    lines.push("Changes applied in Notion:");
+    for (const operation of input.operations) lines.push(`- ${operation}`);
   }
 
   if (input.artifacts.length > 0) {
@@ -454,6 +468,7 @@ interface NotionUpdateInput {
   ciReportUri: null | string;
   deploymentUri: null | string;
   smokeTestUri: null | string;
+  operations: string[];
   artifacts: string[];
 }
 
@@ -465,6 +480,7 @@ interface WorkflowSummaryInput {
   ciReportUri: null | string;
   deploymentUri: null | string;
   smokeTestUri: null | string;
+  operations: string[];
   artifacts: string[];
 }
 

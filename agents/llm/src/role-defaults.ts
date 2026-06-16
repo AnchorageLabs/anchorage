@@ -35,6 +35,8 @@ export const ROLE_DEFAULTS = {
   // Triage runs a cheaper/faster default on the OpenAI path.
   triage: role("triage", { openaiModel: "gpt-4o" }),
   reviewer: role("reviewer"),
+  // Acts on Notion directly (notes, tasks, databases, wikis) via the Notion tools.
+  "notion-worker": role("notion-worker"),
 } satisfies Record<string, LlmRoleDefaults>;
 
 export type AgentRole = keyof typeof ROLE_DEFAULTS;
