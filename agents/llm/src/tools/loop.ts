@@ -106,7 +106,13 @@ export async function runWithTools(
       };
     }
 
-    recordTurn(budget, turnResult.inputTokens, turnResult.outputTokens);
+    recordTurn(
+      budget,
+      turnResult.inputTokens,
+      turnResult.outputTokens,
+      turnResult.cacheReadInputTokens ?? 0,
+      turnResult.cacheCreationInputTokens ?? 0,
+    );
 
     const assistantMessage: AssistantMessage = {
       role: "assistant",
@@ -413,6 +419,8 @@ function snapshotOf(
     shellCalls: number;
     inputTokensTotal: number;
     outputTokensTotal: number;
+    cacheReadInputTokensTotal: number;
+    cacheCreationInputTokensTotal: number;
   },
   toolCalls: ToolCallRecord[],
   nudgesFired: string[],
@@ -426,6 +434,8 @@ function snapshotOf(
     shellCalls: budget.shellCalls,
     inputTokensTotal: budget.inputTokensTotal,
     outputTokensTotal: budget.outputTokensTotal,
+    cacheReadInputTokensTotal: budget.cacheReadInputTokensTotal,
+    cacheCreationInputTokensTotal: budget.cacheCreationInputTokensTotal,
     filesReadCapHit: miss.filesReadCapHit,
     repeatedSymbolGrep: miss.repeatedSymbolGrep,
     grepReadChurn: miss.grepReadChurn,

@@ -36,6 +36,8 @@ export function createBudgetState(overrides: Partial<BudgetConfig> = {}): Budget
     turns: 0,
     inputTokensTotal: 0,
     outputTokensTotal: 0,
+    cacheReadInputTokensTotal: 0,
+    cacheCreationInputTokensTotal: 0,
     filesRead: new Set<string>(),
     webCalls: 0,
     shellCalls: 0,
@@ -123,10 +125,18 @@ export function recordShell(state: BudgetState, bytes: number): void {
   state.bytesAcquired += bytes;
 }
 
-export function recordTurn(state: BudgetState, inputTokens: number, outputTokens: number): void {
+export function recordTurn(
+  state: BudgetState,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadInputTokens = 0,
+  cacheCreationInputTokens = 0,
+): void {
   state.turns += 1;
   state.inputTokensTotal += inputTokens;
   state.outputTokensTotal += outputTokens;
+  state.cacheReadInputTokensTotal += cacheReadInputTokens;
+  state.cacheCreationInputTokensTotal += cacheCreationInputTokens;
 }
 
 // A positive value sets an explicit cap; 0 or negative means "unlimited"

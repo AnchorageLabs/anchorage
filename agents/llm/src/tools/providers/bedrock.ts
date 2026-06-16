@@ -124,6 +124,9 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
         stopReason: typeof response.stopReason === "string" ? response.stopReason : null,
         inputTokens: response.usage?.inputTokens ?? 0,
         outputTokens: response.usage?.outputTokens ?? 0,
+        // Converse surfaces cache usage on the usage block when cachePoint hit.
+        cacheReadInputTokens: response.usage?.cacheReadInputTokens ?? 0,
+        cacheCreationInputTokens: response.usage?.cacheWriteInputTokens ?? 0,
       };
     },
   };

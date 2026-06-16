@@ -131,6 +131,15 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
         stopReason: typeof parsed.stop_reason === "string" ? parsed.stop_reason : null,
         inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
         outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
+        // Anthropic reports cache usage separately from input_tokens (which is
+        // only the uncached remainder). Capturing these is what lets us turn the
+        // "input dropped 99%" observation into a real $ figure.
+        cacheReadInputTokens:
+          typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0,
+        cacheCreationInputTokens:
+          typeof usage.cache_creation_input_tokens === "number"
+            ? usage.cache_creation_input_tokens
+            : 0,
       };
     },
   };
