@@ -29,7 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-06-16 — A native persisted symbol index replaces the external cartographer binary and powers two new edit-oriented tools, cutting the grep/read orientation rounds that inflate input tokens.
+### 2026-06-17 — Fase 3 (D2): a get_artifact tool lets agents pull a prior artifact's full content on demand, so prompts can carry a budgeted slice instead of every artifact in full — wired into the coder, which now truncates a long issue body.
+
+**Intent:** Agents inlined every prior artifact into the prompt in full (a long issue body rode on every coder turn). New `get_artifact(artifactType)` reads a prior artifact's complete content from its `file://` URI on demand — the escape hatch that lets prompts carry only a budgeted slice. The run's prior artifacts are threaded into the tool layer via `ToolContext.artifacts` (set by `runWithTools`), so the tool resolves a type to the most-recent matching artifact and returns it bounded to 24 KB (a single fetch can't blow the budget it protects), failing closed to a short note — listing what IS available — when the type is absent or unreadable. The coder now budgets the inlined issue body to 4 KB, truncating with a `get_artifact('issue.summary')` pointer; the plan and revision feedback (its primary inputs) still ride in full. Pairs with the orchestrator's context packs (Fase 3 · D1): D1 bounds the artifact REFERENCE list, this bounds the artifact CONTENT a model ingests. D3 (coder consumes issue.summary + revision requests, not just the plan) was already shipped.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/get-artifact.ts
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/index.ts
+- agents/coder/src/index.ts
+- agents/llm/test/get-artifact.test.mjs
+
+**Reason:** Output-token reduction initiative, Fase 3 (context packs) — D2, the agent-side half of the context-pack lever. The orchestrator can only bound the reference list (D1); capping the content a model actually ingests is agent-side, and needs an on-demand fetch so budgeting never starves the agent of something it later needs.
+
+**Author:** Sol Soletti
 
 **Intent:** `impact` / `tests_for` shelled out to an external `cartographer` CLI (a deploy-time dependency that fails closed when absent), and `repo_map` re-scanned every source file on every call. A new persisted index (`agents/llm/src/tools/symbols/store.ts`) maintains the whole-repo view — definitions, an identifier→files inverted index, and the import graph — at `.anchorage/index/index.json`, delta-refreshed by per-file content hash so a warm call is a hash check, not a re-scan. It is JSON, not SQLite, to avoid a native module in the agent runtime; the query surface is storage-agnostic so a SQLite/LSP backend can drop in later behind the same methods (the thesis "provider seam"). `impact`, `tests_for`, `repo_map`, `symbol_outline` and `find_references` now all answer from this index, and two new tools turn it toward editing: `locate_change` (where a symbol is defined + its direct referencing files — the concrete edit targets) and `relevant_tests` (the deduped union of covering tests for a set of changed files). After `write_file`/`edit_file`/`delete_file` the touched file is reindexed mid-run (bounded to an already-built index — a write never triggers a cold build), so the next `impact`/`find_references` call sees the coder's own edit. Planner, coder and reviewer prompts steer toward the index tools over grep. All tools keep their fail-closed contract: no git → a short note → grep.
 

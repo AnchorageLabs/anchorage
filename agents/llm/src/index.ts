@@ -17,6 +17,7 @@ export {
   contextReposFromEnvelope,
 } from "./tools/builtin/context-repos.js";
 export { discoveryTools } from "./tools/builtin/discovery.js";
+export { getArtifactTool } from "./tools/builtin/get-artifact.js";
 export { notionReadTools, notionWriteTools } from "./tools/builtin/notion.js";
 export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
 export { repoContextPromptBlock } from "./tools/builtin/repo-context.js";

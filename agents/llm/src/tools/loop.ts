@@ -244,6 +244,7 @@ export async function runWithTools(
         const ctx: ToolContext = {
           workspacePath: request.workspacePath,
           contextRepos: request.contextRepos,
+          artifacts: request.artifacts,
           capabilities,
           env,
           budget,
