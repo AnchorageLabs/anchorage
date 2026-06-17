@@ -10,6 +10,7 @@ import {
   contextRepoPromptBlock,
   contextReposFromEnvelope,
   discoveryTools,
+  getArtifactTool,
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
@@ -360,6 +361,7 @@ async function driveCoderLoop(
 
   const tools: ToolDefinition[] = [
     ...discoveryTools,
+    getArtifactTool,
     ...repoReadTools,
     ...repoWriteTools,
     ...shellTools,
@@ -392,6 +394,9 @@ async function driveCoderLoop(
     tools,
     workspacePath: input.workspacePath,
     contextRepos: contextMounts,
+    // Prior artifacts the coder can pull in full via get_artifact when its
+    // prompt only carried a budgeted slice (e.g. a truncated issue body).
+    artifacts: task.context?.priorArtifacts,
     capabilities: new Set(task.capabilities ?? []),
     env: { ...process.env } as Record<string, string>,
     maxTokensPerTurn,
@@ -481,6 +486,10 @@ When you are finished, your FINAL message MUST be a single JSON object and NOTHI
 If you encounter a blocker (missing capability, unsolvable issue, environment problem), still return the JSON above with an empty edit set and explain in 'risks'.`;
 }
 
+// Inlined issue-body budget (chars). Past this the body is truncated in-prompt
+// and the model pulls the rest via get_artifact('issue.summary') (Fase 3 · D2).
+const ISSUE_BODY_BUDGET = 4_000;
+
 function coderUserPrompt(
   plan: ImplementationPlan,
   issueSummary: JsonObject | null,
@@ -492,7 +501,18 @@ function coderUserPrompt(
     const issue: JsonObject = {};
     if (issueSummary.issueNumber !== undefined) issue.number = issueSummary.issueNumber;
     if (issueSummary.title !== undefined) issue.title = issueSummary.title;
-    if (issueSummary.body !== undefined) issue.body = issueSummary.body;
+    if (issueSummary.body !== undefined) {
+      // Budget the inlined body: the plan is the coder's primary input, so a long
+      // issue body need not ride in full on every turn. Truncate past the budget
+      // and point the model at get_artifact('issue.summary') for the rest.
+      const body = String(issueSummary.body);
+      if (body.length > ISSUE_BODY_BUDGET) {
+        issue.body = `${body.slice(0, ISSUE_BODY_BUDGET)}\n… [truncated; call get_artifact('issue.summary') for the full body]`;
+        issue.bodyTruncated = true;
+      } else {
+        issue.body = body;
+      }
+    }
     if (issueSummary.labels !== undefined) issue.labels = issueSummary.labels;
     if (issueSummary.url !== undefined) issue.url = issueSummary.url;
     context.issue = issue;

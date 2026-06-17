@@ -99,9 +99,21 @@ export interface ContextRepoMount {
   note?: string;
 }
 
+// A prior-step artifact the agent may pull on demand via get_artifact. Mirrors
+// the orchestrator's ArtifactReference (the fields the tool needs), so an agent
+// can fetch an artifact's full content without inlining it into the prompt.
+export interface ToolArtifactRef {
+  artifactType: string;
+  uri: string;
+  sizeBytes?: number;
+}
+
 export interface ToolContext {
   // Workspace root for the run. Repo-read / shell tools sandbox here.
   workspacePath: string;
+  // Prior-step artifacts addressable by get_artifact (the run's priorArtifacts).
+  // Empty/undefined when the caller passes none.
+  artifacts?: readonly ToolArtifactRef[];
   // Read-only context repos for this run, addressable via the read tools' `repo`
   // argument. Empty/undefined for single-repo runs.
   contextRepos?: ContextRepoMount[];
@@ -190,6 +202,8 @@ export interface RunWithToolsRequest {
   workspacePath: string;
   // Read-only context repos forwarded to the ToolContext (optional).
   contextRepos?: ContextRepoMount[];
+  // Prior-step artifacts the agent may pull via get_artifact (optional).
+  artifacts?: readonly ToolArtifactRef[];
   // Observer for structured tool events; mirrors the protocol's tool.requested
   // / tool.result emission shape so callers can pipe directly to stdout.
   onEvent?: ToolEventEmitter;
