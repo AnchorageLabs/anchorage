@@ -6,11 +6,11 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { IndexStore, clearIndexStore, isTestPath } from "../dist/tools/symbols/store.js";
+import { clearIndexStore, IndexStore, isTestPath } from "../dist/tools/symbols/store.js";
 
 function git(cwd, ...args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
