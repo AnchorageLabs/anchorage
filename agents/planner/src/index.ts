@@ -617,8 +617,16 @@ function buildBranchName(issueNumber: number, rawBranchName: string, runId: stri
     .replace(/^(feat|fix|chore|docs|refactor|test)\//, "")
     .replace(/^issue-\d+[-_/]*/, "");
   const slug = slugify(rawSlug) || "changes";
-  const runSuffix = slugify(runId).slice(-12) || String(Date.now());
+  const runSuffix = runIdBranchSuffix(runId) || String(Date.now());
   return `${prefix}/issue-${issueNumber}-${slug}-${runSuffix}`;
+}
+
+function runIdBranchSuffix(runId: string): string {
+  return runId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(-12);
 }
 
 function stringArrayValue(value: JsonValue | undefined): string[] {

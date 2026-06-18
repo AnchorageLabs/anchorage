@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-18 — Agent runs fail faster and avoid stale branch/tool-call loops by validating GitHub tool inputs before budget checks and forcing run-scoped coder branches.
+
+**Intent:** Planner/coder runs now avoid two reliability traps that caused repeated autonomous failures. GitHub web tools reject missing `owner`/`repo`/`path`/`query` as structured `invalid_input` before checking or consuming web budget, so an empty tool call tells the model what to fix instead of surfacing as a misleading budget failure. Planner branch suffixes are derived from the full run id, and coder defensively appends a run-scoped suffix to direct or stale plans before resetting and checking out the work branch with `checkout -B`; this prevents branch-name collisions and stale dirty branches from poisoning later runs.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/web.ts
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+
+**Reason:** Maintainer reliability request (2026-06-18): reduce autonomous-run failures from empty GitHub tool calls, branch-name collisions, and reused dirty workspaces.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-17 — Fase 3 (D2): a get_artifact tool lets agents pull a prior artifact's full content on demand, so prompts can carry a budgeted slice instead of every artifact in full — wired into the coder, which now truncates a long issue body.
 
 **Intent:** Agents inlined every prior artifact into the prompt in full (a long issue body rode on every coder turn). New `get_artifact(artifactType)` reads a prior artifact's complete content from its `file://` URI on demand — the escape hatch that lets prompts carry only a budgeted slice. The run's prior artifacts are threaded into the tool layer via `ToolContext.artifacts` (set by `runWithTools`), so the tool resolves a type to the most-recent matching artifact and returns it bounded to 24 KB (a single fetch can't blow the budget it protects), failing closed to a short note — listing what IS available — when the type is absent or unreadable. The coder now budgets the inlined issue body to 4 KB, truncating with a `get_artifact('issue.summary')` pointer; the plan and revision feedback (its primary inputs) still ride in full. Pairs with the orchestrator's context packs (Fase 3 · D1): D1 bounds the artifact REFERENCE list, this bounds the artifact CONTENT a model ingests. D3 (coder consumes issue.summary + revision requests, not just the plan) was already shipped.
