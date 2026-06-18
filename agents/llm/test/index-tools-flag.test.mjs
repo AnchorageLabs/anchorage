@@ -5,14 +5,11 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const distIndex = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../dist/index.js",
-);
+const distIndex = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
 const INDEX_TOOLS = [
   "find_references",

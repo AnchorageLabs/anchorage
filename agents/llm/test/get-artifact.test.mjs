@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { getArtifactTool } from "../dist/index.js";
 import { createBudgetState } from "../dist/tools/budget.js";
 
@@ -32,7 +32,11 @@ async function artifactFile(dir, name, content) {
 
 test("fetches the full content of an available artifact", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "anc-art-"));
-  const uri = await artifactFile(dir, "issue.json", JSON.stringify({ title: "Bug", body: "details" }));
+  const uri = await artifactFile(
+    dir,
+    "issue.json",
+    JSON.stringify({ title: "Bug", body: "details" }),
+  );
   const res = await getArtifactTool.handler(
     { artifactType: "issue.summary" },
     ctxWith([{ artifactType: "issue.summary", uri }]),
@@ -85,7 +89,10 @@ test("fails closed (note, not error) when the artifact is absent", async () => {
 });
 
 test("missing artifactType is an input error listing what is available", async () => {
-  const res = await getArtifactTool.handler({}, ctxWith([{ artifactType: "issue.summary", uri: "file:///x" }]));
+  const res = await getArtifactTool.handler(
+    {},
+    ctxWith([{ artifactType: "issue.summary", uri: "file:///x" }]),
+  );
   assert.equal(res.ok, false);
   assert.equal(res.code, "invalid_input");
   assert.match(res.message, /Available: issue\.summary/);
