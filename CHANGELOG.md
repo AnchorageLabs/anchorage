@@ -42,6 +42,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 **Author:** Valentin Torassa
 
+### 2026-06-18 — A single ANCHORAGE_INDEX_TOOLS_ENABLED master switch drops the whole persisted-index tool surface from the catalog, so a "no index" baseline can be measured cleanly.
+
+**Intent:** The index tools had inconsistent gating — `find_references`/`symbol_outline` honored `ANCHORAGE_TOOL_SYMBOLS_ENABLED`, `impact`/`tests_for` honored `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED`, and `repo_map`/`locate_change`/`relevant_tests` had no flag at all — and even the flagged ones only *fail-closed* a tool that stayed in the catalog (the model still discovered it and spent a call learning it was off). That made a clean "what does the index cost/save" A/B impossible: the off arm still carried (and called) index tools. `ANCHORAGE_INDEX_TOOLS_ENABLED` (default on) now gates all seven as one unit by **removing them from `repoReadTools` outright** when off — the catalog falls back to the lexical surface (read_file/list_dir/grep/git_*), exactly the pre-index baseline. Evaluated at module load, and the worker→agent env path preserves it (`buildAgentEnvironment` only scrubs `ANCHORAGE_LLM_*`/`*_MODEL`), so setting it on the worker reaches the agent.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/repo.ts
+- agents/llm/test/index-tools-flag.test.mjs
+
+**Reason:** Output-token reduction initiative — measurement. A clean index on/off control is required to attribute the index's net per-run effect (the first A/B was confounded because the off arm still ran index tools).
+
+**Author:** Sol Soletti
+
 ### 2026-06-17 — Fase 3 (D2): a get_artifact tool lets agents pull a prior artifact's full content on demand, so prompts can carry a budgeted slice instead of every artifact in full — wired into the coder, which now truncates a long issue body.
 
 **Intent:** Agents inlined every prior artifact into the prompt in full (a long issue body rode on every coder turn). New `get_artifact(artifactType)` reads a prior artifact's complete content from its `file://` URI on demand — the escape hatch that lets prompts carry only a budgeted slice. The run's prior artifacts are threaded into the tool layer via `ToolContext.artifacts` (set by `runWithTools`), so the tool resolves a type to the most-recent matching artifact and returns it bounded to 24 KB (a single fetch can't blow the budget it protects), failing closed to a short note — listing what IS available — when the type is absent or unreadable. The coder now budgets the inlined issue body to 4 KB, truncating with a `get_artifact('issue.summary')` pointer; the plan and revision feedback (its primary inputs) still ride in full. Pairs with the orchestrator's context packs (Fase 3 · D1): D1 bounds the artifact REFERENCE list, this bounds the artifact CONTENT a model ingests. D3 (coder consumes issue.summary + revision requests, not just the plan) was already shipped.
