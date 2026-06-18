@@ -1,5 +1,7 @@
 # cli/anchorage-runner
 
-Reference CLI that runs an agent against a single input — `anchorage run <agent> < input.json`.
+Low-level reference runner that executes one agent against a single input —
+`anchorage-runner run <agent> < input.json`. (The `anchorage` bin is the unified
+orchestrator CLI in `cli/anchorage`; this runner is the agent-local executor.)
 
 > Status: scaffold. See `AGENTS.md` and `SOUL.md` at the repo root for project-wide context.
