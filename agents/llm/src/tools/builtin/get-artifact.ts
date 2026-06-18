@@ -34,8 +34,7 @@ async function getArtifactHandler(input: JsonObject, ctx: ToolContext): Promise<
   const matches = (ctx.artifacts ?? []).filter((a) => a.artifactType === artifactType);
   const artifact = matches[matches.length - 1];
   if (!artifact) {
-    const note =
-      `No '${artifactType}' artifact available for this run. Available: ${listAvailable(ctx)}.`;
+    const note = `No '${artifactType}' artifact available for this run. Available: ${listAvailable(ctx)}.`;
     return { ok: true, output: note, bytesOut: note.length, meta: { found: false, artifactType } };
   }
   if (!artifact.uri.startsWith("file://")) {

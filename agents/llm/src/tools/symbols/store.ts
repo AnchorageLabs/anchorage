@@ -15,9 +15,9 @@
 // unparseable file is skipped (it stays grep-reachable); a git failure yields a
 // null build so callers fall back to their per-call path.
 
-import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile, mkdir, rename, writeFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { analyzeFile, grammarForPath, type SymbolDef } from "./engine.js";
 

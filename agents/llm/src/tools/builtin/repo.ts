@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
+import { peekIndexStore } from "../symbols/store.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { cartographerTools } from "./cartographer.js";
 import { changeTools } from "./change-tools.js";
 import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { repoMapTool } from "./repo-map.js";
-import { peekIndexStore } from "../symbols/store.js";
 import { symbolTools } from "./symbols.js";
 
 // Keep an already-built symbol index in sync after a workspace write, so the

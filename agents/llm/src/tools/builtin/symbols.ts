@@ -6,7 +6,12 @@
 // so the model simply falls back to grep with no failure path.
 
 import path from "node:path";
-import { findReferencesInFile, grammarForPath, outlineFile, type SymbolRef } from "../symbols/engine.js";
+import {
+  findReferencesInFile,
+  grammarForPath,
+  outlineFile,
+  type SymbolRef,
+} from "../symbols/engine.js";
 import { getIndexStore } from "../symbols/store.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { repoParamSchema, resolveRepoRoot } from "./context-repos.js";
