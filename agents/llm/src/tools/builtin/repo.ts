@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkFileBudget, recordFile } from "../budget.js";
+import { peekIndexStore } from "../symbols/store.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { cartographerTools } from "./cartographer.js";
 import { changeTools } from "./change-tools.js";
 import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { repoMapTool } from "./repo-map.js";
-import { peekIndexStore } from "../symbols/store.js";
 import { symbolTools } from "./symbols.js";
 
 // Keep an already-built symbol index in sync after a workspace write, so the
@@ -878,6 +878,31 @@ export const editFileTool: ToolDefinition = {
 
 // ── Bundle ──────────────────────────────────────────────────────────────────
 
+// Master switch for the whole persisted-index tool surface (find_references,
+// symbol_outline, impact, tests_for, repo_map, locate_change, relevant_tests).
+// ON by default. Set ANCHORAGE_INDEX_TOOLS_ENABLED=false to drop them from the
+// catalog entirely — a clean "no index" baseline for measuring the index's net
+// effect (the per-tool ANCHORAGE_TOOL_* flags only fail-close a tool that is
+// still offered, which leaves it discoverable; this removes it outright).
+function indexToolsEnabled(): boolean {
+  const raw = (process.env.ANCHORAGE_INDEX_TOOLS_ENABLED ?? "true").trim();
+  return !/^(false|0|no|off)$/i.test(raw);
+}
+
+// The seven index-backed tools, gated as one unit by the master switch above.
+const indexTools: ToolDefinition[] = indexToolsEnabled()
+  ? [
+      // find_references / symbol_outline — tree-sitter symbol lookup.
+      ...symbolTools,
+      // impact / tests_for — persisted whole-repo blast radius + covering tests.
+      ...cartographerTools,
+      // repo_map — one-call ranked structural overview (import in-degree).
+      repoMapTool,
+      // locate_change / relevant_tests — edit targets + tests for changed files.
+      ...changeTools,
+    ]
+  : [];
+
 export const repoReadTools: ToolDefinition[] = [
   readFileTool,
   listDirTool,
@@ -885,20 +910,10 @@ export const repoReadTools: ToolDefinition[] = [
   gitLogTool,
   gitShowTool,
   gitDiffTool,
-  // Symbol tools ride the same `repo.read` capability and are offered alongside
-  // grep/read_file — additive, never a replacement. Every reasoning agent that
-  // already gets repoReadTools (planner, coder, reviewer, issue-triage) gains
-  // them automatically; they fail closed to grep when unavailable.
-  ...symbolTools,
-  // impact / tests_for answer from the persisted whole-repo index (store.ts) and
-  // fail closed to the symbol tools when the index can't be built (no git).
-  ...cartographerTools,
-  // repo_map gives a one-call ranked structural overview (import in-degree) for
-  // orientation, read from the same index; fails closed.
-  repoMapTool,
-  // locate_change / relevant_tests turn the index toward editing: where a change
-  // for a symbol lands, and which tests cover a set of changed files.
-  ...changeTools,
+  // Index tools ride the same `repo.read` capability and are offered alongside
+  // grep/read_file — additive, never a replacement. Dropped wholesale when
+  // ANCHORAGE_INDEX_TOOLS_ENABLED is off.
+  ...indexTools,
 ];
 
 export const repoWriteTools: ToolDefinition[] = [writeFileTool, editFileTool, deleteFileTool];
