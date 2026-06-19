@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-19 — The CLI can report, set, and switch a client account's active model without exposing keys on the command line.
+
+**Intent:** Client users can now run `anchorage model status` to see their active provider/model and whether a key is registered, `anchorage model set <provider> <model>` to save a key from env/stdin, and `anchorage model use <provider> <model>` to switch models while preserving the stored key. API keys are never accepted as flags.
+
+**Files touched:**
+- cli/anchorage/src/client.ts
+- cli/anchorage/src/index.ts
+
+**Reason:** Maintainer request (2026-06-19): per-client model credentials must be manageable from every user surface, including the CLI, with key input via env/stdin only.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-18 — Agent runs fail faster and avoid stale branch/tool-call loops by validating GitHub tool inputs before budget checks and forcing run-scoped coder branches.
 
 **Intent:** Planner/coder runs now avoid two reliability traps that caused repeated autonomous failures. GitHub web tools reject missing `owner`/`repo`/`path`/`query` as structured `invalid_input` before checking or consuming web budget, so an empty tool call tells the model what to fix instead of surfacing as a misleading budget failure. Planner branch suffixes are derived from the full run id, and coder defensively appends a run-scoped suffix to direct or stale plans before resetting and checking out the work branch with `checkout -B`; this prevents branch-name collisions and stale dirty branches from poisoning later runs.

@@ -35,6 +35,26 @@ export interface ConnectorStatus {
   kind?: string;
 }
 
+export interface LlmStatus {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  hasKey: boolean;
+}
+
+export interface MeProfile {
+  kind: "admin" | "client";
+  id?: string;
+  name?: string;
+  repoAllowlist?: string[];
+  llm?: LlmStatus | null;
+}
+
+interface PatchMeResponse {
+  ok: true;
+  client: { llm?: LlmStatus | null };
+}
+
 export interface RunDiff {
   branch?: string;
   base?: string;
@@ -172,6 +192,16 @@ export class OrchestratorClient {
 
   disconnect(provider: string): Promise<{ provider: string; removed: number }> {
     return this.send("DELETE", `/connectors/${encodeURIComponent(provider)}`);
+  }
+
+  getMe(): Promise<MeProfile> {
+    return this.get("/me");
+  }
+
+  setModel(provider: string, model: string, apiKey?: string): Promise<LlmStatus | null> {
+    return this.send<PatchMeResponse>("PATCH", "/me", {
+      llm: { provider, model, ...(apiKey ? { apiKey } : {}) },
+    }).then((r) => r.client.llm ?? null);
   }
 
   /**
