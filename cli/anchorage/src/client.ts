@@ -95,9 +95,9 @@ export interface ProtocolEvent {
 }
 
 /**
- * HTTP client for the orchestrator REST API. Ported from the TUI's ApiClient:
- * the CLI talks cross-origin from a terminal, so it sends the secret explicitly
- * on every request (Bearer + X-Orchestrator-Secret — the server accepts either).
+ * HTTP client for the orchestrator REST API. The CLI talks cross-origin from a
+ * terminal, so it sends the secret explicitly on every request (Bearer +
+ * X-Orchestrator-Secret — the server accepts either).
  */
 export class OrchestratorClient {
   constructor(private readonly cfg: CliConfig) {}

@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-19 — CLI docs no longer describe it as a sibling to the removed TUI.
+
+**Intent:** The public `anchorage` CLI remains the supported terminal/scripted client after the private orchestrator TUI removal. Its README and source comments no longer point readers at the deleted TUI or describe config behavior in relation to it.
+
+**Files touched:**
+- cli/anchorage/README.md
+- cli/anchorage/src/client.ts
+- cli/anchorage/src/config.ts
+- cli/anchorage/src/index.ts
+
+**Reason:** ADR-0032 and user request (2026-06-19): delete the TUI without breaking the CLI.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-19 — The CLI can report, set, and switch a client account's active model without exposing keys on the command line.
 
 **Intent:** Client users can now run `anchorage model status` to see their active provider/model and whether a key is registered, `anchorage model set <provider> <model>` to save a key from env/stdin, and `anchorage model use <provider> <model>` to switch models while preserving the stored key. API keys are never accepted as flags.

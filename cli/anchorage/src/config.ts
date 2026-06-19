@@ -27,9 +27,8 @@ function readConfigFile(): Partial<CliConfig> {
 /**
  * Resolve the CLI config. Precedence: --server flag > env
  * (ANCHORAGE_ORCHESTRATOR_URL > ORCHESTRATOR_URL) > ~/.config/anchoragelabs/cli.json
- * > localhost default. Mirrors the TUI so a single login serves both. The secret
- * is never read from a flag (shell history) — env, the config file, or
- * `anchorage auth login` only.
+ * > localhost default. The secret is never read from a flag (shell history) —
+ * env, the config file, or `anchorage auth login` only.
  */
 export function loadConfig(serverFlag?: string): CliConfig {
   const file = readConfigFile();

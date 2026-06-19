@@ -7,12 +7,12 @@ import {
   type SourceSummary,
 } from "./client.js";
 /**
- * anchorage — the unified orchestrator CLI. A scriptable sibling to the TUI:
- * submit and watch runs, approve/reject gates, inspect diffs, and manage the
- * GitHub/Notion connectors, all over the orchestrator REST API.
+ * anchorage — the unified orchestrator CLI: submit and watch runs,
+ * approve/reject gates, inspect diffs, and manage connectors, all over the
+ * orchestrator REST API.
  *
- * Server + auth resolution mirrors the TUI (see config.ts): --server flag, then
- * env, then ~/.config/anchoragelabs/cli.json. The secret is never a flag.
+ * Server + auth resolution: --server flag, then env, then
+ * ~/.config/anchoragelabs/cli.json. The secret is never a flag.
  */
 import { loadConfig, saveConfig } from "./config.js";
 

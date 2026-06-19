@@ -1,8 +1,7 @@
 # cli/anchorage
 
-The unified **`anchorage`** CLI — a scriptable sibling to the TUI that drives the
-orchestrator's REST API: submit and watch runs, approve/reject gates, inspect
-diffs, and manage the GitHub/Notion connectors.
+The unified **`anchorage`** CLI drives the orchestrator's REST API: submit and
+watch runs, approve/reject gates, inspect diffs, and manage connectors.
 
 ```
 anchorage --server https://api.anchoragelabs.dev auth login   # store server (+ secret from env/stdin)
@@ -15,7 +14,7 @@ anchorage connectors connect github        # prints the authorize URL to open
 
 ## Config & auth
 
-Server + secret resolve exactly like the TUI, so one login serves both:
+Server + secret resolution:
 
 1. `--server <url>` flag
 2. `ANCHORAGE_ORCHESTRATOR_URL` / `ORCHESTRATOR_URL`
