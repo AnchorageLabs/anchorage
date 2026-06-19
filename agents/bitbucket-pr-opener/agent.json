@@ -1,0 +1,12 @@
+{
+  "name": "bitbucket-pr-opener",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Pushes the branch and opens a Bitbucket pull request.",
+  "taskTypes": ["bitbucket.pull_request.open"],
+  "inputs": ["code.change.result"],
+  "outputs": ["pr.opened"],
+  "requires": ["bitbucket.write", "workspace.write", "shell.exec"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}

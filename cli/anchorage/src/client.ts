@@ -35,6 +35,18 @@ export interface ConnectorStatus {
   kind?: string;
 }
 
+export interface SourceSummary {
+  id: string;
+  label: string;
+  workflow: string;
+  refField: string;
+  connector: string;
+  prTarget: string;
+  connected: boolean;
+  prReady: boolean;
+  connectUrl?: string;
+}
+
 export interface LlmStatus {
   provider?: string;
   model?: string;
@@ -68,6 +80,11 @@ export interface TriggerParams {
   branch?: string;
   issue?: number;
   instruction?: string;
+  notionPage?: string;
+  jiraIssue?: string;
+  linearIssue?: string;
+  gitlabIssue?: string;
+  bitbucketIssue?: string;
   pipeline?: string;
 }
 
@@ -182,6 +199,10 @@ export class OrchestratorClient {
 
   getConnectors(): Promise<Record<string, ConnectorStatus>> {
     return this.get("/connectors");
+  }
+
+  getSources(connectedOnly = false): Promise<{ sources: SourceSummary[] }> {
+    return this.get(`/sources${connectedOnly ? "?connected=1" : ""}`);
   }
 
   startConnect(

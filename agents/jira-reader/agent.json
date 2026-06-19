@@ -1,0 +1,12 @@
+{
+  "name": "jira-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads a Jira issue and emits a structured issue summary.",
+  "taskTypes": ["jira.task.read"],
+  "inputs": ["jira.issue"],
+  "outputs": ["issue.summary"],
+  "requires": ["jira.read"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

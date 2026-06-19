@@ -72,7 +72,7 @@
       "required": ["provider", "owner", "name", "defaultBranch"],
       "properties": {
         "provider": {
-          "enum": ["github"]
+          "enum": ["github", "gitlab", "bitbucket"]
         },
         "owner": {
           "type": "string",
