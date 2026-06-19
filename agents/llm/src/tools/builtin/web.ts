@@ -417,22 +417,23 @@ async function githubSearchIssuesHandler(
   input: JsonObject,
   ctx: ToolContext,
 ): Promise<ToolHandlerResult> {
+  const owner = typeof input.owner === "string" ? input.owner.trim() : "";
+  const repo = typeof input.repo === "string" ? input.repo.trim() : "";
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  if (!owner || !repo || !query) {
+    return {
+      ok: false,
+      code: "invalid_input",
+      message: "github_search_issues requires owner, repo, and query.",
+    };
+  }
+
   const budgetCheck = checkWebBudget(ctx.budget);
   if (!budgetCheck.ok) {
     return {
       ok: false,
       code: "budget_exceeded",
       message: budgetCheck.message ?? "Web budget exceeded.",
-    };
-  }
-  const owner = typeof input.owner === "string" ? input.owner : "";
-  const repo = typeof input.repo === "string" ? input.repo : "";
-  const query = typeof input.query === "string" ? input.query : "";
-  if (!owner || !repo || !query) {
-    return {
-      ok: false,
-      code: "invalid_input",
-      message: "github_search_issues requires owner, repo, and query.",
     };
   }
 
@@ -495,9 +496,13 @@ export const githubSearchIssuesTool: ToolDefinition = {
     additionalProperties: false,
     required: ["owner", "repo", "query"],
     properties: {
-      owner: { type: "string" },
-      repo: { type: "string" },
-      query: { type: "string", description: "GitHub search syntax, e.g. 'auth bug is:closed'." },
+      owner: { type: "string", minLength: 1 },
+      repo: { type: "string", minLength: 1 },
+      query: {
+        type: "string",
+        minLength: 1,
+        description: "GitHub search syntax, e.g. 'auth bug is:closed'.",
+      },
     },
   },
   capability: "web.read",
@@ -510,18 +515,10 @@ async function githubGetFileHandler(
   input: JsonObject,
   ctx: ToolContext,
 ): Promise<ToolHandlerResult> {
-  const budgetCheck = checkWebBudget(ctx.budget);
-  if (!budgetCheck.ok) {
-    return {
-      ok: false,
-      code: "budget_exceeded",
-      message: budgetCheck.message ?? "Web budget exceeded.",
-    };
-  }
-  const owner = typeof input.owner === "string" ? input.owner : "";
-  const repo = typeof input.repo === "string" ? input.repo : "";
-  const filePath = typeof input.path === "string" ? input.path : "";
-  const ref = typeof input.ref === "string" ? input.ref : "";
+  const owner = typeof input.owner === "string" ? input.owner.trim() : "";
+  const repo = typeof input.repo === "string" ? input.repo.trim() : "";
+  const filePath = typeof input.path === "string" ? input.path.trim() : "";
+  const ref = typeof input.ref === "string" ? input.ref.trim() : "";
   if (!owner || !repo || !filePath) {
     return {
       ok: false,
@@ -532,6 +529,15 @@ async function githubGetFileHandler(
   const safePath = filePath.replace(/^\/+/, "");
   if (safePath.includes("..")) {
     return { ok: false, code: "invalid_input", message: "path may not contain '..'." };
+  }
+
+  const budgetCheck = checkWebBudget(ctx.budget);
+  if (!budgetCheck.ok) {
+    return {
+      ok: false,
+      code: "budget_exceeded",
+      message: budgetCheck.message ?? "Web budget exceeded.",
+    };
   }
 
   const u = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${safePath.split("/").map(encodeURIComponent).join("/")}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`;
@@ -565,9 +571,9 @@ export const githubGetFileTool: ToolDefinition = {
     additionalProperties: false,
     required: ["owner", "repo", "path"],
     properties: {
-      owner: { type: "string" },
-      repo: { type: "string" },
-      path: { type: "string", description: "Path within the repo." },
+      owner: { type: "string", minLength: 1 },
+      repo: { type: "string", minLength: 1 },
+      path: { type: "string", minLength: 1, description: "Path within the repo." },
       ref: { type: "string", description: "Optional branch/tag/sha." },
     },
   },

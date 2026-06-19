@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-18 — Agent runs fail faster and avoid stale branch/tool-call loops by validating GitHub tool inputs before budget checks and forcing run-scoped coder branches.
+
+**Intent:** Planner/coder runs now avoid two reliability traps that caused repeated autonomous failures. GitHub web tools reject missing `owner`/`repo`/`path`/`query` as structured `invalid_input` before checking or consuming web budget, so an empty tool call tells the model what to fix instead of surfacing as a misleading budget failure. Planner branch suffixes are derived from the full run id, and coder defensively appends a run-scoped suffix to direct or stale plans before resetting and checking out the work branch with `checkout -B`; this prevents branch-name collisions and stale dirty branches from poisoning later runs.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/web.ts
+- agents/planner/src/index.ts
+- agents/coder/src/index.ts
+
+**Reason:** Maintainer reliability request (2026-06-18): reduce autonomous-run failures from empty GitHub tool calls, branch-name collisions, and reused dirty workspaces.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-18 — Bedrock throttling (429) and transient capacity errors now retry inside the turn with backoff instead of failing the whole agent step.
 
 **Intent:** The shared `sendWithRateLimitRetry` only covered the fetch-based providers (Anthropic/OpenAI), which see rate limits as HTTP `Response` objects. Bedrock's Converse API surfaces 429s, overload, and transient 5xx as *thrown* SDK exceptions, so they bypassed that path entirely — a single `ThrottlingException` killed the agent step (exit 6) and forced the orchestrator to re-run it from scratch, re-burning the whole context. New `sendAwsWithRetry` is the throw-based analogue: it retries `ThrottlingException`/`ServiceUnavailableException`/`InternalServerException`/`ModelTimeoutException` and any error tagged retryable by `$metadata.httpStatusCode` or `$retryable`, honouring a `retry-after` header when present (else the same capped exponential backoff, 5s/10s/20s, max 60s). Validation/auth errors are *not* retried, so the Bedrock adapter's existing param-compat retries (drop temperature / drop cachePoint) still see them unchanged. The `retry-after` parse is now shared between the HTTP and AWS paths.

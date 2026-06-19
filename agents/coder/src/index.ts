@@ -247,7 +247,9 @@ async function resolveImplementationPlan(
   task: TaskEnvelope,
 ): Promise<{ ok: true; value: ImplementationPlan } | CoderFailure> {
   const directPlan = parseImplementationPlan(task.input.plan);
-  if (directPlan.ok) return directPlan;
+  if (directPlan.ok) {
+    return { ok: true, value: withRunScopedBranchName(directPlan.value, task.run.id) };
+  }
 
   const artifact = task.context?.priorArtifacts?.find(
     (candidate) => candidate.artifactType === "implementation.plan",
@@ -288,7 +290,26 @@ async function resolveImplementationPlan(
     );
   }
 
-  return artifactPlan;
+  return { ok: true, value: withRunScopedBranchName(artifactPlan.value, task.run.id) };
+}
+
+function withRunScopedBranchName(plan: ImplementationPlan, runId: string): ImplementationPlan {
+  return { ...plan, branchName: appendRunSuffix(plan.branchName, runId) };
+}
+
+function appendRunSuffix(branchName: string, runId: string): string {
+  const suffix = runIdBranchSuffix(runId);
+  const normalizedBranch = branchName.trim().replace(/-+$/, "") || "fix/changes";
+  if (!suffix || normalizedBranch.includes(suffix)) return normalizedBranch;
+  return `${normalizedBranch}-${suffix}`;
+}
+
+function runIdBranchSuffix(runId: string): string {
+  return runId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(-12);
 }
 
 function parseImplementationPlan(
@@ -637,22 +658,16 @@ async function ensureBranch(
     input: { branchName, workspacePath },
   });
 
-  const createResult = await runGit(workspacePath, ["switch", "-c", branchName]);
-  if (createResult.exitCode === 0) {
-    emit(task, "tool.result", "info", `Created and switched to branch ${branchName}`, {
-      tool: "git.switch",
-      success: true,
-      output: { created: true, branchName },
-    });
-    return { ok: true };
-  }
+  await cleanAgentRuntimeArtifacts(workspacePath);
+  await runGit(workspacePath, ["reset", "--hard"]);
+  await runGit(workspacePath, ["clean", "-fd"]);
 
-  const switchResult = await runGit(workspacePath, ["switch", branchName]);
+  const switchResult = await runGit(workspacePath, ["checkout", "-B", branchName]);
   if (switchResult.exitCode === 0) {
-    emit(task, "tool.result", "info", `Switched to existing branch ${branchName}`, {
+    emit(task, "tool.result", "info", `Switched to branch ${branchName}`, {
       tool: "git.switch",
       success: true,
-      output: { created: false, branchName },
+      output: { branchName, reset: true },
     });
     return { ok: true };
   }
