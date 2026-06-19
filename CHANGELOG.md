@@ -29,6 +29,23 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-18 — Fase 5 (F2): a policy-check agent enforces .anchorage/constraints.yaml graph rules (forbid-import) against the diff — zero tokens — emitting a code.revision.request the existing loop fixes before review.
+
+**Intent:** Architecture governance, the graph-rule class. A new pure module (`agents/llm/src/policy.ts`) parses the committed `.anchorage/constraints.yaml` (a tolerant hand-parser — no YAML dependency in the agent runtime), matches paths with a `**`/`*` glob, and evaluates `forbid-import` rules as a query over the persisted import graph: for each rule, the forbidden targets are the indexed files matching `to`, and a violation is any of their importers that is BOTH in the run's diff and matches `from`. The new `policy-check` agent (task type `policy.check`) reads the constraints, computes the changed files (`git diff <base>...HEAD`), builds the import-graph view from the index (`getIndexStore`), and on a **hard** violation writes a `code.revision.request` and exits PartialSuccessAttentionRequired — the same artifact + exit the tester uses, so the orchestrator's feedback loop bounces it to the coder. Soft violations are advisory; a repo without a constraints.yaml no-ops; a missing index fails open (no invented violations). `getIndexStore`/`IndexStore` are now exported from `@anchorage/agent-llm` so the gate can reuse the one index. The orchestrator half (the workflow step + loop) ships alongside in anchorage-orchestrator.
+
+**Files touched:**
+- agents/llm/src/policy.ts
+- agents/llm/src/index.ts
+- agents/llm/test/policy.test.mjs
+- agents/policy-check/agent.json
+- agents/policy-check/package.json
+- agents/policy-check/tsconfig.json
+- agents/policy-check/src/index.ts
+- agents/policy-check/README.md
+- pnpm-lock.yaml
+
+**Reason:** Output-token reduction initiative, Fase 5 (cartographer + governance) — F2, the thesis's "AI-native architecture linter" and Dogfood target #1: rules are repo-specific, evidence-cited, and enforced pre-review at zero token cost (rule class 1 is a pure graph query). Depends on B1 (the persisted index). The repair loop already existed; this adds only the evaluator + gate.
+
 ### 2026-06-18 — Agent runs fail faster and avoid stale branch/tool-call loops by validating GitHub tool inputs before budget checks and forcing run-scoped coder branches.
 
 **Intent:** Planner/coder runs now avoid two reliability traps that caused repeated autonomous failures. GitHub web tools reject missing `owner`/`repo`/`path`/`query` as structured `invalid_input` before checking or consuming web budget, so an empty tool call tells the model what to fix instead of surfacing as a misleading budget failure. Planner branch suffixes are derived from the full run id, and coder defensively appends a run-scoped suffix to direct or stale plans before resetting and checking out the work branch with `checkout -B`; this prevents branch-name collisions and stale dirty branches from poisoning later runs.
