@@ -1,0 +1,12 @@
+{
+  "name": "policy-check",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Evaluates the run's diff against .anchorage/constraints.yaml graph rules (forbid-import) using the persisted import graph; emits a code.revision.request on a hard violation so the existing feedback loop fixes it before review.",
+  "taskTypes": ["policy.check"],
+  "inputs": ["code.change.result"],
+  "outputs": ["code.revision.request"],
+  "requires": ["workspace.read"],
+  "binary": "./dist/index.js",
+  "timeout": 120
+}

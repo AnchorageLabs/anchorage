@@ -10,6 +10,17 @@ import {
 } from "./tools/providers/param-support.js";
 import type { ProviderAdapter, RunWithToolsRequest, RunWithToolsResult } from "./tools/types.js";
 
+export {
+  evaluateForbidImports,
+  globToRegExp,
+  type ImportGraphView,
+  matchGlob,
+  type ParsedConstraints,
+  type PolicyRule,
+  type PolicySeverity,
+  type PolicyViolation,
+  parseConstraints,
+} from "./policy.js";
 export type { AgentRole } from "./role-defaults.js";
 export { ROLE_DEFAULTS } from "./role-defaults.js";
 export {
@@ -30,6 +41,7 @@ export { runWithTools } from "./tools/loop.js";
 export { createAnthropicProvider } from "./tools/providers/anthropic.js";
 export { createBedrockProvider } from "./tools/providers/bedrock.js";
 export { createOpenAiProvider } from "./tools/providers/openai.js";
+export { getIndexStore, type IndexStore } from "./tools/symbols/store.js";
 export type {
   AssistantMessage,
   BudgetConfig,
