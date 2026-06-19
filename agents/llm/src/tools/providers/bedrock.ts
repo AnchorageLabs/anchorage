@@ -18,6 +18,7 @@ import type {
   ToolDefinition,
 } from "../types.js";
 import { isPromptCachingUnsupported, isTemperatureUnsupported } from "./param-support.js";
+import { sendAwsWithRetry } from "./retry.js";
 
 export interface BedrockProviderConfig {
   model: string;
@@ -83,7 +84,11 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
             tools: includeCache ? [...tools, CACHE_POINT] : tools,
           };
         }
-        return client.send(new ConverseCommand(commandInput));
+        // Throttle/transient (429, overload, 5xx) Converse failures are retried
+        // here with backoff before the param-compat retries below — a rate limit
+        // should cost seconds, not a full agent step. Validation/auth errors are
+        // not retryable, so they fall straight through to the catch below.
+        return sendAwsWithRetry(() => client.send(new ConverseCommand(commandInput)));
       };
 
       // Caching is additive and lossless; temperature may be rejected by newer

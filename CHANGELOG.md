@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-18 — Bedrock throttling (429) and transient capacity errors now retry inside the turn with backoff instead of failing the whole agent step.
+
+**Intent:** The shared `sendWithRateLimitRetry` only covered the fetch-based providers (Anthropic/OpenAI), which see rate limits as HTTP `Response` objects. Bedrock's Converse API surfaces 429s, overload, and transient 5xx as *thrown* SDK exceptions, so they bypassed that path entirely — a single `ThrottlingException` killed the agent step (exit 6) and forced the orchestrator to re-run it from scratch, re-burning the whole context. New `sendAwsWithRetry` is the throw-based analogue: it retries `ThrottlingException`/`ServiceUnavailableException`/`InternalServerException`/`ModelTimeoutException` and any error tagged retryable by `$metadata.httpStatusCode` or `$retryable`, honouring a `retry-after` header when present (else the same capped exponential backoff, 5s/10s/20s, max 60s). Validation/auth errors are *not* retried, so the Bedrock adapter's existing param-compat retries (drop temperature / drop cachePoint) still see them unchanged. The `retry-after` parse is now shared between the HTTP and AWS paths.
+
+**Files touched:**
+- agents/llm/src/tools/providers/retry.ts
+- agents/llm/src/tools/providers/bedrock.ts
+- agents/llm/test/bedrock-retry.test.mjs
+
+**Reason:** Track 0 (Confiabilidad) · R3 — runs don't finish, so there's nothing to measure. The 2026-06-10 OpenObserve analysis put provider 429s as the dominant coder exit-6 class; the fetch providers were already covered (retry.ts) but Bedrock was not, leaving a live 429 failure path.
+
+**Author:** Sol Soletti
+
 ### 2026-06-18 — A single ANCHORAGE_INDEX_TOOLS_ENABLED master switch drops the whole persisted-index tool surface from the catalog, so a "no index" baseline can be measured cleanly.
 
 **Intent:** The index tools had inconsistent gating — `find_references`/`symbol_outline` honored `ANCHORAGE_TOOL_SYMBOLS_ENABLED`, `impact`/`tests_for` honored `ANCHORAGE_TOOL_CARTOGRAPHER_ENABLED`, and `repo_map`/`locate_change`/`relevant_tests` had no flag at all — and even the flagged ones only *fail-closed* a tool that stayed in the catalog (the model still discovered it and spent a call learning it was off). That made a clean "what does the index cost/save" A/B impossible: the off arm still carried (and called) index tools. `ANCHORAGE_INDEX_TOOLS_ENABLED` (default on) now gates all seven as one unit by **removing them from `repoReadTools` outright** when off — the catalog falls back to the lexical surface (read_file/list_dir/grep/git_*), exactly the pre-index baseline. Evaluated at module load, and the worker→agent env path preserves it (`buildAgentEnvironment` only scrubs `ANCHORAGE_LLM_*`/`*_MODEL`), so setting it on the worker reaches the agent.
