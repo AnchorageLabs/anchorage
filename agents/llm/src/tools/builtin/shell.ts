@@ -63,12 +63,12 @@ function resolveCwd(workspace: string, requested: unknown): null | string {
 function buildArgv(
   command: unknown,
 ): { ok: true; argv: string[] } | { ok: false; message: string } {
-  // String form runs through `sh -c` so the model can use pipes, redirects,
-  // and shell expansion — what real test/build commands need.
+  // String form runs through bash with pipefail so the model can use pipes,
+  // redirects, and shell expansion without hiding failures before `| tail`.
   if (typeof command === "string") {
     const trimmed = command.trim();
     if (!trimmed) return { ok: false, message: "shell_exec: command string is empty." };
-    return { ok: true, argv: ["sh", "-c", trimmed] };
+    return { ok: true, argv: ["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", trimmed] };
   }
   // Argv form runs the program directly — safer when the model can structure
   // its own argv but offers no pipes/redirects.
@@ -289,7 +289,7 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
 export const shellExecTool: ToolDefinition = {
   name: "shell_exec",
   description:
-    "Run a shell command in the workspace. String commands run via `sh -c` (pipes / && / " +
+    "Run a shell command in the workspace. String commands run via `bash -o pipefail -c` (pipes / && / " +
     "redirects allowed). Array commands run as argv. Timeout 60s default, 600s cap. " +
     "stdout capped at 100 KB, stderr at 16 KB. Secrets are scrubbed from the env. " +
     "Use this for tests, builds, type checks, and other deterministic verification.",

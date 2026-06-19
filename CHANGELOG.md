@@ -29,6 +29,17 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-19 — shell_exec preserves pipeline failures with bash pipefail so missing tools cannot look green behind `| tail`.
+
+**Intent:** Verification commands like `uv run pytest ... 2>&1 | tail -40` no longer report success when the left side fails (`uv: not found`). String-form `shell_exec` now runs through `bash --noprofile --norc -o pipefail -c`, preserving the shell ergonomics agents need while making a failed command anywhere in a pipeline fail the tool result. This prevents agents from treating missing runtime tools as successful verification.
+
+**Files touched:**
+- agents/llm/src/tools/builtin/shell.ts
+
+**Reason:** Production run `run_srv_1781887634441_0` (2026-06-19) hid a missing `uv` verification dependency behind `| tail`, causing the coder to continue with a false green shell result before failing later.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-19 — CLI docs no longer describe it as a sibling to the removed TUI.
 
 **Intent:** The public `anchorage` CLI remains the supported terminal/scripted client after the private orchestrator TUI removal. Its README and source comments no longer point readers at the deleted TUI or describe config behavior in relation to it.
