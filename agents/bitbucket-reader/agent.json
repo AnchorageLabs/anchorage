@@ -1,0 +1,12 @@
+{
+  "name": "bitbucket-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads a Bitbucket issue and emits a structured issue summary.",
+  "taskTypes": ["bitbucket.task.read"],
+  "inputs": ["bitbucket.issue"],
+  "outputs": ["issue.summary"],
+  "requires": ["bitbucket.read"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}

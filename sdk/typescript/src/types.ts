@@ -74,7 +74,7 @@ export interface TaskEnvelope {
     agent: string;
   };
   repository?: {
-    provider: "github";
+    provider: "github" | "gitlab" | "bitbucket";
     owner: string;
     name: string;
     defaultBranch: string;

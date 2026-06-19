@@ -1,0 +1,12 @@
+{
+  "name": "linear-reader",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Reads a Linear issue and emits a structured issue summary.",
+  "taskTypes": ["linear.task.read"],
+  "inputs": ["linear.issue"],
+  "outputs": ["issue.summary"],
+  "requires": ["linear.read"],
+  "binary": "./dist/index.js",
+  "timeout": 300
+}

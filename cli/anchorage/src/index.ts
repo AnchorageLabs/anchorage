@@ -4,6 +4,7 @@ import {
   type LlmStatus,
   OrchestratorClient,
   type RunSummary,
+  type SourceSummary,
 } from "./client.js";
 /**
  * anchorage — the unified orchestrator CLI. A scriptable sibling to the TUI:
@@ -71,7 +72,8 @@ Commands:
   workflows list             List available workflows
   repos list                 List targetable repositories
   issues list <owner/repo>   List a repo's open issues
-  connectors status          Show GitHub/Notion connector status
+  sources [--all]            Show work-item sources you can open a PR from (only connected, or --all)
+  connectors status          Show connector status (github, notion, jira, linear, slack, gitlab, bitbucket)
   connectors connect <p>     Begin connecting a provider (prints the authorize URL)
   connectors disconnect <p>  Drop a provider's stored connection
   model status               Show active provider/model and key status
@@ -99,6 +101,15 @@ function runLine(r: RunSummary): string {
   const gate = r.awaitingApproval ? " (awaiting approval)" : "";
   const issue = r.issue ? ` #${r.issue}` : "";
   return `${r.id}  ${r.status.padEnd(9)} ${repo} ${r.workflow}${issue}${step}${gate}`;
+}
+
+function sourceLine(s: SourceSummary): string {
+  const head = `${s.id.padEnd(10)} ${s.connected ? "connected" : "not connected"}`;
+  if (s.connected) {
+    const pr = s.prReady ? "" : ` (connect ${s.prTarget} to open the PR)`;
+    return `${head} → ${s.workflow}${pr}`;
+  }
+  return `${head}${s.connectUrl ? `\n           connect: ${s.connectUrl}` : ""}`;
 }
 
 function connectorLine(id: string, s: ConnectorStatus & { connect_url?: string }): string {
@@ -203,6 +214,11 @@ async function main(): Promise<number> {
         repo: name,
         ...(issue ? { issue: Number(issue) } : {}),
         ...(instruction ? { instruction } : {}),
+        ...(str(flags, "notion-page") ? { notionPage: str(flags, "notion-page") } : {}),
+        ...(str(flags, "jira-issue") ? { jiraIssue: str(flags, "jira-issue") } : {}),
+        ...(str(flags, "linear-issue") ? { linearIssue: str(flags, "linear-issue") } : {}),
+        ...(str(flags, "gitlab-issue") ? { gitlabIssue: str(flags, "gitlab-issue") } : {}),
+        ...(str(flags, "bitbucket-issue") ? { bitbucketIssue: str(flags, "bitbucket-issue") } : {}),
         ...(str(flags, "workflow") ? { pipeline: str(flags, "workflow") } : {}),
         ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
       });
@@ -274,6 +290,17 @@ async function main(): Promise<number> {
       );
       return 0;
     }
+    case "sources": {
+      // Default to only-connected (the suggestion list); --all shows every source.
+      const showAll = flags.all === true || flags.all === "true";
+      const { sources } = await client.getSources(!showAll);
+      out(sources, json, () =>
+        sources.length
+          ? sources.map(sourceLine).join("\n")
+          : "No connected sources. Connect one with: anchorage connectors connect <provider>",
+      );
+      return 0;
+    }
     case "connectors status": {
       const status = await client.getConnectors();
       out(status, json, () =>
@@ -285,7 +312,8 @@ async function main(): Promise<number> {
     }
     case "connectors connect": {
       const provider = rest[0];
-      if (!provider) return usageErr("connectors connect <github|notion>");
+      if (!provider)
+        return usageErr("connectors connect <github|notion|jira|linear|slack|gitlab|bitbucket>");
       const { authorizeUrl } = await client.startConnect(provider);
       out(
         { provider, authorizeUrl },
@@ -296,7 +324,8 @@ async function main(): Promise<number> {
     }
     case "connectors disconnect": {
       const provider = rest[0];
-      if (!provider) return usageErr("connectors disconnect <github|notion>");
+      if (!provider)
+        return usageErr("connectors disconnect <github|notion|jira|linear|slack|gitlab|bitbucket>");
       const r = await client.disconnect(provider);
       out(r, json, () => `Disconnected ${provider} (removed ${r.removed}).`);
       return 0;

@@ -29,7 +29,11 @@ function repoContextEnabled(env: Record<string, string>): boolean {
   return !/^(false|0|no|off)$/i.test(raw.trim());
 }
 
-function spawnCartographer(args: string[], root: string, env: Record<string, string>): Promise<void> {
+function spawnCartographer(
+  args: string[],
+  root: string,
+  env: Record<string, string>,
+): Promise<void> {
   const { cmd, baseArgs } = cartographerCommand(env);
   return new Promise((resolve) => {
     const child = spawn(cmd, [...baseArgs, ...args], {

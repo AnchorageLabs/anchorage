@@ -313,9 +313,8 @@ function withPreviousChangeBranch(
   plan: ImplementationPlan,
   previousCodeChange: JsonObject | null,
 ): ImplementationPlan {
-  const branchName = typeof previousCodeChange?.branchName === "string"
-    ? previousCodeChange.branchName.trim()
-    : "";
+  const branchName =
+    typeof previousCodeChange?.branchName === "string" ? previousCodeChange.branchName.trim() : "";
   return branchName.length > 0 ? { ...plan, branchName } : plan;
 }
 
@@ -578,9 +577,8 @@ function coderUserPrompt(
   // a downstream gate rejected it. The branch already carries that work — the job
   // now is to FIX the listed failures, not to start over.
   const isRevision = revisionRequest !== null;
-  const priorChange = isRevision && previousCodeChange
-    ? summarizePriorCodeChange(previousCodeChange)
-    : null;
+  const priorChange =
+    isRevision && previousCodeChange ? summarizePriorCodeChange(previousCodeChange) : null;
 
   return JSON.stringify(
     {
@@ -634,9 +632,10 @@ function summarizePriorCodeChange(change: JsonObject): JsonObject {
       .filter((file) => Object.keys(file).length > 0);
   }
   if (typeof change.diff === "string" && change.diff.length > 0) {
-    out.diffExcerpt = change.diff.length > 12_000
-      ? `${change.diff.slice(0, 12_000)}\n… [diff truncated]`
-      : change.diff;
+    out.diffExcerpt =
+      change.diff.length > 12_000
+        ? `${change.diff.slice(0, 12_000)}\n… [diff truncated]`
+        : change.diff;
   }
   return out;
 }
@@ -724,9 +723,10 @@ async function ensureBranch(
   await runGit(workspacePath, ["reset", "--hard"]);
   await runGit(workspacePath, ["clean", "-fd"]);
 
-  const switchResult = opts?.preserveExisting === true
-    ? await runGit(workspacePath, ["checkout", branchName])
-    : await runGit(workspacePath, ["checkout", "-B", branchName]);
+  const switchResult =
+    opts?.preserveExisting === true
+      ? await runGit(workspacePath, ["checkout", branchName])
+      : await runGit(workspacePath, ["checkout", "-B", branchName]);
   if (switchResult.exitCode === 0) {
     emit(task, "tool.result", "info", `Switched to branch ${branchName}`, {
       tool: "git.switch",
