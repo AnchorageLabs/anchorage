@@ -97,7 +97,7 @@ const OPENAI_COMPAT_PRESETS: Record<string, OpenAiPreset> = {
     name: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1",
     apiKeyEnv: "OPENROUTER_API_KEY",
-    defaultModel: "anthropic/claude-sonnet-4-6",
+    defaultModel: "deepseek/deepseek-v4-flash",
   },
   deepseek: {
     name: "deepseek",
