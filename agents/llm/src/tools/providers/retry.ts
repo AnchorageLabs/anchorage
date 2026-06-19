@@ -18,23 +18,35 @@ export function isRetryableStatus(status: number): boolean {
 }
 
 /**
+ * Parse a `retry-after` header value (seconds or HTTP-date form) into a capped
+ * delay in ms, or null when the header is absent/unparseable. Shared by the HTTP
+ * and AWS paths so both honour a server-supplied backoff identically.
+ */
+function retryAfterMs(header: string | null | undefined): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_DELAY_MS);
+  }
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    return Math.min(Math.max(date - Date.now(), 0), MAX_DELAY_MS);
+  }
+  return null;
+}
+
+/** Exponential backoff (5s, 10s, 20s…), capped at 60s. */
+function backoffMs(attempt: number): number {
+  return Math.min(5_000 * 2 ** attempt, MAX_DELAY_MS);
+}
+
+/**
  * Delay before the next attempt: the server's `retry-after` when present
  * (seconds or HTTP-date form), else exponential backoff (5s, 10s, 20s),
  * capped at 60s so a hostile header cannot stall a turn.
  */
 export function retryDelayMs(response: Response, attempt: number): number {
-  const header = response.headers.get("retry-after");
-  if (header) {
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.min(seconds * 1000, MAX_DELAY_MS);
-    }
-    const date = Date.parse(header);
-    if (!Number.isNaN(date)) {
-      return Math.min(Math.max(date - Date.now(), 0), MAX_DELAY_MS);
-    }
-  }
-  return Math.min(5_000 * 2 ** attempt, MAX_DELAY_MS);
+  return retryAfterMs(response.headers.get("retry-after")) ?? backoffMs(attempt);
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -55,4 +67,71 @@ export async function sendWithRateLimitRetry(send: () => Promise<Response>): Pro
     response = await send();
   }
   return response;
+}
+
+// --- AWS / Bedrock throttle retry ------------------------------------------
+// Bedrock's Converse API surfaces rate limits and transient capacity as THROWN
+// SDK exceptions, not HTTP Response objects — so the fetch path above never sees
+// them and a single 429 used to fail the whole agent step (the GITHUB_TOKEN /
+// 429 failure class from the OpenObserve analysis). Same intent, throw-shaped:
+// a throttle costs seconds of backoff here instead of a full step re-run.
+
+/** AWS SDK error names worth retrying: rate limits, capacity, transient 5xx. */
+const RETRYABLE_AWS_ERROR_NAMES = new Set([
+  "ThrottlingException",
+  "TooManyRequestsException",
+  "ServiceQuotaExceededException",
+  "ServiceUnavailableException",
+  "InternalServerException",
+  "ModelTimeoutException",
+  "ModelNotReadyException",
+]);
+
+/**
+ * True when a thrown AWS SDK error is a rate-limit/transient failure. Matches on
+ * the HTTP status the SDK records in `$metadata`, the exception `name`, or the
+ * SDK's own `$retryable` tag — any one is enough.
+ */
+export function isRetryableAwsError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as {
+    name?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+    $retryable?: unknown;
+  };
+  const status = e.$metadata?.httpStatusCode;
+  if (typeof status === "number" && isRetryableStatus(status)) return true;
+  if (typeof e.name === "string" && RETRYABLE_AWS_ERROR_NAMES.has(e.name)) return true;
+  if (e.$retryable !== null && typeof e.$retryable === "object") return true;
+  return false;
+}
+
+/**
+ * Delay before retrying a thrown AWS error: honour a `retry-after` header on the
+ * underlying HTTP response when present, else the same capped exponential
+ * backoff as the HTTP path.
+ */
+export function awsRetryDelayMs(error: unknown, attempt: number): number {
+  const headers = (error as { $response?: { headers?: Record<string, string> } } | null)?.$response
+    ?.headers;
+  const header = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  return retryAfterMs(header) ?? backoffMs(attempt);
+}
+
+/**
+ * Run `send` (an AWS SDK call that THROWS on failure) until it succeeds, throws a
+ * non-retryable error, or retries are exhausted — the throw-based analogue of
+ * sendWithRateLimitRetry. Non-retryable errors (validation, auth, an unsupported
+ * parameter) propagate immediately so the Bedrock adapter's param-compat retries
+ * still see them.
+ */
+export async function sendAwsWithRetry<T>(send: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (error) {
+      if (attempt >= MAX_RATE_LIMIT_RETRIES || !isRetryableAwsError(error)) throw error;
+      await sleep(awsRetryDelayMs(error, attempt));
+    }
+  }
 }

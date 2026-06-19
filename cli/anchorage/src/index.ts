@@ -1,0 +1,279 @@
+#!/usr/bin/env node
+import { type ConnectorStatus, OrchestratorClient, type RunSummary } from "./client.js";
+/**
+ * anchorage — the unified orchestrator CLI. A scriptable sibling to the TUI:
+ * submit and watch runs, approve/reject gates, inspect diffs, and manage the
+ * GitHub/Notion connectors, all over the orchestrator REST API.
+ *
+ * Server + auth resolution mirrors the TUI (see config.ts): --server flag, then
+ * env, then ~/.config/anchoragelabs/cli.json. The secret is never a flag.
+ */
+import { loadConfig, saveConfig } from "./config.js";
+
+// ── tiny arg parsing (no external deps) ──────────────────────────────────────
+
+interface Args {
+  positional: string[];
+  flags: Record<string, string | boolean>;
+}
+
+// Flags that take no value — so they never swallow the following positional
+// (e.g. `--json connectors status` must not read "connectors" as --json's value).
+const BOOLEAN_FLAGS = new Set(["json", "help"]);
+
+function parseArgs(argv: string[]): Args {
+  const positional: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue;
+    if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (!BOOLEAN_FLAGS.has(key) && next !== undefined && !next.startsWith("--")) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { positional, flags };
+}
+
+function str(flags: Args["flags"], key: string): string | undefined {
+  const v = flags[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+const USAGE = `anchorage — orchestrator CLI
+
+Usage: anchorage [--server <url>] [--json] <command>
+
+Commands:
+  auth login                 Save server URL (+ secret from env/stdin) to the config file
+  auth whoami                Show the credential the server sees
+  runs list                  List recent runs
+  runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b]
+  runs status <id>           Show a run's status
+  runs watch <id>            Stream a run's events until it ends
+  runs approve <id>          Approve a paused run
+  runs reject <id>           Reject a paused run
+  runs cancel <id>           Cancel a running run
+  runs diff <id>             Print a run's unified diff
+  workflows list             List available workflows
+  repos list                 List targetable repositories
+  issues list <owner/repo>   List a repo's open issues
+  connectors status          Show GitHub/Notion connector status
+  connectors connect <p>     Begin connecting a provider (prints the authorize URL)
+  connectors disconnect <p>  Drop a provider's stored connection
+
+Global flags:
+  --server <url>   Orchestrator base URL (else env/config/localhost)
+  --json           Print raw JSON instead of formatted output
+`;
+
+// ── output helpers ───────────────────────────────────────────────────────────
+
+function out(value: unknown, json: boolean, format: () => string): void {
+  process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${format()}\n`);
+}
+
+function runLine(r: RunSummary): string {
+  const repo = `${r.owner}/${r.repo}`;
+  const step = r.currentStep ? ` @${r.currentStep}` : "";
+  const gate = r.awaitingApproval ? " (awaiting approval)" : "";
+  const issue = r.issue ? ` #${r.issue}` : "";
+  return `${r.id}  ${r.status.padEnd(9)} ${repo} ${r.workflow}${issue}${step}${gate}`;
+}
+
+function connectorLine(id: string, s: ConnectorStatus & { connect_url?: string }): string {
+  if (!s.available) return `${id.padEnd(10)} unavailable`;
+  if (s.connected) {
+    const who = s.login ? ` · ${s.login}` : "";
+    const src = s.source ? ` [${s.source}${s.kind ? `:${s.kind}` : ""}]` : "";
+    return `${id.padEnd(10)} connected${who}${src}`;
+  }
+  return `${id.padEnd(10)} not connected`;
+}
+
+/** Read a secret for `auth login` from env, or from stdin when piped. Never a flag. */
+async function readLoginSecret(): Promise<string | undefined> {
+  const fromEnv =
+    process.env.ANCHORAGE_ORCHESTRATOR_SECRET?.trim() || process.env.ORCHESTRATOR_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.stdin.isTTY) return undefined; // interactive: skip (server may be open)
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  const piped = Buffer.concat(chunks).toString("utf8").trim();
+  return piped || undefined;
+}
+
+// ── command dispatch ─────────────────────────────────────────────────────────
+
+async function main(): Promise<number> {
+  const { positional, flags } = parseArgs(process.argv.slice(2));
+  const json = flags.json === true;
+  const [command, sub, ...rest] = positional;
+
+  if (!command || flags.help === true) {
+    process.stdout.write(USAGE);
+    return flags.help === true ? 0 : 2;
+  }
+
+  const client = new OrchestratorClient(loadConfig(str(flags, "server")));
+
+  switch (`${command} ${sub ?? ""}`.trim()) {
+    case "auth login": {
+      const secret = await readLoginSecret();
+      const file = saveConfig({ serverUrl: client.serverUrl, ...(secret ? { secret } : {}) });
+      out(
+        { saved: file, serverUrl: client.serverUrl, secret: secret ? "stored" : "none" },
+        json,
+        () => `Saved ${client.serverUrl} to ${file}${secret ? " (with secret)" : " (no secret)"}`,
+      );
+      return 0;
+    }
+    case "auth whoami": {
+      const who = await client.whoami();
+      out(who, json, () =>
+        who.kind === "admin" ? "admin" : `client ${who.clientId} (${who.name})`,
+      );
+      return 0;
+    }
+    case "runs list": {
+      const runs = await client.listRuns();
+      out(runs, json, () => (runs.length ? runs.map(runLine).join("\n") : "No runs."));
+      return 0;
+    }
+    case "runs start": {
+      const repo = str(flags, "repo");
+      const [owner, name] = repo?.split("/") ?? [];
+      if (!owner || !name) {
+        process.stderr.write("runs start requires --repo <owner/name>\n");
+        return 2;
+      }
+      const issue = str(flags, "issue");
+      const instruction = str(flags, "instruction");
+      const run = await client.triggerRun({
+        owner,
+        repo: name,
+        ...(issue ? { issue: Number(issue) } : {}),
+        ...(instruction ? { instruction } : {}),
+        ...(str(flags, "workflow") ? { pipeline: str(flags, "workflow") } : {}),
+        ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
+      });
+      out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
+      return 0;
+    }
+    case "runs status": {
+      const id = rest[0];
+      if (!id) return usageErr("runs status <id>");
+      const run = await client.getRun(id);
+      out(run, json, () => runLine(run));
+      return 0;
+    }
+    case "runs watch": {
+      const id = rest[0];
+      if (!id) return usageErr("runs watch <id>");
+      process.stderr.write(`Watching ${id} (Ctrl-C to stop)…\n`);
+      await client.streamEvents(id, (e) => {
+        process.stdout.write(`${e.type.padEnd(18)} ${e.message}\n`);
+      });
+      const final = await client.getRun(id).catch(() => null);
+      if (final) process.stderr.write(`\n${runLine(final)}\n`);
+      return 0;
+    }
+    case "runs approve":
+    case "runs reject": {
+      const id = rest[0];
+      if (!id) return usageErr(`runs ${sub} <id>`);
+      await client.decideRun(id, sub === "approve");
+      out(
+        { id, decision: sub },
+        json,
+        () => `${sub === "approve" ? "Approved" : "Rejected"} ${id}`,
+      );
+      return 0;
+    }
+    case "runs cancel": {
+      const id = rest[0];
+      if (!id) return usageErr("runs cancel <id>");
+      await client.cancelRun(id);
+      out({ id, canceled: true }, json, () => `Canceled ${id}`);
+      return 0;
+    }
+    case "runs diff": {
+      const id = rest[0];
+      if (!id) return usageErr("runs diff <id>");
+      const d = await client.getRunDiff(id);
+      out(d, json, () => d.diff ?? "(no diff)");
+      return 0;
+    }
+    case "workflows list": {
+      const wfs = await client.listWorkflows();
+      out(wfs, json, () => wfs.map((w) => `${w.name}\n  ${w.steps.join(" → ")}`).join("\n"));
+      return 0;
+    }
+    case "repos list": {
+      const repos = await client.listRepos();
+      out(repos, json, () => (repos.length ? repos.join("\n") : "No repos."));
+      return 0;
+    }
+    case "issues list": {
+      const ownerRepo = rest[0];
+      if (!ownerRepo?.includes("/")) return usageErr("issues list <owner/repo>");
+      const issues = await client.listIssues(ownerRepo);
+      out(issues, json, () =>
+        issues.length
+          ? issues.map((i) => `#${i.number}  ${i.title}`).join("\n")
+          : "No open issues.",
+      );
+      return 0;
+    }
+    case "connectors status": {
+      const status = await client.getConnectors();
+      out(status, json, () =>
+        Object.entries(status)
+          .map(([id, s]) => connectorLine(id, s))
+          .join("\n"),
+      );
+      return 0;
+    }
+    case "connectors connect": {
+      const provider = rest[0];
+      if (!provider) return usageErr("connectors connect <github|notion>");
+      const { authorizeUrl } = await client.startConnect(provider);
+      out(
+        { provider, authorizeUrl },
+        json,
+        () => `Open this URL in a browser to connect ${provider}:\n\n  ${authorizeUrl}\n`,
+      );
+      return 0;
+    }
+    case "connectors disconnect": {
+      const provider = rest[0];
+      if (!provider) return usageErr("connectors disconnect <github|notion>");
+      const r = await client.disconnect(provider);
+      out(r, json, () => `Disconnected ${provider} (removed ${r.removed}).`);
+      return 0;
+    }
+    default:
+      process.stderr.write(`Unknown command: ${command} ${sub ?? ""}\n\n${USAGE}`);
+      return 2;
+  }
+}
+
+function usageErr(usage: string): number {
+  process.stderr.write(`Usage: anchorage ${usage}\n`);
+  return 2;
+}
+
+main()
+  .then((code) => process.exit(code))
+  .catch((err: unknown) => {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });

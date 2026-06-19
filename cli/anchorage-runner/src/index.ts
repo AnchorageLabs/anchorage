@@ -46,7 +46,7 @@ async function main(): Promise<number> {
 }
 
 function printUsage(): void {
-  console.error("Usage: anchorage run <agent-name-or-path> < task.json");
+  console.error("Usage: anchorage-runner run <agent-name-or-path> < task.json");
 }
 
 async function readStdin(): Promise<string> {

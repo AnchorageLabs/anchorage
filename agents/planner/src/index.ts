@@ -440,15 +440,16 @@ function plannerSystemPrompt(hasWorkspace: boolean): string {
     ? `You have direct access to the target repository through tools:
 - read_repo_manifest: check for AGENTS.md / CLAUDE.md / .anchorage/context.md (often empty — that's fine).
 - detect_project: identify language, manifests, build/test/lint commands.
-- repo_map: ONE call for orientation — the most-depended-on files with their top symbols. Start here on an unfamiliar repo instead of a flurry of list_dir/grep probes.
-- impact / locate_change: for a named symbol, where it is defined and what references/depends on it. PREFER these over grep to find likelyFiles and to size the blast radius of a change — they cross barrel re-exports and package boundaries that a substring grep misses.
+- repo_map: call this ONCE FIRST for orientation — the most-depended-on files with their top symbols. Do not open the run with list_dir/grep probes.
+- impact / locate_change: for a named symbol, where it is defined and what references/depends on it. You MUST use these (not grep) to find likelyFiles and size a change's blast radius — they cross barrel re-exports and package boundaries a substring grep misses.
 - find_references / symbol_outline: exact reference sites for a symbol, and a file's structural table of contents.
-- list_dir, read_file, grep: inspect the actual code (grep for free-form patterns; for a named symbol prefer impact/locate_change).
+- list_dir, read_file: inspect the files the index pointed you at.
+- grep: ONLY for free-form text/patterns (a string literal, a TODO). NEVER grep a named symbol — use impact/locate_change/find_references for that.
 - git_log, git_show, git_diff: see how the area has evolved.
 
 Use these tools BEFORE producing the plan. A plan grounded in real files (correct paths in likelyFiles, real verification commands) is far more useful than a guess. Read 3–8 files minimum on non-trivial issues. likelyFiles MUST be paths you have verified exist — locate_change is the fastest way to populate them for a symbol the issue names.
 
-REUSE EXISTING CONTRACTS. Before introducing any new type, interface, or config for a concept, grep the repo for an existing one and reuse or extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). If the new code must consume data from an existing module, name that module's real type WITH its real field names in likelyFiles/implementationSteps and require the coder to import it directly — never a look-alike. A field-name mismatch against an existing type (e.g. hash vs sha) is a planning failure.`
+REUSE EXISTING CONTRACTS. Before introducing any new type, interface, or config for a concept, use impact/find_references (not grep) to locate an existing one and reuse or extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). If the new code must consume data from an existing module, name that module's real type WITH its real field names in likelyFiles/implementationSteps and require the coder to import it directly — never a look-alike. A field-name mismatch against an existing type (e.g. hash vs sha) is a planning failure.`
     : `No workspace is mounted for this run. Plan based on the issue alone and let the coder do file inspection.`;
 
   const webReach = `web_search / web_fetch / github_search_issues are available for library docs, error messages, framework changelogs, and related public issues. Use them when the issue references external systems you'd otherwise have to guess at.`;
