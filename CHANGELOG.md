@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-19 — The CLI can report, set, and switch a client account's active model without exposing keys on the command line.
+
+**Intent:** Client users can now run `anchorage model status` to see their active provider/model and whether a key is registered, `anchorage model set <provider> <model>` to save a key from env/stdin, and `anchorage model use <provider> <model>` to switch models while preserving the stored key. API keys are never accepted as flags.
+
+**Files touched:**
+- cli/anchorage/src/client.ts
+- cli/anchorage/src/index.ts
+
+**Reason:** Maintainer request (2026-06-19): per-client model credentials must be manageable from every user surface, including the CLI, with key input via env/stdin only.
+
+**Author:** Valentin Torassa
+
 ### 2026-06-18 — Fase 5 (F2): a policy-check agent enforces .anchorage/constraints.yaml graph rules (forbid-import) against the diff — zero tokens — emitting a code.revision.request the existing loop fixes before review.
 
 **Intent:** Architecture governance, the graph-rule class. A new pure module (`agents/llm/src/policy.ts`) parses the committed `.anchorage/constraints.yaml` (a tolerant hand-parser — no YAML dependency in the agent runtime), matches paths with a `**`/`*` glob, and evaluates `forbid-import` rules as a query over the persisted import graph: for each rule, the forbidden targets are the indexed files matching `to`, and a violation is any of their importers that is BOTH in the run's diff and matches `from`. The new `policy-check` agent (task type `policy.check`) reads the constraints, computes the changed files (`git diff <base>...HEAD`), builds the import-graph view from the index (`getIndexStore`), and on a **hard** violation writes a `code.revision.request` and exits PartialSuccessAttentionRequired — the same artifact + exit the tester uses, so the orchestrator's feedback loop bounces it to the coder. Soft violations are advisory; a repo without a constraints.yaml no-ops; a missing index fails open (no invented violations). `getIndexStore`/`IndexStore` are now exported from `@anchorage/agent-llm` so the gate can reuse the one index. The orchestrator half (the workflow step + loop) ships alongside in anchorage-orchestrator.

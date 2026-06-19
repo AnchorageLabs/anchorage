@@ -1,5 +1,10 @@
 #!/usr/bin/env node
-import { type ConnectorStatus, OrchestratorClient, type RunSummary } from "./client.js";
+import {
+  type ConnectorStatus,
+  type LlmStatus,
+  OrchestratorClient,
+  type RunSummary,
+} from "./client.js";
 /**
  * anchorage — the unified orchestrator CLI. A scriptable sibling to the TUI:
  * submit and watch runs, approve/reject gates, inspect diffs, and manage the
@@ -69,10 +74,17 @@ Commands:
   connectors status          Show GitHub/Notion connector status
   connectors connect <p>     Begin connecting a provider (prints the authorize URL)
   connectors disconnect <p>  Drop a provider's stored connection
+  model status               Show active provider/model and key status
+  model set <p> <m>          Save a model key from env/stdin and activate provider/model
+  model use <p> <m>          Activate provider/model without changing the stored key
 
 Global flags:
   --server <url>   Orchestrator base URL (else env/config/localhost)
   --json           Print raw JSON instead of formatted output
+
+Model key input:
+  ANCHORAGE_MODEL_API_KEY=... anchorage model set <provider> <model>
+  printf '%s' "$KEY" | anchorage model set <provider> <model>
 `;
 
 // ── output helpers ───────────────────────────────────────────────────────────
@@ -99,6 +111,13 @@ function connectorLine(id: string, s: ConnectorStatus & { connect_url?: string }
   return `${id.padEnd(10)} not connected`;
 }
 
+function modelLine(llm: LlmStatus | null | undefined): string {
+  if (!llm?.provider) return "No model configured.";
+  const model = llm.model ? ` ${llm.model}` : "";
+  const key = llm.hasKey ? "key registered" : "no key registered";
+  return `${llm.provider}${model} (${key})`;
+}
+
 /** Read a secret for `auth login` from env, or from stdin when piped. Never a flag. */
 async function readLoginSecret(): Promise<string | undefined> {
   const fromEnv =
@@ -109,6 +128,28 @@ async function readLoginSecret(): Promise<string | undefined> {
   for await (const c of process.stdin) chunks.push(c as Buffer);
   const piped = Buffer.concat(chunks).toString("utf8").trim();
   return piped || undefined;
+}
+
+/** Read a model API key from env, or stdin when piped. Never a CLI flag. */
+async function readModelApiKey(provider: string): Promise<string | undefined> {
+  const providerEnv = `${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  const fromEnv =
+    process.env.ANCHORAGE_MODEL_API_KEY?.trim() ||
+    process.env.ANCHORAGE_LLM_API_KEY?.trim() ||
+    process.env[providerEnv]?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.stdin.isTTY) return undefined;
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  const piped = Buffer.concat(chunks).toString("utf8").trim();
+  return piped || undefined;
+}
+
+function modelArgs(flags: Args["flags"], rest: string[]): { provider?: string; model?: string } {
+  return {
+    provider: str(flags, "provider") ?? rest[0],
+    model: str(flags, "model") ?? rest[1],
+  };
 }
 
 // ── command dispatch ─────────────────────────────────────────────────────────
@@ -258,6 +299,32 @@ async function main(): Promise<number> {
       if (!provider) return usageErr("connectors disconnect <github|notion>");
       const r = await client.disconnect(provider);
       out(r, json, () => `Disconnected ${provider} (removed ${r.removed}).`);
+      return 0;
+    }
+    case "model status": {
+      const me = await client.getMe();
+      out(me, json, () => (me.kind === "client" ? modelLine(me.llm) : "admin (no client model)"));
+      return 0;
+    }
+    case "model set": {
+      const { provider, model } = modelArgs(flags, rest);
+      if (!provider || !model) return usageErr("model set <provider> <model>");
+      const apiKey = await readModelApiKey(provider);
+      if (!apiKey) {
+        process.stderr.write(
+          "model set requires an API key via ANCHORAGE_MODEL_API_KEY, ANCHORAGE_LLM_API_KEY, provider env, or stdin\n",
+        );
+        return 2;
+      }
+      const llm = await client.setModel(provider, model, apiKey);
+      out(llm, json, () => `Saved ${modelLine(llm)}.`);
+      return 0;
+    }
+    case "model use": {
+      const { provider, model } = modelArgs(flags, rest);
+      if (!provider || !model) return usageErr("model use <provider> <model>");
+      const llm = await client.setModel(provider, model);
+      out(llm, json, () => `Activated ${modelLine(llm)}.`);
       return 0;
     }
     default:
