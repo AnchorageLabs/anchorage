@@ -71,6 +71,7 @@ async function main(): Promise<number> {
     task.value,
     input.value.workspacePath,
     input.value.plan.branchName,
+    { preserveExisting: input.value.revisionRequest !== null },
   );
   if (!branchResult.ok) return fail(task.value, branchResult);
 
@@ -231,10 +232,21 @@ async function resolveCoderInput(
   // Present only on a loop-back: a downstream gate (tester) sent the change back
   // to be revised against specific failures.
   const revisionRequest = await readOptionalJsonArtifact(task, REVISION_REQUEST_ARTIFACT_TYPE);
+  const previousCodeChange = await readOptionalJsonArtifact(task, "code.change.result");
+  const effectivePlan = revisionRequest
+    ? withPreviousChangeBranch(plan.value, previousCodeChange)
+    : plan.value;
 
   return {
     ok: true,
-    value: { workspacePath, plan: plan.value, issueSummary, triageResult, revisionRequest },
+    value: {
+      workspacePath,
+      plan: effectivePlan,
+      issueSummary,
+      triageResult,
+      revisionRequest,
+      previousCodeChange,
+    },
   };
 }
 
@@ -295,6 +307,16 @@ async function resolveImplementationPlan(
 
 function withRunScopedBranchName(plan: ImplementationPlan, runId: string): ImplementationPlan {
   return { ...plan, branchName: appendRunSuffix(plan.branchName, runId) };
+}
+
+function withPreviousChangeBranch(
+  plan: ImplementationPlan,
+  previousCodeChange: JsonObject | null,
+): ImplementationPlan {
+  const branchName = typeof previousCodeChange?.branchName === "string"
+    ? previousCodeChange.branchName.trim()
+    : "";
+  return branchName.length > 0 ? { ...plan, branchName } : plan;
 }
 
 function appendRunSuffix(branchName: string, runId: string): string {
@@ -409,6 +431,7 @@ async function driveCoderLoop(
           input.issueSummary,
           input.triageResult,
           input.revisionRequest,
+          input.previousCodeChange,
         ),
       },
     ],
@@ -520,6 +543,7 @@ function coderUserPrompt(
   issueSummary: JsonObject | null,
   triageResult: JsonObject | null,
   revisionRequest: JsonObject | null,
+  previousCodeChange: JsonObject | null,
 ): string {
   const context: JsonObject = {};
   if (issueSummary) {
@@ -554,14 +578,18 @@ function coderUserPrompt(
   // a downstream gate rejected it. The branch already carries that work — the job
   // now is to FIX the listed failures, not to start over.
   const isRevision = revisionRequest !== null;
+  const priorChange = isRevision && previousCodeChange
+    ? summarizePriorCodeChange(previousCodeChange)
+    : null;
 
   return JSON.stringify(
     {
       task: isRevision
-        ? "A previous attempt at this plan failed a downstream check. The branch already has that work; revise it to fix the failures in revisionFeedback, then re-verify."
+        ? "A previous attempt at this plan is already committed on this branch. Do NOT restart the implementation. Inspect priorCodeChange first, preserve the existing work, and make the smallest corrective edit for revisionFeedback."
         : "Apply this implementation plan by editing the workspace via the available tools.",
       ...(Object.keys(context).length > 0 ? { context } : {}),
       plan,
+      ...(priorChange ? { priorCodeChange: priorChange } : {}),
       ...(isRevision ? { revisionFeedback: revisionRequest } : {}),
       constraints: [
         "Apply changes with edit_file (modify existing files) or write_file (new/rewritten files) via the tools; do not paste fileEdits[] in your response.",
@@ -569,7 +597,9 @@ function coderUserPrompt(
         "Run available verification commands (test/build/lint) via shell_exec when possible.",
         ...(isRevision
           ? [
-              "Address every failure in revisionFeedback; re-run the failing commands and confirm they pass before finishing.",
+              "Start by checking the current branch state and priorCodeChange. Treat the previous commit as the baseline, not as disposable work.",
+              "Address every failure in revisionFeedback with a narrow corrective change; do not recreate already-implemented files or redo unrelated plan steps.",
+              "If revisionFeedback is caused by a missing command/tool in the execution environment rather than a code defect, do not rewrite product code to compensate; report the environment blocker in risks after any reasonable targeted verification you can run.",
             ]
           : []),
         "Final response: a JSON object with summary, commandsSuggested, risks.",
@@ -578,6 +608,37 @@ function coderUserPrompt(
     null,
     2,
   );
+}
+
+function summarizePriorCodeChange(change: JsonObject): JsonObject {
+  const out: JsonObject = {};
+  for (const key of ["status", "branchName", "commitSha", "summary"] as const) {
+    const value = change[key];
+    if (typeof value === "string") out[key] = value;
+  }
+  if (Array.isArray(change.changedFiles)) out.changedFiles = change.changedFiles.filter(isString);
+  if (Array.isArray(change.editedFiles)) out.editedFiles = change.editedFiles.filter(isString);
+  if (Array.isArray(change.commandsSuggested)) {
+    out.commandsSuggested = change.commandsSuggested.filter(isString);
+  }
+  if (Array.isArray(change.fileDiffs)) {
+    out.fileDiffs = change.fileDiffs
+      .filter(isObject)
+      .map((file) => {
+        const entry: JsonObject = {};
+        if (typeof file.path === "string") entry.path = file.path;
+        if (typeof file.additions === "number") entry.additions = file.additions;
+        if (typeof file.deletions === "number") entry.deletions = file.deletions;
+        return entry;
+      })
+      .filter((file) => Object.keys(file).length > 0);
+  }
+  if (typeof change.diff === "string" && change.diff.length > 0) {
+    out.diffExcerpt = change.diff.length > 12_000
+      ? `${change.diff.slice(0, 12_000)}\n… [diff truncated]`
+      : change.diff;
+  }
+  return out;
 }
 
 function parseCoderSummary(text: string): {
@@ -652,22 +713,25 @@ async function ensureBranch(
   task: TaskEnvelope,
   workspacePath: string,
   branchName: string,
+  opts?: { preserveExisting?: boolean },
 ): Promise<{ ok: true } | CoderFailure> {
   emit(task, "tool.requested", "info", `Switching to branch ${branchName}`, {
     tool: "git.switch",
-    input: { branchName, workspacePath },
+    input: { branchName, workspacePath, preserveExisting: opts?.preserveExisting === true },
   });
 
   await cleanAgentRuntimeArtifacts(workspacePath);
   await runGit(workspacePath, ["reset", "--hard"]);
   await runGit(workspacePath, ["clean", "-fd"]);
 
-  const switchResult = await runGit(workspacePath, ["checkout", "-B", branchName]);
+  const switchResult = opts?.preserveExisting === true
+    ? await runGit(workspacePath, ["checkout", branchName])
+    : await runGit(workspacePath, ["checkout", "-B", branchName]);
   if (switchResult.exitCode === 0) {
     emit(task, "tool.result", "info", `Switched to branch ${branchName}`, {
       tool: "git.switch",
       success: true,
-      output: { branchName, reset: true },
+      output: { branchName, reset: opts?.preserveExisting !== true },
     });
     return { ok: true };
   }
@@ -825,6 +889,27 @@ const IGNORED_ARTIFACT_DIRS = [
   "target",
 ];
 
+// Durable repo memory that Anchorage intentionally commits to the target repo.
+// Keep cache/index/log artifacts out, but let the repo's portable state layer
+// travel with the PR so the next run starts warmer than this one.
+const ANCHORAGE_MEMORY_FILES = [
+  ".anchorage/architecture.json",
+  ".anchorage/constraints.yaml",
+  ".anchorage/context.md",
+  ".anchorage/overrides.json",
+  ".anchorage/playbook.md",
+  ".anchorage/repo-context.json",
+  ".anchorage/repo-context.md",
+  ".anchorage/runtime.json",
+];
+
+const IGNORED_ANCHORAGE_ARTIFACTS = [
+  ".anchorage/artifacts",
+  ".anchorage/cache.json",
+  ".anchorage/index",
+  ".anchorage/runtime.log",
+];
+
 // Write a baseline .gitignore when the workspace has none, so `git add -A`
 // (which honors .gitignore, including nested matches) won't sweep up installs or
 // build output. An existing .gitignore is left untouched — the post-add
@@ -864,6 +949,17 @@ async function ensureWorkspaceGitignore(workspacePath: string): Promise<void> {
   await fs.writeFile(gitignorePath, body, "utf8");
 }
 
+async function stageAnchorageMemory(workspacePath: string): Promise<void> {
+  for (const file of ANCHORAGE_MEMORY_FILES) {
+    try {
+      await fs.access(path.join(workspacePath, file));
+    } catch {
+      continue;
+    }
+    await runGit(workspacePath, ["add", "-f", "--", file]);
+  }
+}
+
 async function commitChanges(
   task: TaskEnvelope,
   workspacePath: string,
@@ -899,14 +995,10 @@ async function commitChanges(
     "--ignore-unmatch",
     ...IGNORED_ARTIFACT_DIRS,
   ]);
-  // Cartographer's scan artifacts are run infrastructure, not the change. Reset
-  // any .anchorage/ index entries back to HEAD: new files unstage, refresh
-  // churn to committed context drops out, and a repo that deliberately commits
-  // its context keeps it at HEAD — nothing is staged as deleted (which a
-  // `git rm --cached` of tracked paths would do). Without this, a target repo
-  // PR shipped .anchorage/repo-context.* including its env-var inventory
-  // (teramot-aleph#1097).
-  await runGit(workspacePath, ["reset", "-q", "HEAD", "--", ".anchorage"]);
+  // .anchorage is Anchorage's portable repo-memory layer. Commit durable memory
+  // records, but keep generated indexes, logs, and artifact dumps out of PRs.
+  await runGit(workspacePath, ["reset", "-q", "HEAD", "--", ...IGNORED_ANCHORAGE_ARTIFACTS]);
+  await stageAnchorageMemory(workspacePath);
 
   // Capture the effective diff of everything just staged (added, modified, and
   // deleted files) against the branch point. This authoritative diff travels
@@ -1159,6 +1251,7 @@ interface CoderInput {
   issueSummary: JsonObject | null;
   triageResult: JsonObject | null;
   revisionRequest: JsonObject | null;
+  previousCodeChange: JsonObject | null;
 }
 
 interface CommandResult {
