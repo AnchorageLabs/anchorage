@@ -9,6 +9,7 @@
 // agent orients itself with the regular discovery tools.
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { cartographerCommand } from "./cartographer.js";
@@ -28,10 +29,10 @@ function repoContextEnabled(env: Record<string, string>): boolean {
   return !/^(false|0|no|off)$/i.test(raw.trim());
 }
 
-function runScan(root: string, env: Record<string, string>): Promise<void> {
+function spawnCartographer(args: string[], root: string, env: Record<string, string>): Promise<void> {
   const { cmd, baseArgs } = cartographerCommand(env);
   return new Promise((resolve) => {
-    const child = spawn(cmd, [...baseArgs, "scan", root], {
+    const child = spawn(cmd, [...baseArgs, ...args], {
       cwd: root,
       stdio: "ignore",
     });
@@ -48,6 +49,16 @@ function runScan(root: string, env: Record<string, string>): Promise<void> {
       resolve();
     });
   });
+}
+
+function runScan(root: string, env: Record<string, string>): Promise<void> {
+  return spawnCartographer(["scan", root], root, env);
+}
+
+/** Run `cartographer map` only when architecture.json is absent. Zero-token (deterministic). */
+function runMapIfMissing(root: string, env: Record<string, string>): Promise<void> {
+  if (existsSync(join(root, ".anchorage", "architecture.json"))) return Promise.resolve();
+  return spawnCartographer(["map", root], root, env);
 }
 
 type Json = { [key: string]: Json } | Json[] | boolean | null | number | string;
@@ -177,6 +188,7 @@ export async function repoContextPromptBlock(
   if (!repoContextEnabled(env)) return "";
 
   await runScan(workspacePath, env);
+  await runMapIfMissing(workspacePath, env);
 
   let parsed: unknown;
   try {
