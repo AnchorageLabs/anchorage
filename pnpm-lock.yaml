@@ -196,6 +196,19 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
 
+  agents/policy-check:
+    dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+
   agents/pr-opener:
     dependencies:
       '@anchorage/agent-llm':
