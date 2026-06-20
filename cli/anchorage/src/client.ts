@@ -193,6 +193,16 @@ export class OrchestratorClient {
     return this.send("POST", `/runs/${encodeURIComponent(runId)}/cancel`, { by: "cli" });
   }
 
+  /** Resume a FAILED run from its salvage branch. Returns the new run. With an
+   *  instruction the work is redirected; without, the original task continues. */
+  resumeRun(runId: string, instruction?: string): Promise<RunSummary> {
+    return this.send(
+      "POST",
+      `/runs/${encodeURIComponent(runId)}/resume`,
+      instruction ? { instruction } : {},
+    );
+  }
+
   getRunDiff(runId: string): Promise<RunDiff> {
     return this.get(`/runs/${encodeURIComponent(runId)}/diff`);
   }
