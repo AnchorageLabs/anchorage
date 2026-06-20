@@ -102,6 +102,54 @@ COPY --from=base /app/agents/issue-triage/dist ./agents/issue-triage/dist
 COPY --from=base /app/agents/issue-triage/package.json ./agents/issue-triage/package.json
 COPY --from=base /app/agents/issue-triage/agent.json ./agents/issue-triage/agent.json
 
+COPY --from=base /app/agents/issue-opener/dist ./agents/issue-opener/dist
+COPY --from=base /app/agents/issue-opener/package.json ./agents/issue-opener/package.json
+COPY --from=base /app/agents/issue-opener/agent.json ./agents/issue-opener/agent.json
+
+COPY --from=base /app/agents/notion-reader/dist ./agents/notion-reader/dist
+COPY --from=base /app/agents/notion-reader/package.json ./agents/notion-reader/package.json
+COPY --from=base /app/agents/notion-reader/agent.json ./agents/notion-reader/agent.json
+
+COPY --from=base /app/agents/notion-writer/dist ./agents/notion-writer/dist
+COPY --from=base /app/agents/notion-writer/package.json ./agents/notion-writer/package.json
+COPY --from=base /app/agents/notion-writer/agent.json ./agents/notion-writer/agent.json
+
+COPY --from=base /app/agents/notion-worker/dist ./agents/notion-worker/dist
+COPY --from=base /app/agents/notion-worker/package.json ./agents/notion-worker/package.json
+COPY --from=base /app/agents/notion-worker/agent.json ./agents/notion-worker/agent.json
+
+COPY --from=base /app/agents/gitlab-reader/dist ./agents/gitlab-reader/dist
+COPY --from=base /app/agents/gitlab-reader/package.json ./agents/gitlab-reader/package.json
+COPY --from=base /app/agents/gitlab-reader/agent.json ./agents/gitlab-reader/agent.json
+
+COPY --from=base /app/agents/gitlab-pr-opener/dist ./agents/gitlab-pr-opener/dist
+COPY --from=base /app/agents/gitlab-pr-opener/package.json ./agents/gitlab-pr-opener/package.json
+COPY --from=base /app/agents/gitlab-pr-opener/agent.json ./agents/gitlab-pr-opener/agent.json
+
+COPY --from=base /app/agents/bitbucket-reader/dist ./agents/bitbucket-reader/dist
+COPY --from=base /app/agents/bitbucket-reader/package.json ./agents/bitbucket-reader/package.json
+COPY --from=base /app/agents/bitbucket-reader/agent.json ./agents/bitbucket-reader/agent.json
+
+COPY --from=base /app/agents/bitbucket-pr-opener/dist ./agents/bitbucket-pr-opener/dist
+COPY --from=base /app/agents/bitbucket-pr-opener/package.json ./agents/bitbucket-pr-opener/package.json
+COPY --from=base /app/agents/bitbucket-pr-opener/agent.json ./agents/bitbucket-pr-opener/agent.json
+
+COPY --from=base /app/agents/jira-reader/dist ./agents/jira-reader/dist
+COPY --from=base /app/agents/jira-reader/package.json ./agents/jira-reader/package.json
+COPY --from=base /app/agents/jira-reader/agent.json ./agents/jira-reader/agent.json
+
+COPY --from=base /app/agents/linear-reader/dist ./agents/linear-reader/dist
+COPY --from=base /app/agents/linear-reader/package.json ./agents/linear-reader/package.json
+COPY --from=base /app/agents/linear-reader/agent.json ./agents/linear-reader/agent.json
+
+COPY --from=base /app/agents/runtime/dist ./agents/runtime/dist
+COPY --from=base /app/agents/runtime/package.json ./agents/runtime/package.json
+COPY --from=base /app/agents/runtime/agent.json ./agents/runtime/agent.json
+
+COPY --from=base /app/agents/policy-check/dist ./agents/policy-check/dist
+COPY --from=base /app/agents/policy-check/package.json ./agents/policy-check/package.json
+COPY --from=base /app/agents/policy-check/agent.json ./agents/policy-check/agent.json
+
 # Set environment
 ENV NODE_ENV=production
 ENV PATH="/app/cli/anchorage-runner/dist:${PATH}"

@@ -398,7 +398,23 @@ function resolveOpenAiConfig(
   // fallback only when the agent's own openaiModel is unset.
   const presetBaseUrl =
     (preset?.baseUrlEnv ? process.env[preset.baseUrlEnv] : undefined) || preset?.baseUrl;
-  const fallbackModel = preset?.defaultModel || defaults.openaiModel || "gpt-4.1";
+
+  // A preset with defaultModel:"" (e.g. opencode — a self-hosted gateway with
+  // no canonical model name) must NOT silently fall back to "gpt-4.1": that
+  // model name would reach a custom gateway that doesn't recognise it. Instead,
+  // omit the generic fallback so the guard below surfaces a clear error.
+  const presetDefault = preset && preset.defaultModel.length > 0 ? preset.defaultModel : undefined;
+  const fallbackModel = presetDefault || defaults.openaiModel || (!preset ? "gpt-4.1" : "");
+  const model = resolveModel(defaults, fallbackModel);
+  if (!model) {
+    const envName = roleModelEnvName(defaults.role);
+    return {
+      ok: false,
+      message:
+        `The ${preset!.name} provider has no default model. ` +
+        `Set ${envName} or ANCHORAGE_LLM_MODEL to specify one.`,
+    };
+  }
 
   return {
     ok: true,
@@ -408,7 +424,7 @@ function resolveOpenAiConfig(
       baseUrl: trimTrailingSlash(
         process.env.OPENAI_BASE_URL || presetBaseUrl || "https://api.openai.com/v1",
       ),
-      model: resolveModel(defaults, fallbackModel),
+      model,
       tool: "openai.chat.completions",
     },
   };
