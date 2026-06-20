@@ -68,6 +68,7 @@ Commands:
   runs approve <id>          Approve a paused run
   runs reject <id>           Reject a paused run
   runs cancel <id>           Cancel a running run
+  runs resume <id>           Resume a failed run from its salvage branch [--instruction "..."]
   runs diff <id>             Print a run's unified diff
   workflows list             List available workflows
   repos list                 List targetable repositories
@@ -260,6 +261,13 @@ async function main(): Promise<number> {
       if (!id) return usageErr("runs cancel <id>");
       await client.cancelRun(id);
       out({ id, canceled: true }, json, () => `Canceled ${id}`);
+      return 0;
+    }
+    case "runs resume": {
+      const id = rest[0];
+      if (!id) return usageErr('runs resume <id> [--instruction "..."]');
+      const run = await client.resumeRun(id, str(flags, "instruction"));
+      out(run, json, () => `Resumed ${id} → ${run.id}\n${runLine(run)}`);
       return 0;
     }
     case "runs diff": {

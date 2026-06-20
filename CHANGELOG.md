@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-20 — CLI can resume a failed run from its salvage branch.
+
+**Intent:** `anchorage runs resume <id>` starts a new run that continues a failed run's work from its `anchorage/salvage/<runId>` branch (where the orchestrator pushed the agent's WIP on failure). `--instruction "..."` redirects the work; without it, the original task is continued. Mirrors the orchestrator's `POST /runs/:id/resume`.
+
+**Files touched:**
+- cli/anchorage/src/index.ts
+- cli/anchorage/src/client.ts
+
+**Reason:** ADR-0034 Slice 3 (resume) — CLI surface for the resume endpoint.
+
+**Author:** Valen Torassa
+
 ### 2026-06-19 — shell_exec preserves pipeline failures with bash pipefail so missing tools cannot look green behind `| tail`.
 
 **Intent:** Verification commands like `uv run pytest ... 2>&1 | tail -40` no longer report success when the left side fails (`uv: not found`). String-form `shell_exec` now runs through `bash --noprofile --norc -o pipefail -c`, preserving the shell ergonomics agents need while making a failed command anywhere in a pipeline fail the tool result. This prevents agents from treating missing runtime tools as successful verification.
