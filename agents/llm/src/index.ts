@@ -408,10 +408,14 @@ function resolveOpenAiConfig(
   const model = resolveModel(defaults, fallbackModel);
   if (!model) {
     const envName = roleModelEnvName(defaults.role);
+    // This branch is only reachable with a preset (presetless paths fall back to
+    // "gpt-4.1"), but read the name defensively to satisfy lint without an
+    // assertion.
+    const providerName = preset?.name ?? "selected";
     return {
       ok: false,
       message:
-        `The ${preset!.name} provider has no default model. ` +
+        `The ${providerName} provider has no default model. ` +
         `Set ${envName} or ANCHORAGE_LLM_MODEL to specify one.`,
     };
   }
