@@ -1,4 +1,7 @@
 export type {
+  DeployPreview,
+  DeployPreviewStatus,
+  DeployTrigger,
   RevisionFailure,
   RevisionRequest,
   RuntimePreview,
@@ -6,8 +9,10 @@ export type {
   RuntimeStrategy,
 } from "./artifacts.js";
 export {
+  buildDeployPreview,
   buildRevisionRequest,
   buildRuntimePreview,
+  DEPLOY_PREVIEW_ARTIFACT_TYPE,
   REVISION_REQUEST_ARTIFACT_TYPE,
   RUNTIME_PREVIEW_ARTIFACT_TYPE,
 } from "./artifacts.js";

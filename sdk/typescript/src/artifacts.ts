@@ -129,3 +129,70 @@ export function buildRuntimePreview(preview: RuntimePreview): RuntimePreview {
     ...(preview.error !== undefined ? { error: preview.error } : {}),
   };
 }
+
+// ── Deploy preview ────────────────────────────────────────────────────────────
+
+// Canonical artifact the deployer agent emits after deploying the run's branch
+// to a chosen environment (stage). Same contract as runtime.preview, but the
+// preview is a REAL deployed environment instead of a local server: the
+// orchestrator's approval gate reads `status` to pause for human inspection
+// (`running`) and `previewUrl` to point the user at the live stage.
+export const DEPLOY_PREVIEW_ARTIFACT_TYPE = "deploy.preview";
+
+/**
+ * Outcome of the deployer agent:
+ * - `running`        — the deploy was triggered and the environment is live (a
+ *                      URL is reachable, or the deploy workflow/Deployment
+ *                      succeeded); the pipeline pauses for the user to inspect.
+ * - `not_applicable` — nothing deployable / no environment selected; the
+ *                      pipeline continues without pausing.
+ * - `failed`         — the deploy was triggered but did not become healthy; the
+ *                      pipeline finishes without opening the PR.
+ */
+export type DeployPreviewStatus = "running" | "not_applicable" | "failed";
+
+/** How the deployer triggered the deploy (auto-detected per repo). */
+export interface DeployTrigger {
+  /** "workflow_dispatch" (a deploy workflow) | "deployment" (Deployments API). */
+  kind: "workflow_dispatch" | "deployment";
+  /** The dispatched workflow file/id, when kind is "workflow_dispatch". */
+  workflow?: string;
+  /** The GitHub Deployment id, when kind is "deployment". */
+  deploymentId?: number;
+  /** The Actions run / status URL on GitHub, for traceability. */
+  runUrl?: string;
+}
+
+export interface DeployPreview {
+  /** What happened — drives the orchestrator's pause/continue/stop decision. */
+  status: DeployPreviewStatus;
+  /** One-line human summary shown in the UI / event stream. */
+  summary: string;
+  /** The environment/stage deployed to (e.g. "stg", "dev", "prd"). */
+  environment: string;
+  /** The branch that was deployed (the run's working branch). */
+  ref?: string;
+  /** Live URL of the deployed stage to open for inspection. */
+  previewUrl?: string;
+  /** How the deploy was triggered. */
+  trigger?: DeployTrigger;
+  /** Failure detail. Present when `status` is "failed". */
+  error?: string;
+}
+
+/**
+ * Build a normalized `deploy.preview` artifact body. Centralizing the shape
+ * keeps the deployer agent and the orchestrator's approval gate on identical
+ * field names (mirrors {@link buildRuntimePreview}).
+ */
+export function buildDeployPreview(preview: DeployPreview): DeployPreview {
+  return {
+    status: preview.status,
+    summary: preview.summary,
+    environment: preview.environment,
+    ...(preview.ref !== undefined ? { ref: preview.ref } : {}),
+    ...(preview.previewUrl !== undefined ? { previewUrl: preview.previewUrl } : {}),
+    ...(preview.trigger !== undefined ? { trigger: preview.trigger } : {}),
+    ...(preview.error !== undefined ? { error: preview.error } : {}),
+  };
+}

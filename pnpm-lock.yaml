@@ -77,6 +77,19 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
 
+  agents/deployer:
+    dependencies:
+      '@anchorage/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/typescript
+      '@octokit/rest':
+        specifier: ^22.0.1
+        version: 22.0.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+
   agents/gitlab-pr-opener:
     dependencies:
       '@anchorage/sdk':
