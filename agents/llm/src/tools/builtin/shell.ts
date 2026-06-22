@@ -60,6 +60,26 @@ function resolveCwd(workspace: string, requested: unknown): null | string {
   return abs;
 }
 
+/**
+ * Does the command start a background / detached / daemon process? Such a
+ * command (e.g. `npm run dev &`) returns control to bash immediately, but the
+ * backgrounded child inherits and holds the stdout/stderr pipes open — so the
+ * tool's `close` never fires and the run freezes forever waiting on a result.
+ * Long-lived servers belong in the preview/runtime step, not shell_exec.
+ *
+ * Detection strips the `&` forms that are NOT backgrounding (the `&&` operator
+ * and `&`-bearing redirections like `2>&1`, `>&2`, `&>file`), then treats any
+ * remaining bare `&` as a background operator. `nohup`/`disown` are explicit.
+ */
+export function backgroundsAProcess(command: string): boolean {
+  if (/\b(nohup|disown)\b/.test(command)) return true;
+  const stripped = command
+    .replace(/\d*>&\d*/g, " ") // 2>&1, >&2, >&-
+    .replace(/&>>?/g, " ") // &>file, &>>file
+    .replace(/&&/g, " "); // logical AND
+  return /&/.test(stripped);
+}
+
 function buildArgv(
   command: unknown,
 ): { ok: true; argv: string[] } | { ok: false; message: string } {
@@ -68,6 +88,16 @@ function buildArgv(
   if (typeof command === "string") {
     const trimmed = command.trim();
     if (!trimmed) return { ok: false, message: "shell_exec: command string is empty." };
+    if (backgroundsAProcess(trimmed)) {
+      return {
+        ok: false,
+        message:
+          "shell_exec: backgrounding a process (`&` / `nohup` / `disown`) is not supported — " +
+          "it leaves a long-lived process that never returns a result and freezes the run. " +
+          "Run finite commands only; start a dev/preview server through the preview/runtime " +
+          "step, not shell_exec.",
+      };
+    }
     return { ok: true, argv: ["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", trimmed] };
   }
   // Argv form runs the program directly — safer when the model can structure
@@ -199,12 +229,32 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
       });
       return;
     }
+    // detached: true puts the command in its OWN process group, so a timeout
+    // can kill the WHOLE tree (`kill(-pid)`), not just the bash leader. Without
+    // this, a command that spawns a child holding the stdio pipes (a dev server,
+    // a `&` background job) survives the leader's death, keeps the pipes open,
+    // and `close` never fires — the exact freeze this guards against.
     const child = spawn(cmd, args, {
       cwd: invocation.cwd,
       env: invocation.envSnapshot,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
+      detached: true,
     });
+
+    // Signal the whole process group (negative pid); fall back to the leader if
+    // the group is already gone. Never throws (ESRCH on a dead group is fine).
+    const killGroup = (signal: NodeJS.Signals): void => {
+      if (typeof child.pid !== "number") return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // already gone
+        }
+      }
+    };
 
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -216,15 +266,12 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill("SIGTERM");
-        // SIGKILL fallback if SIGTERM didn't take.
-        setTimeout(() => {
-          if (!child.killed) child.kill("SIGKILL");
-        }, 2000);
-      } catch {
-        // process likely already gone
-      }
+      // Kill the whole group so a wedged child (held-open pipes) dies too and
+      // `close` can fire — otherwise the tool hangs past the timeout forever.
+      killGroup("SIGTERM");
+      setTimeout(() => {
+        if (!child.killed) killGroup("SIGKILL");
+      }, 2000);
     }, invocation.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
