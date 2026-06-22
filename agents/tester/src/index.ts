@@ -305,8 +305,23 @@ const NPM_PLACEHOLDER_TEST = /echo .Error: no test specified./;
 
 // Directories never worth descending into when looking for project roots.
 const SCAN_SKIP_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", "coverage", "vendor", ".next", ".turbo",
-  "__pycache__", ".venv", "venv", "target", "cdk.out", ".anchorage", "tmp", "out", ".cache",
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "coverage",
+  "vendor",
+  ".next",
+  ".turbo",
+  "__pycache__",
+  ".venv",
+  "venv",
+  "target",
+  "cdk.out",
+  ".anchorage",
+  "tmp",
+  "out",
+  ".cache",
 ]);
 const MAX_PROJECT_COMMANDS = 8;
 
@@ -328,7 +343,9 @@ async function detectTestCommands(workspacePath: string): Promise<TestCommand[]>
   // Last resort: a top-level Makefile `test` target. May invoke tools the worker
   // lacks (docker, services) — runTestCommand classifies that as environment-
   // blocked (skipped), not a test failure.
-  const makefile = await fs.readFile(path.join(workspacePath, "Makefile"), "utf8").catch(() => null);
+  const makefile = await fs
+    .readFile(path.join(workspacePath, "Makefile"), "utf8")
+    .catch(() => null);
   if (makefile && /^test:/m.test(makefile)) {
     return [{ name: "make-test", command: "make test", cwd: ".", ecosystem: "make" }];
   }
@@ -340,9 +357,7 @@ async function listProjectDirs(root: string): Promise<string[]> {
   const dirs: string[] = ["."];
   const walk = async (rel: string, depth: number): Promise<void> => {
     if (depth > 2 || dirs.length > 64) return;
-    const entries = await fs
-      .readdir(path.join(root, rel), { withFileTypes: true })
-      .catch(() => []);
+    const entries = await fs.readdir(path.join(root, rel), { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith(".") || SCAN_SKIP_DIRS.has(entry.name)) {
         continue;
@@ -397,9 +412,18 @@ async function detectNativeTestCommand(root: string, dir: string): Promise<TestC
     return { name: `cargo-test${suffix}`, command: "cargo test", cwd: dir, ecosystem: "rust" };
   if (await exists("mix.exs"))
     return { name: `mix-test${suffix}`, command: "mix test", cwd: dir, ecosystem: "elixir" };
-  if ((await exists("pytest.ini")) || (await exists("pyproject.toml")) || (await exists("setup.py"))) {
+  if (
+    (await exists("pytest.ini")) ||
+    (await exists("pyproject.toml")) ||
+    (await exists("setup.py"))
+  ) {
     if ((await exists("tests")) || (await exists("test")) || (await exists("pytest.ini")))
-      return { name: `pytest${suffix}`, command: "python -m pytest -q", cwd: dir, ecosystem: "python" };
+      return {
+        name: `pytest${suffix}`,
+        command: "python -m pytest -q",
+        cwd: dir,
+        ecosystem: "python",
+      };
   }
   if (await exists("pom.xml"))
     return { name: `maven-test${suffix}`, command: "mvn -q -B test", cwd: dir, ecosystem: "java" };
@@ -408,7 +432,12 @@ async function detectNativeTestCommand(root: string, dir: string): Promise<TestC
   if (await exists("composer.json"))
     return { name: `composer-test${suffix}`, command: "composer test", cwd: dir, ecosystem: "php" };
   if (await exists("Gemfile"))
-    return { name: `ruby-test${suffix}`, command: "bundle exec rake test", cwd: dir, ecosystem: "ruby" };
+    return {
+      name: `ruby-test${suffix}`,
+      command: "bundle exec rake test",
+      cwd: dir,
+      ecosystem: "ruby",
+    };
   return null;
 }
 
@@ -418,10 +447,19 @@ async function detectNativeTestCommand(root: string, dir: string): Promise<TestC
 // must not be reported as test failures — otherwise a frontend change is blocked
 // by an unrunnable Dockerised backend suite.
 const ENVIRONMENT_FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/command not found|: not found|executable file not found/i, "a required command is not installed"],
-  [/docker: (?:command )?not found|cannot connect to the docker daemon|is the docker daemon running/i, "Docker is not available in the worker"],
+  [
+    /command not found|: not found|executable file not found/i,
+    "a required command is not installed",
+  ],
+  [
+    /docker: (?:command )?not found|cannot connect to the docker daemon|is the docker daemon running/i,
+    "Docker is not available in the worker",
+  ],
   [/no such file or directory/i, "a required file or tool is missing"],
-  [/connection refused|ECONNREFUSED|could not connect to server|could not translate host/i, "a required service/database was not reachable"],
+  [
+    /connection refused|ECONNREFUSED|could not connect to server|could not translate host/i,
+    "a required service/database was not reachable",
+  ],
   [/make: \*\*\* .*Error 127/i, "a Make target invoked a tool that is not installed"],
   [/\bgradlew\b.*(?:not found|permission denied)/i, "the Gradle wrapper could not run"],
 ];

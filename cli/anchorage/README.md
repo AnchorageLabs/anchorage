@@ -3,6 +3,27 @@
 The unified **`anchorage`** CLI drives the orchestrator's REST API: submit and
 watch runs, approve/reject gates, inspect diffs, and manage connectors.
 
+## Install
+
+Self-contained binaries (no Node required) are published to GitHub Releases by
+the `release-cli` workflow. One-liners pull the right one for your OS/arch:
+
+```sh
+# macOS / Linux
+curl -fsSL https://github.com/AnchorageLabs/anchorage/releases/latest/download/install.sh | sh
+```
+```powershell
+# Windows (PowerShell)
+irm https://github.com/AnchorageLabs/anchorage/releases/latest/download/install.ps1 | iex
+```
+
+Builds: `anchorage-darwin-arm64`, `anchorage-darwin-x64`, `anchorage-linux-x64`,
+`anchorage-windows-x64.exe` (+ `SHA256SUMS`). Override the source with
+`ANCHORAGE_CLI_BASE_URL` and the install dir with `ANCHORAGE_BIN_DIR`. With Node
+already on hand you can instead run from source (`pnpm -C cli/anchorage build`).
+
+Cut a release by pushing a tag: `git tag cli-v0.1.0 && git push origin cli-v0.1.0`.
+
 ```
 anchorage --server https://api.anchoragelabs.dev auth login   # store server (+ secret from env/stdin)
 anchorage runs list
