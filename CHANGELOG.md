@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-22 — Runtime gate previews visual changes only; backend/non-UI changes skip it instead of failing to boot.
+
+**Intent:** The runtime gate booted the reviewed change locally for inspection, but it ran with only the worker's own env — never the target app's secrets (DB, auth, external API keys). For a real product like teramot-aleph that needs those to come up, the gate could only ever fail to boot, which turned into a failed/no-merge run. The gate is now scoped to what it can actually show: VISUAL changes. The runtime agent classifies the change set from the coder's `code.change.result` and, when it isn't visual, finishes `not_applicable` (the run continues / the PR still opens) instead of attempting a doomed boot — docs (nothing to run), backend (needs real services/secrets; a mixed UI+backend change counts as backend), and non-visual config/tooling all skip cleanly. Visual changes keep the existing local-run path for now (isolated component rendering is the next increment). This is Phase 1 of the visual-preview redesign.
+
+**Files touched:**
+- agents/runtime/src/classify.ts
+- agents/runtime/src/index.ts
+- agents/runtime/tests/classify.test.ts
+
+**Reason:** user report — bringing the runtime agent up on env-dependent repos (auth/login, external repos, keys) is impossible, so it should preview visual changes only and skip the rest.
+
+**Author:** Sol Soletti
+
 ### 2026-06-22 — shell_exec refuses to background a process and kills the whole process group on timeout (fixes frozen runs).
 
 **Intent:** A run could freeze forever when the agent ran a long-lived/background command through `shell_exec` (e.g. `npm run dev &`). Backgrounding hands control back to bash immediately, but the detached child inherits and holds the stdout/stderr pipes open, so the tool's `close` never fires and no `tool.result` is ever emitted — the run sat at `running` in RDS indefinitely (observed: `run_srv_1782089181460_0`, stuck after `npm run dev &`). Two fixes: (1) `shell_exec` now refuses commands that background a process (`&`, `nohup`, `disown` — detected after stripping the non-backgrounding `&&` operator and `&`-bearing redirections like `2>&1`/`&>file`) with a clear message telling the model to run finite commands and use the preview/runtime step for servers; (2) the command now spawns in its own process group (`detached: true`) and a timeout kills the WHOLE group (`kill(-pid)`, SIGTERM then SIGKILL), so any long-lived child that slips through dies and `close` can fire instead of hanging past the timeout. This is a different failure class from the earlier `sh -c` → `bash -o pipefail -c` fix (that was hidden pipeline exit codes; this is process lifecycle).
