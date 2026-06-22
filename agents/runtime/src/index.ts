@@ -17,7 +17,17 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { classifyChange, skipReason } from "./classify.js";
+import { buildHarnessFiles, STORIES_DIR } from "./harness.js";
+import { generateHarnessWithLlm, resolveRuntimeLlmConfig } from "./llm-harness.js";
+import {
+  PREVIEW_MANIFEST_FILE,
+  type PreviewManifest,
+  parsePreviewManifest,
+  serializePreviewManifest,
+} from "./manifest.js";
 import { publicPreviewUrl } from "./preview-url.js";
+import { buildFallbackStory, type ComponentEntry, isRenderableComponent } from "./stories.js";
+import { detectFrontendToolchain } from "./toolchain.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -93,6 +103,45 @@ async function main(): Promise<number> {
     const kind = classifyChange(changedFiles);
     if (kind !== "visual") {
       return finishNotApplicable(task.value, skipReason(kind, changedFiles));
+    }
+
+    // Visual change: render the changed components in isolation (a throwaway
+    // harness with mock data) so a real product never has to boot with secrets it
+    // doesn't have here. We NEVER boot the real app for a visual change — on any
+    // skip/failure we skip the gate cleanly (the PR still opens). On by default;
+    // with ANCHORAGE_RUNTIME_ISOLATED=0 we keep the legacy app-boot behavior below.
+    if (isolatedPreviewEnabled()) {
+      const isolated = await runIsolatedPreview(task.value, workspacePath, changedFiles);
+      if ("ok" in isolated && isolated.ok) {
+        const preview = buildRuntimePreview({
+          status: "running",
+          summary: `Rendering ${isolated.componentCount} changed component(s) in isolation at ${isolated.previewUrl} — the app itself is not running.`,
+          previewUrl: isolated.previewUrl,
+          strategy: {
+            kind: "isolated",
+            startCommand: isolated.manifest.startCommand,
+            port: isolated.port,
+            url: isolated.localUrl,
+          },
+        });
+        await emitPreview(task.value, preview, "info");
+        emit(
+          task.value,
+          "agent.completed",
+          "info",
+          "runtime started an isolated component preview",
+          {
+            previewUrl: isolated.previewUrl,
+            components: isolated.componentCount,
+          },
+        );
+        return ExitCode.Success;
+      }
+      const reason = "skip" in isolated ? isolated.reason : isolated.error;
+      return finishNotApplicable(
+        task.value,
+        `Could not render this change in isolation (${reason}). Skipping the visual gate — the PR still opens.`,
+      );
     }
   }
 
@@ -503,6 +552,310 @@ interface StartResult {
 interface StartFailure {
   ok: false;
   error: string;
+}
+
+// ── Isolated component preview ─────────────────────────────────────────────────
+// Render the changed components in a throwaway harness (mock data, never the
+// app's entry point) so a real product never has to boot with secrets we don't
+// have. Hybrid: a deterministic React template (fast, free), an LLM general path
+// for any other framework, and a per-repo cache of whatever came up. On by
+// default (set ANCHORAGE_RUNTIME_ISOLATED=0 to opt out); on any failure the gate
+// is skipped cleanly — we never fall back to booting the real app.
+
+interface IsolatedOk {
+  ok: true;
+  previewUrl: string;
+  localUrl: string;
+  port: number;
+  componentCount: number;
+  manifest: PreviewManifest;
+}
+interface IsolatedSkip {
+  skip: true;
+  reason: string;
+}
+type IsolatedResult = IsolatedOk | StartFailure | IsolatedSkip;
+
+function isolatedPreviewEnabled(): boolean {
+  // On by default. Set ANCHORAGE_RUNTIME_ISOLATED=0 (or false/no/off) to opt out
+  // and fall back to the legacy app-boot path.
+  const v = process.env.ANCHORAGE_RUNTIME_ISOLATED?.trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "no" || v === "off");
+}
+
+function errMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// Collect the changed, individually-renderable component files + their source.
+async function collectComponents(
+  workspacePath: string,
+  changedFiles: string[],
+): Promise<ComponentEntry[]> {
+  const components: ComponentEntry[] = [];
+  for (const rel of changedFiles) {
+    const abs = path.join(workspacePath, rel);
+    if (!isRenderableComponent(abs)) continue;
+    try {
+      components.push({ absPath: abs, source: await fs.readFile(abs, "utf8") });
+    } catch {
+      // Deleted/renamed/unreadable in the worktree — nothing to render for it.
+    }
+  }
+  return components;
+}
+
+// Install the harness's own deps, start its dev server detached, and wait for it
+// to answer. Shared by the template, cache, and LLM paths.
+async function installStartProbe(
+  task: TaskEnvelope,
+  harnessDir: string,
+  installCommand: string,
+  startCommand: string,
+  port: number,
+): Promise<{ ok: true; localUrl: string } | StartFailure> {
+  const install = await runToCompletion(task, installCommand, harnessDir, INSTALL_TIMEOUT_MS);
+  if (!install.ok) return { ok: false, error: `harness install failed: ${install.error}` };
+
+  const localUrl = `http://localhost:${port}`;
+  await freePreviewPort(task, port);
+  const logPath = await runtimeLogPath(task);
+  emit(task, "tool.requested", "info", "Starting isolated component harness", {
+    tool: "shell.exec",
+    input: { command: startCommand, cwd: harnessDir },
+  });
+  const failure = startDetached(startCommand, harnessDir, logPath, port);
+  if (failure) return { ok: false, error: failure };
+
+  const ready = await waitForUrl(localUrl, READY_TIMEOUT_MS.node ?? 90_000);
+  if (!ready) {
+    const tail = await readLogTail(logPath);
+    return {
+      ok: false,
+      error: `preview did not respond at ${localUrl}${tail ? `\n--- last log lines ---\n${tail}` : ""}`,
+    };
+  }
+  return { ok: true, localUrl };
+}
+
+// Write the deterministic React-template harness (skeleton + no-prop stories).
+async function scaffoldReactTemplate(
+  workspacePath: string,
+  harnessDir: string,
+  toolchain: Awaited<ReturnType<typeof detectFrontendToolchain>> & object,
+  components: ComponentEntry[],
+  port: number,
+): Promise<{ ok: true; count: number } | StartFailure> {
+  const stories = components
+    .map(buildFallbackStory)
+    .filter((story): story is NonNullable<typeof story> => story !== null);
+  if (stories.length === 0)
+    return { ok: false, error: "no detectable component exports to render" };
+  try {
+    await fs.rm(harnessDir, { recursive: true, force: true });
+    for (const file of buildHarnessFiles({ toolchain, workspacePath, port })) {
+      const dest = path.join(harnessDir, file.path);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, file.content, "utf8");
+    }
+    const storiesAbs = path.join(harnessDir, STORIES_DIR);
+    await fs.mkdir(storiesAbs, { recursive: true });
+    for (const story of stories) {
+      await fs.writeFile(path.join(storiesAbs, story.fileName), story.content, "utf8");
+    }
+  } catch (error) {
+    return { ok: false, error: `failed to scaffold template harness: ${errMessage(error)}` };
+  }
+  return { ok: true, count: stories.length };
+}
+
+async function readManifest(workspacePath: string): Promise<PreviewManifest | null> {
+  try {
+    const raw = await fs.readFile(
+      path.join(workspacePath, ANCHORAGE_DIR, PREVIEW_MANIFEST_FILE),
+      "utf8",
+    );
+    return parsePreviewManifest(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeManifest(workspacePath: string, manifest: PreviewManifest): Promise<void> {
+  try {
+    await fs.mkdir(path.join(workspacePath, ANCHORAGE_DIR), { recursive: true });
+    await fs.writeFile(
+      path.join(workspacePath, ANCHORAGE_DIR, PREVIEW_MANIFEST_FILE),
+      serializePreviewManifest(manifest),
+      "utf8",
+    );
+  } catch {
+    // Non-fatal: a read-only workspace just means no cache speed-up next time.
+  }
+}
+
+async function runIsolatedPreview(
+  task: TaskEnvelope,
+  workspacePath: string,
+  changedFiles: string[],
+): Promise<IsolatedResult> {
+  const components = await collectComponents(workspacePath, changedFiles);
+  if (components.length === 0) {
+    return { skip: true, reason: "no renderable component files in the change" };
+  }
+
+  const port = Number(process.env.ANCHORAGE_RUNTIME_PORT) || DEFAULT_NODE_PREVIEW_PORT;
+  const harnessDir = path.join(workspacePath, ANCHORAGE_DIR, "preview");
+  const harnessRelDir = path.posix.join(ANCHORAGE_DIR, "preview");
+
+  // Repo deps must be installed: component imports (and the framework runtime the
+  // harness aliases) resolve against the repo's own node_modules.
+  const pm = await detectPackageManager(workspacePath);
+  const repoInstall = await runToCompletion(
+    task,
+    `${pm} install`,
+    workspacePath,
+    INSTALL_TIMEOUT_MS,
+  );
+  if (!repoInstall.ok) {
+    return { ok: false, error: `repo dependency install failed: ${repoInstall.error}` };
+  }
+
+  const ok = (manifest: PreviewManifest, count: number): IsolatedOk => {
+    const localUrl = `http://localhost:${manifest.port || port}`;
+    return {
+      ok: true,
+      previewUrl: publicPreviewUrl(localUrl),
+      localUrl,
+      port: manifest.port || port,
+      componentCount: count,
+      manifest,
+    };
+  };
+
+  // 1) Cache: reuse a previously-working harness, skipping the LLM. The template
+  //    generator re-scaffolds deterministically (picks up this change's
+  //    components); the LLM generator reuses the files already on disk.
+  const cached = await readManifest(workspacePath);
+  if (cached) {
+    let ready = false;
+    if (cached.generator === "template") {
+      const tc = await detectFrontendToolchain(workspacePath);
+      ready =
+        !!tc && (await scaffoldReactTemplate(workspacePath, harnessDir, tc, components, port)).ok;
+    } else {
+      ready = await fileExists(path.join(harnessDir, "package.json"));
+    }
+    if (ready) {
+      emit(task, "agent.progress", "info", "Reusing cached isolated-preview harness", {
+        generator: cached.generator,
+        framework: cached.framework,
+      });
+      const probe = await installStartProbe(
+        task,
+        harnessDir,
+        cached.installCommand,
+        cached.startCommand,
+        cached.port || port,
+      );
+      if (probe.ok) return ok(cached, components.length);
+      emit(task, "agent.progress", "warn", "Cached harness no longer works; regenerating", {
+        error: probe.error,
+      });
+    }
+  }
+
+  // 2) Fast path: the deterministic React template.
+  const toolchain = await detectFrontendToolchain(workspacePath);
+  if (toolchain) {
+    const scaffold = await scaffoldReactTemplate(
+      workspacePath,
+      harnessDir,
+      toolchain,
+      components,
+      port,
+    );
+    if (!scaffold.ok) return scaffold;
+    emit(
+      task,
+      "agent.progress",
+      "info",
+      `Scaffolded React preview for ${scaffold.count} component(s)`,
+      {
+        harnessDir,
+      },
+    );
+    const installCommand = `${toolchain.packageManager} install`;
+    const startCommand = `${toolchain.packageManager} run dev`;
+    const probe = await installStartProbe(task, harnessDir, installCommand, startCommand, port);
+    if (probe.ok) {
+      const manifest: PreviewManifest = {
+        framework: "react",
+        generator: "template",
+        installCommand,
+        startCommand,
+        port,
+      };
+      await writeManifest(workspacePath, manifest);
+      return ok(manifest, scaffold.count);
+    }
+    return { ok: false, error: probe.error };
+  }
+
+  // 3) General path: the LLM builds a harness for whatever framework this is.
+  const config = resolveRuntimeLlmConfig();
+  if (!config) {
+    return {
+      skip: true,
+      reason: "no template fits this repo and no LLM is configured for the runtime role",
+    };
+  }
+  let previousError: string | undefined;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    emit(
+      task,
+      "agent.progress",
+      "info",
+      `Generating isolated preview with the LLM (attempt ${attempt})`,
+      {
+        components: components.length,
+      },
+    );
+    const gen = await generateHarnessWithLlm(config, {
+      task,
+      workspacePath,
+      harnessRelDir,
+      components,
+      port,
+      env: { ...process.env } as Record<string, string>,
+      capabilities: new Set(task.capabilities ?? []),
+      ...(previousError ? { previousError } : {}),
+    });
+    if (!gen.ok) {
+      previousError = gen.error;
+      continue;
+    }
+    const probe = await installStartProbe(
+      task,
+      harnessDir,
+      gen.installCommand,
+      gen.startCommand,
+      port,
+    );
+    if (probe.ok) {
+      const manifest: PreviewManifest = {
+        framework: gen.framework,
+        generator: "llm",
+        installCommand: gen.installCommand,
+        startCommand: gen.startCommand,
+        port,
+      };
+      await writeManifest(workspacePath, manifest);
+      return ok(manifest, components.length);
+    }
+    previousError = probe.error;
+  }
+  return { ok: false, error: `LLM preview did not come up: ${previousError ?? "unknown error"}` };
 }
 
 async function startStrategy(

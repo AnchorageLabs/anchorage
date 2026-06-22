@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-22 — Isolated component preview (opt-in): render changed components in a throwaway harness with no app boot — any framework.
+
+**Intent:** Phase 2 of the visual-preview redesign. Even a purely visual change to an env-dependent app (teramot-aleph) couldn't be previewed before, because the gate booted the *real* app, which needs secrets we don't have. This adds an isolated path: for a visual change, the runtime agent scaffolds a throwaway harness under `.anchorage/preview/` that imports only the changed components and renders them in an error-bounded gallery — never importing the app's entry point, so auth/data/secrets never enter the picture. **Hybrid, so it works for any framework, not just the ones we hand-template:** (1) a deterministic **React/Vite template** fast-path (pure, unit-tested `toolchain.ts` + `harness.ts`; React de-duped to the repo's copy, repo global stylesheets imported for fidelity); (2) an **LLM general path** (`llm-harness.ts`) — when no template fits, an agentic loop inspects the repo, detects the framework, writes a minimal harness with mock data/providers, and returns the install/start commands (the deterministic caller installs, starts detached, probes, and feeds one repair pass on failure); (3) a per-repo **cache** (`.anchorage/preview.json`, `manifest.ts`) of whatever came up, so the next run skips the LLM. Per the design decision, a visual change is NEVER booted as the real app — on any skip/failure the gate is skipped cleanly (`not_applicable`; the PR still opens), never falling back to app-boot. Stories are deterministic in the template path for now (render with no props inside the error boundary); LLM-synthesized mock props are part of the general path. Enabled by default for visual changes; set `ANCHORAGE_RUNTIME_ISOLATED=0` to opt out and keep the legacy app-boot path.
+
+**Files touched:**
+- agents/runtime/src/toolchain.ts
+- agents/runtime/src/harness.ts
+- agents/runtime/src/stories.ts
+- agents/runtime/src/manifest.ts
+- agents/runtime/src/llm-harness.ts
+- agents/runtime/src/index.ts
+- agents/runtime/tests/{toolchain,harness,stories,manifest}.test.ts
+- agents/llm/src/role-defaults.ts (new `runtime` role)
+- agents/runtime/package.json, pnpm-lock.yaml (depend on @anchorage/agent-llm)
+
+**Reason:** user request — the runtime agent must preview visual changes for ANY repo/framework by rendering components in isolation with mocked data, so env/auth-dependent repos can be previewed without their secrets.
+
+**Author:** Sol Soletti
+
 ### 2026-06-22 — Runtime gate previews visual changes only; backend/non-UI changes skip it instead of failing to boot.
 
 **Intent:** The runtime gate booted the reviewed change locally for inspection, but it ran with only the worker's own env — never the target app's secrets (DB, auth, external API keys). For a real product like teramot-aleph that needs those to come up, the gate could only ever fail to boot, which turned into a failed/no-merge run. The gate is now scoped to what it can actually show: VISUAL changes. The runtime agent classifies the change set from the coder's `code.change.result` and, when it isn't visual, finishes `not_applicable` (the run continues / the PR still opens) instead of attempting a doomed boot — docs (nothing to run), backend (needs real services/secrets; a mixed UI+backend change counts as backend), and non-visual config/tooling all skip cleanly. Visual changes keep the existing local-run path for now (isolated component rendering is the next increment). This is Phase 1 of the visual-preview redesign.

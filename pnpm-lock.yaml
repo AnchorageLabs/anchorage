@@ -303,6 +303,9 @@ importers:
 
   agents/runtime:
     dependencies:
+      '@anchorage/agent-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@anchorage/sdk':
         specifier: workspace:*
         version: link:../../sdk/typescript
