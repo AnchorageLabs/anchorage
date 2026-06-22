@@ -16,6 +16,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { classifyChange, skipReason } from "./classify.js";
 import { publicPreviewUrl } from "./preview-url.js";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -76,15 +77,23 @@ async function main(): Promise<number> {
     );
   }
 
-  // ── Is there anything to preview? ───────────────────────────────────────────
-  // The runtime gate is intentionally optional. A documentation-only change has
-  // nothing to run, so we skip straight through without pausing the pipeline.
+  // ── Is there anything VISUAL to preview? ─────────────────────────────────────
+  // The runtime gate is intentionally optional and scoped to visual/frontend
+  // changes — the kind a human wants to *see* before merge. Anything else skips
+  // the gate cleanly instead of trying to boot the app:
+  //   - docs        → nothing to run.
+  //   - backend     → needs the app's real services/secrets (DB, auth, external
+  //                   APIs) we don't have here, so it can never come up — don't
+  //                   try and fail (the teramot-aleph case).
+  //   - non-visual  → config/tooling only; nothing to look at.
+  // When there's no change artifact we can't classify, so we fall through and
+  // attempt a run as before.
   const changedFiles = await changedFilesFromArtifacts(task.value);
-  if (changedFiles && changedFiles.length > 0 && isDocsOnly(changedFiles)) {
-    return finishNotApplicable(
-      task.value,
-      `Change touches only documentation/non-code files (${changedFiles.length} file(s)); nothing to run locally.`,
-    );
+  if (changedFiles && changedFiles.length > 0) {
+    const kind = classifyChange(changedFiles);
+    if (kind !== "visual") {
+      return finishNotApplicable(task.value, skipReason(kind, changedFiles));
+    }
   }
 
   // ── Resolve a run strategy: cache first, then detection ──────────────────────
@@ -177,33 +186,11 @@ async function emitPreview(
 
 // ── Change inspection ─────────────────────────────────────────────────────────
 
-const DOC_FILE_PATTERNS = [
-  /\.md$/i,
-  /\.mdx$/i,
-  /\.markdown$/i,
-  /\.rst$/i,
-  /\.txt$/i,
-  /\.adoc$/i,
-  /^license$/i,
-  /^notice$/i,
-  /^authors$/i,
-  /^changelog/i,
-  /(^|\/)docs?\//i,
-  /(^|\/)\.github\//i,
-];
-
-function isDocsOnly(files: string[]): boolean {
-  return files.every((file) => {
-    const base = path.basename(file);
-    return DOC_FILE_PATTERNS.some((pattern) => pattern.test(file) || pattern.test(base));
-  });
-}
-
 /**
  * Best-effort list of files the change touched, read from the coder's
  * `code.change.result` artifact (prefer an explicit fileDiffs[].path list, fall
  * back to parsing the unified diff). Returns null when no change artifact is
- * available — in that case we do not take the docs-only shortcut.
+ * available — in that case we do not classify, and attempt a run as before.
  */
 async function changedFilesFromArtifacts(task: TaskEnvelope): Promise<string[] | null> {
   const ref = task.context?.priorArtifacts?.find((a) => a.artifactType === "code.change.result");
