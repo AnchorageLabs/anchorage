@@ -17,6 +17,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@anchorage/agent-llm": "workspace:*",
     "@anchorage/sdk": "workspace:*"
   },
   "devDependencies": {

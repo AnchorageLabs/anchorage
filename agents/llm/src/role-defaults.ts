@@ -35,6 +35,10 @@ export const ROLE_DEFAULTS = {
   // Triage runs a cheaper/faster default on the OpenAI path.
   triage: role("triage", { openaiModel: "gpt-4o" }),
   reviewer: role("reviewer"),
+  // Synthesizes the isolated-preview harness (framework detection + per-component
+  // stories with mock data) for the runtime gate when no deterministic template
+  // fits the repo.
+  runtime: role("runtime"),
   // Acts on Notion directly (notes, tasks, databases, wikis) via the Notion tools.
   "notion-worker": role("notion-worker"),
 } satisfies Record<string, LlmRoleDefaults>;

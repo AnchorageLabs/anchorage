@@ -29,20 +29,22 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
-### 2026-06-22 — Isolated component preview (opt-in): render changed React components in a throwaway harness with no app boot.
+### 2026-06-22 — Isolated component preview (opt-in): render changed components in a throwaway harness with no app boot — any framework.
 
-**Intent:** Phase 2 of the visual-preview redesign. Even a purely visual change to an env-dependent app (teramot-aleph) couldn't be previewed before, because the gate booted the *real* app, which needs secrets we don't have. This adds an isolated path: for a visual change in a React repo, the runtime agent scaffolds a throwaway Vite harness under `.anchorage/preview/` that imports only the changed components (via generated stories) and renders them in an error-bounded gallery — never importing the app's entry point, so auth/data/secrets never enter the picture. Fidelity comes from importing the repo's global stylesheets and de-duping React to the repo's own copy. Detection (`toolchain.ts`) and harness generation (`harness.ts`) are pure and unit-tested; stories are deterministic for now (render the component with no props, inside the gallery's error boundary), with LLM-synthesized mock props/providers as the next increment. Gated behind `ANCHORAGE_RUNTIME_ISOLATED` (default off) and guarded so any skip/failure falls back to the legacy app-boot path — so this is inert until enabled and validated against real repos. React-only for now; other frameworks fall back.
+**Intent:** Phase 2 of the visual-preview redesign. Even a purely visual change to an env-dependent app (teramot-aleph) couldn't be previewed before, because the gate booted the *real* app, which needs secrets we don't have. This adds an isolated path: for a visual change, the runtime agent scaffolds a throwaway harness under `.anchorage/preview/` that imports only the changed components and renders them in an error-bounded gallery — never importing the app's entry point, so auth/data/secrets never enter the picture. **Hybrid, so it works for any framework, not just the ones we hand-template:** (1) a deterministic **React/Vite template** fast-path (pure, unit-tested `toolchain.ts` + `harness.ts`; React de-duped to the repo's copy, repo global stylesheets imported for fidelity); (2) an **LLM general path** (`llm-harness.ts`) — when no template fits, an agentic loop inspects the repo, detects the framework, writes a minimal harness with mock data/providers, and returns the install/start commands (the deterministic caller installs, starts detached, probes, and feeds one repair pass on failure); (3) a per-repo **cache** (`.anchorage/preview.json`, `manifest.ts`) of whatever came up, so the next run skips the LLM. Per the design decision, a visual change is NEVER booted as the real app — on any skip/failure the gate is skipped cleanly (`not_applicable`; the PR still opens), never falling back to app-boot. Stories are deterministic in the template path for now (render with no props inside the error boundary); LLM-synthesized mock props are part of the general path. Gated behind `ANCHORAGE_RUNTIME_ISOLATED` (default off) so it's inert until enabled and validated against real repos; with the flag off, the legacy app-boot path is unchanged.
 
 **Files touched:**
 - agents/runtime/src/toolchain.ts
 - agents/runtime/src/harness.ts
 - agents/runtime/src/stories.ts
+- agents/runtime/src/manifest.ts
+- agents/runtime/src/llm-harness.ts
 - agents/runtime/src/index.ts
-- agents/runtime/tests/toolchain.test.ts
-- agents/runtime/tests/harness.test.ts
-- agents/runtime/tests/stories.test.ts
+- agents/runtime/tests/{toolchain,harness,stories,manifest}.test.ts
+- agents/llm/src/role-defaults.ts (new `runtime` role)
+- agents/runtime/package.json, pnpm-lock.yaml (depend on @anchorage/agent-llm)
 
-**Reason:** user request — make the runtime agent preview visual changes by rendering components in isolation with mocked data, so env/auth-dependent repos can be previewed without their secrets.
+**Reason:** user request — the runtime agent must preview visual changes for ANY repo/framework by rendering components in isolation with mocked data, so env/auth-dependent repos can be previewed without their secrets.
 
 **Author:** Sol Soletti
 

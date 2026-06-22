@@ -73,7 +73,7 @@ async function fileExists(p: string): Promise<boolean> {
     .catch(() => false);
 }
 
-async function detectPackageManager(workspacePath: string): Promise<PackageManager> {
+export async function detectPackageManager(workspacePath: string): Promise<PackageManager> {
   if (await fileExists(path.join(workspacePath, "pnpm-lock.yaml"))) return "pnpm";
   if (await fileExists(path.join(workspacePath, "yarn.lock"))) return "yarn";
   if (await fileExists(path.join(workspacePath, "bun.lockb"))) return "bun";
