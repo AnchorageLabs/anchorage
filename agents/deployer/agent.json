@@ -1,0 +1,12 @@
+{
+  "name": "deployer",
+  "version": "0.1.0",
+  "protocolVersion": "0.1",
+  "description": "Pre-PR deploy gate: deploys the run's working branch to a chosen GitHub environment (stage) — auto-detecting a workflow_dispatch deploy workflow, else the GitHub Deployments API — and exposes the live stage URL for human inspection. Emits a deploy.preview artifact (running | not_applicable | failed).",
+  "taskTypes": ["deploy.trigger"],
+  "inputs": ["code.change.result"],
+  "outputs": ["deploy.preview"],
+  "requires": ["github.write"],
+  "binary": "./dist/index.js",
+  "timeout": 600
+}
