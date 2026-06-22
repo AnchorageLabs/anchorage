@@ -108,9 +108,8 @@ async function main(): Promise<number> {
     // Visual change: render the changed components in isolation (a throwaway
     // harness with mock data) so a real product never has to boot with secrets it
     // doesn't have here. We NEVER boot the real app for a visual change — on any
-    // skip/failure we skip the gate cleanly (the PR still opens). Opt-in while
-    // it's validated against real repos; with the flag off we keep the legacy
-    // app-boot behavior below.
+    // skip/failure we skip the gate cleanly (the PR still opens). On by default;
+    // with ANCHORAGE_RUNTIME_ISOLATED=0 we keep the legacy app-boot behavior below.
     if (isolatedPreviewEnabled()) {
       const isolated = await runIsolatedPreview(task.value, workspacePath, changedFiles);
       if ("ok" in isolated && isolated.ok) {
@@ -559,9 +558,9 @@ interface StartFailure {
 // Render the changed components in a throwaway harness (mock data, never the
 // app's entry point) so a real product never has to boot with secrets we don't
 // have. Hybrid: a deterministic React template (fast, free), an LLM general path
-// for any other framework, and a per-repo cache of whatever came up. Opt-in via
-// ANCHORAGE_RUNTIME_ISOLATED while it's validated on real repos; on any failure
-// the gate is skipped cleanly — we never fall back to booting the real app.
+// for any other framework, and a per-repo cache of whatever came up. On by
+// default (set ANCHORAGE_RUNTIME_ISOLATED=0 to opt out); on any failure the gate
+// is skipped cleanly — we never fall back to booting the real app.
 
 interface IsolatedOk {
   ok: true;
@@ -578,8 +577,10 @@ interface IsolatedSkip {
 type IsolatedResult = IsolatedOk | StartFailure | IsolatedSkip;
 
 function isolatedPreviewEnabled(): boolean {
+  // On by default. Set ANCHORAGE_RUNTIME_ISOLATED=0 (or false/no/off) to opt out
+  // and fall back to the legacy app-boot path.
   const v = process.env.ANCHORAGE_RUNTIME_ISOLATED?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "on";
+  return !(v === "0" || v === "false" || v === "no" || v === "off");
 }
 
 function errMessage(error: unknown): string {
