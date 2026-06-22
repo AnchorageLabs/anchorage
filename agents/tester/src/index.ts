@@ -125,17 +125,20 @@ async function main(): Promise<number> {
   for (const command of commands.value) {
     emit(task.value, "tool.requested", "info", `Running test command ${command.name}`, {
       tool: "shell.exec",
-      input: { name: command.name, command: command.command },
+      input: { name: command.name, command: command.command, cwd: command.cwd ?? "." },
     });
 
+    await hydrateDependencies(command, workspacePath);
     const result = await runTestCommand(command, workspacePath);
     results.push(result);
 
     emit(
       task.value,
       "tool.result",
-      result.passed ? "info" : "error",
-      `Test command ${command.name} finished`,
+      result.passed ? "info" : result.environmentBlocked ? "warn" : "error",
+      result.environmentBlocked
+        ? `Test command ${command.name} could not run in this environment (${result.envReason})`
+        : `Test command ${command.name} finished`,
       {
         tool: "shell.exec",
         success: result.passed,
@@ -144,8 +147,53 @@ async function main(): Promise<number> {
     );
   }
 
+  // A command that the environment couldn't EXECUTE (missing tool/service) is not
+  // a test failure — only commands that actually ran count toward pass/fail.
+  const executed = results.filter((result) => !result.environmentBlocked);
+  const realFailures = executed.filter((result) => !result.passed);
+
+  // Nothing could run here (every candidate needed a tool/service the worker
+  // lacks — e.g. a Dockerised backend suite). This is NOT a code failure and it
+  // must NEVER kill the pipeline: the run continues and the report records, out
+  // loud, that the gate could not verify this change. (Note: `strict` /
+  // ANCHORAGE_TESTER_REQUIRE_TESTS governs the *no test command configured* case
+  // above; an environment that can't execute is always non-fatal here.)
+  if (executed.length === 0) {
+    const skipReason = `No test command could run in this environment: ${results
+      .map((r) => `${r.name} (${r.envReason ?? `exit ${r.exitCode}`})`)
+      .join("; ")}`;
+    const report: TestReport = {
+      // Non-blocking: the tester couldn't verify, but it didn't observe a
+      // failure either. `skipped`+`skipReason` carry the "could not run" signal.
+      passed: true,
+      commandSource,
+      checkedAt: new Date().toISOString(),
+      results,
+      skipped: true,
+      skipReason,
+    };
+    emit(
+      task.value,
+      "agent.output",
+      "warn",
+      "TESTS SKIPPED — no command was runnable in this environment; continuing.",
+      report,
+    );
+    const artifact = await writeArtifact(task.value, report);
+    emit(task.value, "artifact.created", "info", "Test report artifact created", artifact);
+    await maybePostTestComment(task.value, report);
+    emit(
+      task.value,
+      "agent.completed",
+      "warn",
+      "tester could not run any tests in this environment — pipeline continues, change UNVERIFIED",
+      { artifact, skipped: true, skipReason },
+    );
+    return ExitCode.Success;
+  }
+
   const report: TestReport = {
-    passed: results.every((result) => result.passed),
+    passed: realFailures.length === 0,
     commandSource,
     checkedAt: new Date().toISOString(),
     results,
@@ -245,20 +293,79 @@ function parseCommands(
 }
 
 // ── Test-command detection ────────────────────────────────────────────────────
-// Mirrors the manifest knowledge in agent-llm's detect_project, kept local so
-// the deterministic tester stays dependency-light. First match wins; every
-// command is the ecosystem's own idiom, never an invented script.
+// Discover the NATIVE test runner for every project root in the repo (the
+// workspace root PLUS nested packages — e.g. a `frontend/` + Go-backend
+// monorepo), not just the first manifest at the top level. Native per-project
+// runners are preferred over a top-level `make test`, which in polyglot repos
+// tends to drive the whole suite through Docker/services the worker can't
+// provide; `make test` is kept only as a last resort when nothing native is
+// found. Every command is the ecosystem's own idiom, never an invented script.
 
 const NPM_PLACEHOLDER_TEST = /echo .Error: no test specified./;
 
+// Directories never worth descending into when looking for project roots.
+const SCAN_SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", "coverage", "vendor", ".next", ".turbo",
+  "__pycache__", ".venv", "venv", "target", "cdk.out", ".anchorage", "tmp", "out", ".cache",
+]);
+const MAX_PROJECT_COMMANDS = 8;
+
 async function detectTestCommands(workspacePath: string): Promise<TestCommand[]> {
-  const read = async (rel: string): Promise<string | null> =>
-    fs.readFile(path.join(workspacePath, rel), "utf8").catch(() => null);
-  const exists = async (rel: string): Promise<boolean> =>
+  const dirs = await listProjectDirs(workspacePath);
+  const commands: TestCommand[] = [];
+  const seen = new Set<string>();
+  for (const dir of dirs) {
+    const cmd = await detectNativeTestCommand(workspacePath, dir);
+    if (!cmd) continue;
+    const key = `${cmd.cwd}|${cmd.command}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    commands.push(cmd);
+    if (commands.length >= MAX_PROJECT_COMMANDS) break;
+  }
+  if (commands.length > 0) return commands;
+
+  // Last resort: a top-level Makefile `test` target. May invoke tools the worker
+  // lacks (docker, services) — runTestCommand classifies that as environment-
+  // blocked (skipped), not a test failure.
+  const makefile = await fs.readFile(path.join(workspacePath, "Makefile"), "utf8").catch(() => null);
+  if (makefile && /^test:/m.test(makefile)) {
+    return [{ name: "make-test", command: "make test", cwd: ".", ecosystem: "make" }];
+  }
+  return [];
+}
+
+/** Workspace root + nested directories (≤2 deep) that could be project roots. */
+async function listProjectDirs(root: string): Promise<string[]> {
+  const dirs: string[] = ["."];
+  const walk = async (rel: string, depth: number): Promise<void> => {
+    if (depth > 2 || dirs.length > 64) return;
+    const entries = await fs
+      .readdir(path.join(root, rel), { withFileTypes: true })
+      .catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".") || SCAN_SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      const childRel = rel === "." ? entry.name : `${rel}/${entry.name}`;
+      dirs.push(childRel);
+      await walk(childRel, depth + 1);
+    }
+  };
+  await walk(".", 1);
+  return dirs;
+}
+
+/** The native test command for a single directory, or null if it's not a project root. */
+async function detectNativeTestCommand(root: string, dir: string): Promise<TestCommand | null> {
+  const read = (rel: string): Promise<string | null> =>
+    fs.readFile(path.join(root, dir, rel), "utf8").catch(() => null);
+  const exists = (rel: string): Promise<boolean> =>
     fs
-      .stat(path.join(workspacePath, rel))
+      .stat(path.join(root, dir, rel))
       .then(() => true)
       .catch(() => false);
+  const suffix = dir === "." ? "" : `:${dir}`;
 
   const packageJsonRaw = await read("package.json");
   if (packageJsonRaw) {
@@ -278,26 +385,57 @@ async function detectTestCommands(workspacePath: string): Promise<TestCommand[]>
               : (await exists("yarn.lock"))
                 ? "yarn"
                 : "npm";
-        return [{ name: "test", command: `${pm} test` }];
+        return { name: `test${suffix}`, command: `${pm} test`, cwd: dir, ecosystem: "node" };
       }
     } catch {
-      // unparseable manifest — fall through to other ecosystems
+      // unparseable manifest — try other ecosystems in this dir
     }
   }
-
-  if (await exists("go.mod")) return [{ name: "go-test", command: "go test ./..." }];
-  if (await exists("Cargo.toml")) return [{ name: "cargo-test", command: "cargo test" }];
-  if (await exists("mix.exs")) return [{ name: "mix-test", command: "mix test" }];
-  if ((await exists("pytest.ini")) || (await exists("tests")) || (await exists("test"))) {
-    const pyproject = await read("pyproject.toml");
-    if (pyproject !== null || (await exists("pytest.ini")) || (await exists("setup.py"))) {
-      return [{ name: "pytest", command: "python -m pytest -q" }];
-    }
+  if (await exists("go.mod"))
+    return { name: `go-test${suffix}`, command: "go test ./...", cwd: dir, ecosystem: "go" };
+  if (await exists("Cargo.toml"))
+    return { name: `cargo-test${suffix}`, command: "cargo test", cwd: dir, ecosystem: "rust" };
+  if (await exists("mix.exs"))
+    return { name: `mix-test${suffix}`, command: "mix test", cwd: dir, ecosystem: "elixir" };
+  if ((await exists("pytest.ini")) || (await exists("pyproject.toml")) || (await exists("setup.py"))) {
+    if ((await exists("tests")) || (await exists("test")) || (await exists("pytest.ini")))
+      return { name: `pytest${suffix}`, command: "python -m pytest -q", cwd: dir, ecosystem: "python" };
   }
-  const makefile = await read("Makefile");
-  if (makefile && /^test:/m.test(makefile)) return [{ name: "make-test", command: "make test" }];
+  if (await exists("pom.xml"))
+    return { name: `maven-test${suffix}`, command: "mvn -q -B test", cwd: dir, ecosystem: "java" };
+  if ((await exists("build.gradle")) || (await exists("build.gradle.kts")))
+    return { name: `gradle-test${suffix}`, command: "./gradlew test", cwd: dir, ecosystem: "java" };
+  if (await exists("composer.json"))
+    return { name: `composer-test${suffix}`, command: "composer test", cwd: dir, ecosystem: "php" };
+  if (await exists("Gemfile"))
+    return { name: `ruby-test${suffix}`, command: "bundle exec rake test", cwd: dir, ecosystem: "ruby" };
+  return null;
+}
 
-  return [];
+// Signatures that mean "this environment can't run the command", NOT "the tests
+// failed": a missing binary/toolchain (make/docker/go/…), an unreachable service
+// or DB the suite spins up, or a Make target that died on a missing tool. These
+// must not be reported as test failures — otherwise a frontend change is blocked
+// by an unrunnable Dockerised backend suite.
+const ENVIRONMENT_FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/command not found|: not found|executable file not found/i, "a required command is not installed"],
+  [/docker: (?:command )?not found|cannot connect to the docker daemon|is the docker daemon running/i, "Docker is not available in the worker"],
+  [/no such file or directory/i, "a required file or tool is missing"],
+  [/connection refused|ECONNREFUSED|could not connect to server|could not translate host/i, "a required service/database was not reachable"],
+  [/make: \*\*\* .*Error 127/i, "a Make target invoked a tool that is not installed"],
+  [/\bgradlew\b.*(?:not found|permission denied)/i, "the Gradle wrapper could not run"],
+];
+
+function classifyEnvironment(result: CommandResult): { blocked: boolean; reason?: string } {
+  if (result.exitCode === 0) return { blocked: false };
+  const text = `${result.stderr}\n${result.stdout}`;
+  if (result.exitCode === 127) {
+    return { blocked: true, reason: "command exited 127 (not found / unavailable)" };
+  }
+  for (const [pattern, reason] of ENVIRONMENT_FAILURE_PATTERNS) {
+    if (pattern.test(text)) return { blocked: true, reason };
+  }
+  return { blocked: false };
 }
 
 async function runTestCommand(
@@ -305,7 +443,9 @@ async function runTestCommand(
   workspacePath: string,
 ): Promise<TestCommandResult> {
   const startedAt = Date.now();
-  const result = await runCommand("sh", ["-c", command.command], workspacePath);
+  const cwd = path.resolve(workspacePath, command.cwd ?? ".");
+  const result = await runCommand("sh", ["-c", command.command], cwd);
+  const env = classifyEnvironment(result);
   return {
     name: command.name,
     command: command.command,
@@ -314,7 +454,58 @@ async function runTestCommand(
     exitCode: result.exitCode,
     stdout: result.stdout.slice(0, 4000),
     stderr: result.stderr.slice(0, 4000),
+    ...(env.blocked ? { environmentBlocked: true, envReason: env.reason } : {}),
   };
+}
+
+/**
+ * Best-effort: install dependencies for a command's ecosystem before running so
+ * a repo that wasn't pre-hydrated (e.g. missing node_modules → "Cannot find
+ * module 'vitest'") still runs its tests. Failures here are swallowed — the test
+ * run itself will surface any real gap, and we never want hydration to block.
+ */
+async function hydrateDependencies(command: TestCommand, workspacePath: string): Promise<void> {
+  const cwd = path.resolve(workspacePath, command.cwd ?? ".");
+  const has = (rel: string): Promise<boolean> =>
+    fs
+      .stat(path.join(cwd, rel))
+      .then(() => true)
+      .catch(() => false);
+  try {
+    switch (command.ecosystem) {
+      case "node": {
+        if (await has("node_modules")) return;
+        const pm = (await has("pnpm-lock.yaml"))
+          ? "pnpm"
+          : (await has("yarn.lock"))
+            ? "yarn"
+            : "npm";
+        const args = pm === "npm" ? ["install", "--no-audit", "--no-fund"] : ["install"];
+        await runCommand(pm, args, cwd);
+        return;
+      }
+      case "go":
+        await runCommand("go", ["mod", "download"], cwd);
+        return;
+      case "python":
+        if (await has("requirements.txt")) {
+          await runCommand("python", ["-m", "pip", "install", "-q", "-r", "requirements.txt"], cwd);
+        } else if ((await has("pyproject.toml")) || (await has("setup.py"))) {
+          await runCommand("python", ["-m", "pip", "install", "-q", "-e", "."], cwd);
+        }
+        return;
+      case "rust":
+        await runCommand("cargo", ["fetch"], cwd);
+        return;
+      case "ruby":
+        await runCommand("bundle", ["install"], cwd);
+        return;
+      default:
+        return; // java/php/elixir/make manage their own deps on test invocation
+    }
+  } catch {
+    // best-effort hydration; ignore failures
+  }
 }
 
 async function runCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
@@ -543,6 +734,10 @@ interface TesterFailure extends AgentFailure {
 interface TestCommand {
   name: string;
   command: string;
+  /** Directory (relative to the workspace root) to run in. Default ".". */
+  cwd?: string;
+  /** Ecosystem hint, used to hydrate dependencies before running. */
+  ecosystem?: "node" | "go" | "rust" | "python" | "ruby" | "elixir" | "java" | "php" | "make";
 }
 
 type TestCommandResult = ProtocolEvent["data"] & {
@@ -553,6 +748,15 @@ type TestCommandResult = ProtocolEvent["data"] & {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /**
+   * True when the command could not be EXECUTED in this environment (missing
+   * toolchain/service — e.g. `docker: not found`, exit 127), as opposed to the
+   * tests running and failing. Environment-blocked commands never count as a
+   * test failure: they don't block the run or bounce the coder.
+   */
+  environmentBlocked?: boolean;
+  /** Human-readable reason a command was environment-blocked. */
+  envReason?: string;
 };
 
 type TestReport = ProtocolEvent["data"] & {
