@@ -29,6 +29,23 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-22 — Isolated component preview (opt-in): render changed React components in a throwaway harness with no app boot.
+
+**Intent:** Phase 2 of the visual-preview redesign. Even a purely visual change to an env-dependent app (teramot-aleph) couldn't be previewed before, because the gate booted the *real* app, which needs secrets we don't have. This adds an isolated path: for a visual change in a React repo, the runtime agent scaffolds a throwaway Vite harness under `.anchorage/preview/` that imports only the changed components (via generated stories) and renders them in an error-bounded gallery — never importing the app's entry point, so auth/data/secrets never enter the picture. Fidelity comes from importing the repo's global stylesheets and de-duping React to the repo's own copy. Detection (`toolchain.ts`) and harness generation (`harness.ts`) are pure and unit-tested; stories are deterministic for now (render the component with no props, inside the gallery's error boundary), with LLM-synthesized mock props/providers as the next increment. Gated behind `ANCHORAGE_RUNTIME_ISOLATED` (default off) and guarded so any skip/failure falls back to the legacy app-boot path — so this is inert until enabled and validated against real repos. React-only for now; other frameworks fall back.
+
+**Files touched:**
+- agents/runtime/src/toolchain.ts
+- agents/runtime/src/harness.ts
+- agents/runtime/src/stories.ts
+- agents/runtime/src/index.ts
+- agents/runtime/tests/toolchain.test.ts
+- agents/runtime/tests/harness.test.ts
+- agents/runtime/tests/stories.test.ts
+
+**Reason:** user request — make the runtime agent preview visual changes by rendering components in isolation with mocked data, so env/auth-dependent repos can be previewed without their secrets.
+
+**Author:** Sol Soletti
+
 ### 2026-06-22 — Runtime gate previews visual changes only; backend/non-UI changes skip it instead of failing to boot.
 
 **Intent:** The runtime gate booted the reviewed change locally for inspection, but it ran with only the worker's own env — never the target app's secrets (DB, auth, external API keys). For a real product like teramot-aleph that needs those to come up, the gate could only ever fail to boot, which turned into a failed/no-merge run. The gate is now scoped to what it can actually show: VISUAL changes. The runtime agent classifies the change set from the coder's `code.change.result` and, when it isn't visual, finishes `not_applicable` (the run continues / the PR still opens) instead of attempting a doomed boot — docs (nothing to run), backend (needs real services/secrets; a mixed UI+backend change counts as backend), and non-visual config/tooling all skip cleanly. Visual changes keep the existing local-run path for now (isolated component rendering is the next increment). This is Phase 1 of the visual-preview redesign.

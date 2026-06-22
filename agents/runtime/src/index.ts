@@ -17,7 +17,10 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { classifyChange, skipReason } from "./classify.js";
+import { buildHarnessFiles, STORIES_DIR } from "./harness.js";
 import { publicPreviewUrl } from "./preview-url.js";
+import { buildFallbackStory, type ComponentEntry, isRenderableComponent } from "./stories.js";
+import { detectFrontendToolchain } from "./toolchain.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -93,6 +96,47 @@ async function main(): Promise<number> {
     const kind = classifyChange(changedFiles);
     if (kind !== "visual") {
       return finishNotApplicable(task.value, skipReason(kind, changedFiles));
+    }
+
+    // Visual change: prefer rendering the changed components in isolation (a
+    // throwaway Vite harness with mock data) so a real product never has to boot
+    // with secrets it doesn't have here. Opt-in while it's validated against real
+    // repos; on "skip"/failure we fall through to the legacy app-boot path.
+    if (isolatedPreviewEnabled()) {
+      const isolated = await startIsolatedPreview(task.value, workspacePath, changedFiles);
+      if ("ok" in isolated && isolated.ok) {
+        const preview = buildRuntimePreview({
+          status: "running",
+          summary: `Rendering ${isolated.componentCount} changed component(s) in isolation at ${isolated.previewUrl} — the app itself is not running.`,
+          previewUrl: isolated.previewUrl,
+          strategy: {
+            kind: "isolated",
+            startCommand: "vite (isolated component harness)",
+            port: isolated.port,
+            url: isolated.localUrl,
+          },
+        });
+        await emitPreview(task.value, preview, "info");
+        emit(
+          task.value,
+          "agent.completed",
+          "info",
+          "runtime started an isolated component preview",
+          {
+            previewUrl: isolated.previewUrl,
+            components: isolated.componentCount,
+          },
+        );
+        return ExitCode.Success;
+      }
+      const reason = "skip" in isolated ? isolated.reason : isolated.error;
+      emit(
+        task.value,
+        "agent.progress",
+        "warn",
+        `Isolated preview unavailable (${reason}); falling back to running the app.`,
+        {},
+      );
     }
   }
 
@@ -503,6 +547,150 @@ interface StartResult {
 interface StartFailure {
   ok: false;
   error: string;
+}
+
+// ── Isolated component preview ─────────────────────────────────────────────────
+// Render the changed components in a throwaway Vite harness (mock data, never the
+// app's entry point) so a real product never has to boot with secrets we don't
+// have. Opt-in via ANCHORAGE_RUNTIME_ISOLATED while it's validated on real repos.
+
+interface IsolatedOk {
+  ok: true;
+  previewUrl: string;
+  localUrl: string;
+  port: number;
+  componentCount: number;
+}
+interface IsolatedSkip {
+  skip: true;
+  reason: string;
+}
+type IsolatedResult = IsolatedOk | StartFailure | IsolatedSkip;
+
+function isolatedPreviewEnabled(): boolean {
+  const v = process.env.ANCHORAGE_RUNTIME_ISOLATED?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function errMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function startIsolatedPreview(
+  task: TaskEnvelope,
+  workspacePath: string,
+  changedFiles: string[],
+): Promise<IsolatedResult> {
+  const toolchain = await detectFrontendToolchain(workspacePath);
+  if (!toolchain)
+    return { skip: true, reason: "not a React project (no other framework supported yet)" };
+
+  // Collect the changed, individually-renderable component files + their source.
+  const components: ComponentEntry[] = [];
+  for (const rel of changedFiles) {
+    const abs = path.join(workspacePath, rel);
+    if (!isRenderableComponent(abs)) continue;
+    try {
+      components.push({ absPath: abs, source: await fs.readFile(abs, "utf8") });
+    } catch {
+      // Deleted/renamed/unreadable in the worktree — nothing to render for it.
+    }
+  }
+  if (components.length === 0) {
+    return { skip: true, reason: "no renderable component files in the change" };
+  }
+
+  const stories = components
+    .map(buildFallbackStory)
+    .filter((story): story is NonNullable<typeof story> => story !== null);
+  if (stories.length === 0) {
+    return { skip: true, reason: "no detectable component exports to render" };
+  }
+
+  const port = Number(process.env.ANCHORAGE_RUNTIME_PORT) || DEFAULT_NODE_PREVIEW_PORT;
+  const harnessDir = path.join(workspacePath, ANCHORAGE_DIR, "preview");
+
+  // Scaffold fresh each run so a stale config/story can't poison the preview.
+  try {
+    await fs.rm(harnessDir, { recursive: true, force: true });
+    for (const file of buildHarnessFiles({ toolchain, workspacePath, port })) {
+      const dest = path.join(harnessDir, file.path);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, file.content, "utf8");
+    }
+    const storiesAbs = path.join(harnessDir, STORIES_DIR);
+    await fs.mkdir(storiesAbs, { recursive: true });
+    for (const story of stories) {
+      await fs.writeFile(path.join(storiesAbs, story.fileName), story.content, "utf8");
+    }
+  } catch (error) {
+    return { ok: false, error: `failed to scaffold preview harness: ${errMessage(error)}` };
+  }
+
+  emit(
+    task,
+    "agent.progress",
+    "info",
+    `Scaffolded isolated preview for ${stories.length} component(s)`,
+    {
+      harnessDir,
+      components: stories.length,
+    },
+  );
+
+  // The component imports (and the aliased React) resolve against the repo's
+  // own node_modules, so the repo must be installed; then the harness's own
+  // (tiny) deps — Vite + the React plugin.
+  const repoInstall = await runToCompletion(
+    task,
+    `${toolchain.packageManager} install`,
+    workspacePath,
+    INSTALL_TIMEOUT_MS,
+  );
+  if (!repoInstall.ok)
+    return { ok: false, error: `repo dependency install failed: ${repoInstall.error}` };
+
+  const harnessInstall = await runToCompletion(
+    task,
+    `${toolchain.packageManager} install`,
+    harnessDir,
+    INSTALL_TIMEOUT_MS,
+  );
+  if (!harnessInstall.ok) {
+    return { ok: false, error: `harness dependency install failed: ${harnessInstall.error}` };
+  }
+
+  const localUrl = `http://localhost:${port}`;
+  await freePreviewPort(task, port);
+  const logPath = await runtimeLogPath(task);
+  emit(task, "tool.requested", "info", "Starting isolated component harness (vite)", {
+    tool: "shell.exec",
+    input: { command: `${toolchain.packageManager} run dev`, cwd: harnessDir },
+  });
+  const failure = startDetached(`${toolchain.packageManager} run dev`, harnessDir, logPath, port);
+  if (failure) return { ok: false, error: failure };
+
+  const ready = await waitForUrl(localUrl, READY_TIMEOUT_MS.node ?? 90_000);
+  if (!ready) {
+    const tail = await readLogTail(logPath);
+    return {
+      ok: false,
+      error: `isolated preview did not respond at ${localUrl}${tail ? `\n--- last log lines ---\n${tail}` : ""}`,
+    };
+  }
+
+  emit(task, "tool.result", "info", "Isolated component preview is reachable", {
+    tool: "shell.exec",
+    success: true,
+    output: { url: localUrl, components: stories.length },
+  });
+  return {
+    ok: true,
+    previewUrl: publicPreviewUrl(localUrl),
+    localUrl,
+    port,
+    componentCount: stories.length,
+  };
 }
 
 async function startStrategy(
