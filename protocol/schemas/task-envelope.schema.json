@@ -117,9 +117,17 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ref", "root"],
+        "required": ["owner", "name", "root"],
         "properties": {
-          "ref": {
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "defaultBranch": {
             "type": "string",
             "minLength": 1
           },
