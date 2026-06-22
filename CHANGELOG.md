@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-22 — shell_exec refuses to background a process and kills the whole process group on timeout (fixes frozen runs).
+
+**Intent:** A run could freeze forever when the agent ran a long-lived/background command through `shell_exec` (e.g. `npm run dev &`). Backgrounding hands control back to bash immediately, but the detached child inherits and holds the stdout/stderr pipes open, so the tool's `close` never fires and no `tool.result` is ever emitted — the run sat at `running` in RDS indefinitely (observed: `run_srv_1782089181460_0`, stuck after `npm run dev &`). Two fixes: (1) `shell_exec` now refuses commands that background a process (`&`, `nohup`, `disown` — detected after stripping the non-backgrounding `&&` operator and `&`-bearing redirections like `2>&1`/`&>file`) with a clear message telling the model to run finite commands and use the preview/runtime step for servers; (2) the command now spawns in its own process group (`detached: true`) and a timeout kills the WHOLE group (`kill(-pid)`, SIGTERM then SIGKILL), so any long-lived child that slips through dies and `close` can fire instead of hanging past the timeout. This is a different failure class from the earlier `sh -c` → `bash -o pipefail -c` fix (that was hidden pipeline exit codes; this is process lifecycle).
+
+**Files touched:**
+- agents/llm/src/tools/builtin/shell.ts
+- agents/llm/test/shell-background.test.mjs
+
+**Reason:** frozen-run incident 2026-06-22 (`run_srv_1782089181460_0`, AnchorageLabs/anchorage-labs-web, instruction-to-preview-pr) — `shell_exec` never returned after `npm run dev &`.
+
+**Author:** Valen Torassa
+
 ### 2026-06-20 — CLI can resume a failed run from its salvage branch.
 
 **Intent:** `anchorage runs resume <id>` starts a new run that continues a failed run's work from its `anchorage/salvage/<runId>` branch (where the orchestrator pushed the agent's WIP on failure). `--instruction "..."` redirects the work; without it, the original task is continued. Mirrors the orchestrator's `POST /runs/:id/resume`.
