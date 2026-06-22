@@ -548,6 +548,18 @@ async function detectPackageManager(workspacePath: string): Promise<string> {
   return "npm";
 }
 
+/**
+ * Install command for a package manager with lifecycle scripts DISABLED. The
+ * preview only needs node_modules present to render/boot — a repo's
+ * `postinstall`/`prepare` scripts (lefthook/husky git-hook setup, codegen that
+ * needs infra) are dev tooling that routinely exit non-zero in the worker
+ * (e.g. `lefthook: not found` → exit 127) and must not abort the install and
+ * thus the whole preview. npm / yarn(classic) / pnpm / bun all accept the flag.
+ */
+function installCommand(pm: string): string {
+  return `${pm} install --ignore-scripts`;
+}
+
 function guessNodePort(pkg: Record<string, unknown>, scriptBody: string): number {
   const portInScript = scriptBody.match(/(?:--port[= ]|-p[= ]|PORT=)(\d+)/);
   if (portInScript?.[1]) return Number(portInScript[1]);
@@ -745,7 +757,7 @@ async function runIsolatedPreview(
   const pm = await detectPackageManager(workspacePath);
   const repoInstall = await runToCompletion(
     task,
-    `${pm} install`,
+    installCommand(pm),
     workspacePath,
     INSTALL_TIMEOUT_MS,
   );
@@ -817,14 +829,14 @@ async function runIsolatedPreview(
         harnessDir,
       },
     );
-    const installCommand = `${toolchain.packageManager} install`;
+    const harnessInstall = installCommand(toolchain.packageManager);
     const startCommand = `${toolchain.packageManager} run dev`;
-    const probe = await installStartProbe(task, harnessDir, installCommand, startCommand, port);
+    const probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
     if (probe.ok) {
       const manifest: PreviewManifest = {
         framework: "react",
         generator: "template",
-        installCommand,
+        installCommand: harnessInstall,
         startCommand,
         port,
       };
@@ -907,7 +919,12 @@ async function startStrategy(
   // Node projects need their dependencies installed before the dev server runs.
   if (strategy.kind === "node") {
     const pm = strategy.startCommand.split(" ")[0] ?? "npm";
-    const install = await runToCompletion(task, `${pm} install`, workspacePath, INSTALL_TIMEOUT_MS);
+    const install = await runToCompletion(
+      task,
+      installCommand(pm),
+      workspacePath,
+      INSTALL_TIMEOUT_MS,
+    );
     if (!install.ok) {
       return { ok: false, error: `dependency install failed: ${install.error}` };
     }
