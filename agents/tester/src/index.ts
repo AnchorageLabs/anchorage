@@ -462,6 +462,22 @@ const ENVIRONMENT_FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   ],
   [/make: \*\*\* .*Error 127/i, "a Make target invoked a tool that is not installed"],
   [/\bgradlew\b.*(?:not found|permission denied)/i, "the Gradle wrapper could not run"],
+  // Toolchain VERSION mismatches — the installed runtime is too old/new to parse
+  // the project's manifest (e.g. a Go repo pinning `go 1.25.x` against an older
+  // worker Go). The code isn't broken; the environment can't build/run it. Treat
+  // as environment-blocked so a version skew never fails the run.
+  [
+    /invalid go version|errors parsing go\.mod|go: .*requires go >=|must match format|go: downloading go\d/i,
+    "the worker's Go toolchain version cannot build this module",
+  ],
+  [
+    /unsupported engine|the engine "node" is incompatible|EBADENGINE|requires node|nvmrc|volta/i,
+    "the worker's runtime version does not match what the project requires",
+  ],
+  [
+    /SDK not found|JAVA_HOME|could not determine java version|unsupported class file major version/i,
+    "the worker's JDK version does not match what the project requires",
+  ],
 ];
 
 function classifyEnvironment(result: CommandResult): { blocked: boolean; reason?: string } {

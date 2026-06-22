@@ -736,6 +736,25 @@ async function ensureBranch(
     return { ok: true };
   }
 
+  // preserveExisting but the branch isn't here yet: a revision attempt can be
+  // scheduled on a DIFFERENT worker than the one that created + pushed the
+  // branch, so the local `git checkout <branch>` fails with "pathspec … did not
+  // match". The work is on origin — fetch it and check it out before failing.
+  if (opts?.preserveExisting === true) {
+    const fetched = await runGit(workspacePath, ["fetch", "origin", branchName]);
+    if (fetched.exitCode === 0) {
+      const fromRemote = await runGit(workspacePath, ["checkout", "-B", branchName, "FETCH_HEAD"]);
+      if (fromRemote.exitCode === 0) {
+        emit(task, "tool.result", "info", `Checked out ${branchName} from origin`, {
+          tool: "git.switch",
+          success: true,
+          output: { branchName, reset: false, fromRemote: true },
+        });
+        return { ok: true };
+      }
+    }
+  }
+
   const message =
     switchResult.stderr ||
     switchResult.stdout ||
