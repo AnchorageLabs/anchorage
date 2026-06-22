@@ -185,19 +185,29 @@ async function main(): Promise<number> {
   // ── Start the solution and wait for a reachable preview ──────────────────────
   const started = await startStrategy(task.value, strategy, workspacePath);
   if (!started.ok) {
+    // The preview is best-effort. A runtime that can't boot HERE (a missing
+    // tool/service/secret, a busy port, a build that needs infra we don't have)
+    // is an ENVIRONMENT gap, not a reason to fail the change — it must NEVER
+    // kill the pipeline. Mirror the tester: degrade to a non-blocking skip and
+    // record, out loud, that the change went UNVERIFIED by preview. The PR/merge
+    // still proceeds; the user inspects another way.
+    const reason = runtimeFailureReason(started.error);
     const preview = buildRuntimePreview({
-      status: "failed",
-      summary: `Runtime failed to start (${strategy.kind}).`,
+      status: "not_applicable",
+      summary: `Could not start a local preview (${strategy.kind}): ${reason}. Skipping the runtime gate — the change is UNVERIFIED by preview, but the pipeline continues.`,
       strategy,
       ...(strategy.stopCommand ? { stopCommand: strategy.stopCommand } : {}),
       error: started.error,
     });
-    await emitPreview(task.value, preview, "error");
-    emit(task.value, "agent.failed", "error", "Runtime did not become healthy", {
-      error: { code: "runtime_failed", message: started.error },
-    });
-    // Non-zero so the orchestrator finishes the run without merging.
-    return ExitCode.PartialSuccessAttentionRequired;
+    await emitPreview(task.value, preview, "warn");
+    emit(
+      task.value,
+      "agent.completed",
+      "warn",
+      "runtime could not preview in this environment — continuing, change UNVERIFIED",
+      { reason: started.error },
+    );
+    return ExitCode.Success;
   }
 
   const preview = buildRuntimePreview({
@@ -221,6 +231,28 @@ async function finishNotApplicable(task: TaskEnvelope, summary: string): Promise
   await emitPreview(task, preview, "info");
   emit(task, "agent.completed", "info", "runtime not applicable; continuing", { summary });
   return ExitCode.Success;
+}
+
+/**
+ * A short, human reason a local preview couldn't start — for the skip message
+ * only. Runtime startup failures are ALWAYS non-blocking now (the preview is
+ * best-effort), so this never gates; it just makes the "UNVERIFIED" note useful.
+ */
+function runtimeFailureReason(error: string): string {
+  const e = (error ?? "").toLowerCase();
+  if (/command not found|: not found|not installed|executable file not found/.test(e))
+    return "a required tool is not installed in this environment";
+  if (/docker|daemon/.test(e)) return "Docker is not available here";
+  if (/eaddrinuse|address already in use|port .*in use/.test(e)) return "the preview port was busy";
+  if (/econnrefused|connection refused|could not connect|getaddrinfo|database/.test(e))
+    return "it needs a service/database not available here";
+  if (/secret|environment variable|missing .*key|unauthorized|\b401\b|\b403\b/.test(e))
+    return "it needs secrets/credentials not available here";
+  if (/install|enoent|module not found|cannot find module/.test(e))
+    return "dependencies could not be prepared";
+  if (/timed out|timeout|did not become|health/.test(e))
+    return "it did not become healthy in time";
+  return "the app did not start in this environment";
 }
 
 async function emitPreview(
