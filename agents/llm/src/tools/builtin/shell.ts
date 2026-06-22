@@ -1,8 +1,87 @@
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { checkShellBudget, recordShell } from "../budget.js";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 import { cleanTerminalOutput, shellCleanEnabled } from "./output-clean.js";
+
+// Lockfile → the package manager that owns it. Order matters: the first lockfile
+// found wins when several are (wrongly) present.
+const LOCKFILE_PM: ReadonlyArray<readonly [string, "pnpm" | "yarn" | "bun" | "npm"]> = [
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+  ["bun.lockb", "bun"],
+  ["package-lock.json", "npm"],
+];
+// Subcommands that READ or WRITE the lockfile / install deps — running these
+// under the wrong manager forks a second lockfile and corrupts the dep tree.
+const PM_MUTATING_SUBCOMMANDS = new Set([
+  "install",
+  "i",
+  "ci",
+  "add",
+  "remove",
+  "rm",
+  "uninstall",
+  "update",
+  "up",
+  "upgrade",
+  "dedupe",
+  "prune",
+]);
+const NODE_PMS = new Set(["npm", "yarn", "pnpm", "bun"]);
+
+/** The package manager a directory's lockfile commits it to, or null if none. */
+function lockfilePackageManager(dir: string): string | null {
+  for (const [lock, pm] of LOCKFILE_PM) {
+    if (existsSync(path.join(dir, lock))) return pm;
+  }
+  return null;
+}
+
+/**
+ * Refuse a node package-manager command that contradicts the repo's lockfile —
+ * e.g. `npm install` in a repo whose dep tree is owned by `yarn.lock`. Running
+ * the wrong manager forks a second lockfile (the chary/teramot-aleph PRs that
+ * shipped both yarn.lock and package-lock.json) and can rewrite package.json.
+ * Returns a guidance message to block on, or null to allow.
+ *
+ * Detection is deliberately conservative: it only fires on a dep-mutating
+ * subcommand of a node PM whose owner lockfile names a *different* manager, and
+ * resolves the lockfile from the command's effective directory (an optional
+ * leading `cd <dir> &&`), then cwd, then the workspace root.
+ */
+function packageManagerGuard(
+  commandText: string,
+  cwd: string,
+  workspacePath: string,
+): string | null {
+  // Effective dir: honor a leading `cd <dir> &&` / `cd <dir>;` so a command run
+  // from the repo root against a sub-package is checked against that package.
+  let effectiveDir = cwd;
+  const cd = commandText.match(/^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;)/);
+  const cdTarget = cd?.[1] ?? cd?.[2] ?? cd?.[3];
+  if (cdTarget) effectiveDir = path.resolve(cwd, cdTarget);
+
+  const pmCall = commandText.match(/(?:^|&&|\||;|\()\s*(npm|yarn|pnpm|bun)\s+([a-z]+)/i);
+  if (!pmCall) return null;
+  const usedPm = (pmCall[1] ?? "").toLowerCase();
+  const sub = (pmCall[2] ?? "").toLowerCase();
+  if (!NODE_PMS.has(usedPm) || !PM_MUTATING_SUBCOMMANDS.has(sub)) return null;
+
+  const canonical =
+    lockfilePackageManager(effectiveDir) ??
+    lockfilePackageManager(cwd) ??
+    lockfilePackageManager(workspacePath);
+  if (!canonical || canonical === usedPm) return null;
+
+  return (
+    `shell_exec: refusing \`${usedPm} ${sub}\` — this repo's dependencies are managed by ` +
+    `${canonical} (its lockfile is present). Running ${usedPm} would create a conflicting ` +
+    `${usedPm} lockfile and may rewrite package.json. Use \`${canonical}\` instead ` +
+    `(e.g. \`${canonical} ${sub === "i" ? "install" : sub}\`).`
+  );
+}
 
 // Env names that must never reach the spawned shell. Adding to this list is
 // always safe; removing is a security decision and warrants review.
@@ -155,6 +234,15 @@ async function shellExecHandler(input: JsonObject, ctx: ToolContext): Promise<To
   const built = buildArgv(input.command);
   if (!built.ok) {
     return { ok: false, code: "invalid_input", message: built.message };
+  }
+
+  // Guard against running the wrong node package manager (npm in a yarn repo,
+  // etc.), which forks a second lockfile and can rewrite package.json.
+  const commandText =
+    typeof input.command === "string" ? input.command : (built.argv ?? []).join(" ");
+  const pmMismatch = packageManagerGuard(commandText, cwd, ctx.workspacePath);
+  if (pmMismatch) {
+    return { ok: false, code: "package_manager_mismatch", message: pmMismatch };
   }
 
   const timeoutMs =
