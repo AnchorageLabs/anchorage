@@ -12,9 +12,11 @@ import {
  * orchestrator REST API.
  *
  * Server + auth resolution: --server flag, then env, then
- * ~/.config/anchoragelabs/cli.json. The secret is never a flag.
+ * ~/.config/anchoragelabs/cli.json, then the public API. The secret is never a flag.
  */
 import { loadConfig, saveConfig } from "./config.js";
+
+const CLI_VERSION = "0.1.1";
 
 // ── tiny arg parsing (no external deps) ──────────────────────────────────────
 
@@ -25,7 +27,7 @@ interface Args {
 
 // Flags that take no value — so they never swallow the following positional
 // (e.g. `--json connectors status` must not read "connectors" as --json's value).
-const BOOLEAN_FLAGS = new Set(["json", "help"]);
+const BOOLEAN_FLAGS = new Set(["json", "help", "version"]);
 
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
@@ -58,6 +60,8 @@ const USAGE = `anchorage — orchestrator CLI
 
 Usage: anchorage [--server <url>] [--json] <command>
 
+Version: anchorage --version
+
 Commands:
   auth login                 Save server URL (+ secret from env/stdin) to the config file
   auth whoami                Show the credential the server sees
@@ -82,7 +86,7 @@ Commands:
   model use <p> <m>          Activate provider/model without changing the stored key
 
 Global flags:
-  --server <url>   Orchestrator base URL (else env/config/localhost)
+  --server <url>   Orchestrator base URL (else env/config/public API)
   --json           Print raw JSON instead of formatted output
 
 Model key input:
@@ -170,6 +174,11 @@ async function main(): Promise<number> {
   const { positional, flags } = parseArgs(process.argv.slice(2));
   const json = flags.json === true;
   const [command, sub, ...rest] = positional;
+
+  if (flags.version === true || command === "version") {
+    process.stdout.write(`anchorage ${CLI_VERSION}\n`);
+    return 0;
+  }
 
   if (!command || flags.help === true) {
     process.stdout.write(USAGE);

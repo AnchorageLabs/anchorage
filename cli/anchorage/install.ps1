@@ -14,9 +14,29 @@ $asset = "anchorage-windows-x64.exe"
 $dir = if ($env:ANCHORAGE_BIN_DIR) { $env:ANCHORAGE_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "Anchorage\bin" }
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $out = Join-Path $dir "anchorage.exe"
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("anchorage-" + [System.Guid]::NewGuid().ToString() + ".exe")
+$sums = Join-Path ([System.IO.Path]::GetTempPath()) ("anchorage-" + [System.Guid]::NewGuid().ToString() + ".SHA256SUMS")
 
-Write-Host "Downloading $asset…"
-Invoke-WebRequest -Uri "$base/$asset" -OutFile $out
+try {
+  Write-Host "Downloading $asset…"
+  Invoke-WebRequest -Uri "$base/$asset" -OutFile $tmp
+
+  Write-Host "Verifying checksum…"
+  Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums
+  $expected = Get-Content $sums |
+    Where-Object { $_ -match "\s$([Regex]::Escape($asset))$" } |
+    ForEach-Object { ($_ -split "\s+")[0] } |
+    Select-Object -First 1
+  if (-not $expected) { throw "checksum for $asset not found in SHA256SUMS" }
+
+  $actual = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLowerInvariant()
+  if ($actual -ne $expected.ToLowerInvariant()) { throw "checksum mismatch for $asset" }
+
+  Move-Item -Force -Path $tmp -Destination $out
+}
+finally {
+  Remove-Item -Force -ErrorAction SilentlyContinue $tmp, $sums
+}
 
 Write-Host "Installed: $out"
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")

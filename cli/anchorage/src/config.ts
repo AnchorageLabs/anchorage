@@ -11,6 +11,7 @@ export interface CliConfig {
 
 const CONFIG_DIR = path.join(homedir(), ".config", "anchoragelabs");
 const CONFIG_FILE = path.join(CONFIG_DIR, "cli.json");
+export const DEFAULT_SERVER_URL = "https://api.anchoragelabs.dev";
 
 function readConfigFile(): Partial<CliConfig> {
   try {
@@ -27,7 +28,7 @@ function readConfigFile(): Partial<CliConfig> {
 /**
  * Resolve the CLI config. Precedence: --server flag > env
  * (ANCHORAGE_ORCHESTRATOR_URL > ORCHESTRATOR_URL) > ~/.config/anchoragelabs/cli.json
- * > localhost default. The secret is never read from a flag (shell history) —
+ * > public API default. The secret is never read from a flag (shell history) —
  * env, the config file, or `anchorage auth login` only.
  */
 export function loadConfig(serverFlag?: string): CliConfig {
@@ -37,7 +38,7 @@ export function loadConfig(serverFlag?: string): CliConfig {
     process.env.ANCHORAGE_ORCHESTRATOR_URL ??
     process.env.ORCHESTRATOR_URL ??
     file.serverUrl ??
-    "http://localhost:3001"
+    DEFAULT_SERVER_URL
   ).replace(/\/+$/, "");
   const secret =
     process.env.ANCHORAGE_ORCHESTRATOR_SECRET?.trim() ||

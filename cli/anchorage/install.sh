@@ -40,10 +40,37 @@ fi
 mkdir -p "$bindir"
 
 tmp="$(mktemp)"
+sums="$(mktemp)"
+cleanup() { rm -f "$tmp" "$sums"; }
+trap cleanup EXIT INT TERM
+
 echo "Downloading ${asset}…"
 curl -fSL --proto '=https' "$url" -o "$tmp"
+
+echo "Verifying checksum…"
+curl -fsSL --proto '=https' "${BASE}/SHA256SUMS" -o "$sums"
+expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$sums")"
+if [ -z "$expected" ]; then
+  echo "anchorage: checksum for ${asset} not found in SHA256SUMS" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "$tmp" | awk '{ print $1 }')"
+elif command -v shasum >/dev/null 2>&1; then
+  actual="$(shasum -a 256 "$tmp" | awk '{ print $1 }')"
+else
+  echo "anchorage: need sha256sum or shasum to verify the download" >&2
+  exit 1
+fi
+if [ "$actual" != "$expected" ]; then
+  echo "anchorage: checksum mismatch for ${asset}" >&2
+  exit 1
+fi
+
 chmod +x "$tmp"
 mv "$tmp" "${bindir}/anchorage"
+trap - EXIT INT TERM
+rm -f "$sums"
 
 echo "Installed: ${bindir}/anchorage"
 case ":${PATH}:" in
