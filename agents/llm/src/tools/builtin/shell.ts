@@ -436,6 +436,17 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let timedOut = false;
+    let settled = false;
+
+    // Single settle path: clears BOTH timers so neither the kill escalation nor
+    // the backstop can fire (or resolve) twice.
+    const finish = (r: BoundedRunResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(backstop);
+      resolve(r);
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -446,6 +457,30 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
         if (!child.killed) killGroup("SIGKILL");
       }, 2000);
     }, invocation.timeoutMs);
+
+    // Backstop: even SIGKILL on the group can fail to fire `close` if a surviving
+    // grandchild keeps the stdio pipes open (re-parented daemon, FD inherited by
+    // an unrelated process). Without this the tool promise never resolves and the
+    // whole run goes silent past the timeout — the "stale run, no heartbeat" that
+    // gets a healthy run cancelled. After the kill grace, force-destroy the pipes
+    // and resolve with what we have so the agent always gets a result to act on.
+    const backstop = setTimeout(() => {
+      try {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      } catch {
+        // streams already gone
+      }
+      finish({
+        exitCode: 124,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr:
+          (stderrBytes > 0 ? `${Buffer.concat(stderr).toString("utf8")}\n` : "") +
+          "shell_exec: process did not exit after timeout + SIGKILL; abandoned to keep the run alive.",
+        timedOut: true,
+        durationMs: Date.now() - startedAt,
+      });
+    }, invocation.timeoutMs + 5_000);
 
     child.stdout.on("data", (chunk: Buffer) => {
       if (stdoutBytes < MAX_STDOUT_BYTES) {
@@ -478,8 +513,7 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
       }
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({
+      finish({
         exitCode: 127,
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: error.message,
@@ -488,14 +522,13 @@ async function spawnBounded(invocation: ShellInvocation): Promise<BoundedRunResu
       });
     });
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
       const outStr =
         Buffer.concat(stdout).toString("utf8") +
         (stdoutTruncated ? `\n…[stdout truncated at ${MAX_STDOUT_BYTES} bytes]` : "");
       const errStr =
         Buffer.concat(stderr).toString("utf8") +
         (stderrTruncated ? `\n…[stderr truncated at ${MAX_STDERR_BYTES} bytes]` : "");
-      resolve({
+      finish({
         exitCode: typeof code === "number" ? code : signal ? 128 : 1,
         stdout: outStr,
         stderr: errStr,
