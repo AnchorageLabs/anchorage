@@ -562,15 +562,36 @@ async function detectPackageManager(workspacePath: string): Promise<string> {
 }
 
 /**
- * Install command for a package manager with lifecycle scripts DISABLED. The
- * preview only needs node_modules present to render/boot — a repo's
- * `postinstall`/`prepare` scripts (lefthook/husky git-hook setup, codegen that
- * needs infra) are dev tooling that routinely exit non-zero in the worker
- * (e.g. `lefthook: not found` → exit 127) and must not abort the install and
- * thus the whole preview. npm / yarn(classic) / pnpm / bun all accept the flag.
+ * Install command for a package manager with lifecycle scripts DISABLED and
+ * devDependencies FORCED ON.
+ *
+ * Scripts off: a repo's `postinstall`/`prepare` (lefthook/husky git-hook setup,
+ * codegen needing infra) are dev tooling that routinely exit non-zero in the
+ * worker (e.g. `lefthook: not found` → exit 127) and must not abort the install
+ * and thus the whole preview.
+ *
+ * devDeps on: the orchestrator worker bakes NODE_ENV=production, under which
+ * npm/pnpm SKIP devDependencies. But the things a preview needs to build —
+ * Vite/build plugins, and crucially the app's PostCSS/Tailwind plugins
+ * (`@tailwindcss/postcss`, `autoprefixer`, …) that the harness bridges to — live
+ * in devDependencies. Skipping them is exactly why the bridged PostCSS pipeline
+ * crashed with "Cannot find module '@tailwindcss/postcss'". Force dev deps on,
+ * regardless of NODE_ENV, for every package manager: npm/pnpm honor
+ * `--production=false`/`--prod=false`; yarn(classic) honors `--production=false`;
+ * bun installs devDeps by default. Unknown flags are ignored by the others we
+ * don't pass them to, so each command stays valid.
  */
 function installCommand(pm: string): string {
-  return `${pm} install --ignore-scripts`;
+  switch (pm) {
+    case "pnpm":
+      return "pnpm install --ignore-scripts --prod=false";
+    case "yarn":
+      return "yarn install --ignore-scripts --production=false";
+    case "bun":
+      return "bun install --ignore-scripts";
+    default:
+      return "npm install --ignore-scripts --include=dev --production=false";
+  }
 }
 
 function guessNodePort(pkg: Record<string, unknown>, scriptBody: string): number {
@@ -644,6 +665,21 @@ function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// A startup failure caused by the app's PostCSS pipeline — typically a plugin
+// the bridged config references that the isolated harness can't resolve
+// (e.g. "Cannot find module '@tailwindcss/postcss'", "Loading PostCSS Plugin
+// failed"). Such a failure is recoverable: re-scaffold with PostCSS isolated and
+// the preview comes up (just less faithfully styled), instead of dying.
+function looksLikePostcssFailure(error: string): boolean {
+  const e = (error ?? "").toLowerCase();
+  return (
+    /postcss/.test(e) &&
+    /cannot find module|failed to load|loading postcss plugin failed|module not found|cannot resolve/.test(
+      e,
+    )
+  );
+}
+
 // Collect the changed, individually-renderable component files + their source.
 async function collectComponents(
   workspacePath: string,
@@ -703,6 +739,11 @@ async function scaffoldTemplate(
   toolchain: FrontendToolchain,
   components: ComponentEntry[],
   port: number,
+  // Whether to bridge the app's REAL PostCSS pipeline (Tailwind etc.) into the
+  // harness. On by default for fidelity; the caller turns it OFF to re-scaffold
+  // with PostCSS isolated when bridging crashed startup (a plugin the harness
+  // can't resolve) — a less-styled preview that comes up beats none.
+  bridgePostcss = true,
 ): Promise<{ ok: true; count: number } | StartFailure> {
   const renderable = new Set(componentExtensionsFor(toolchain.framework));
   const stories = components
@@ -726,7 +767,9 @@ async function scaffoldTemplate(
   // its module aliases (any scheme, from tsconfig paths) and its real PostCSS
   // pipeline (any plugins, from the app's own config + installed deps).
   const aliasEntries = await readTsconfigAliases(toolchain.appRoot, toolchain.installRoot);
-  const postcssConfigDir = await findPostcssConfigDir(toolchain.appRoot, toolchain.installRoot);
+  const postcssConfigDir = bridgePostcss
+    ? await findPostcssConfigDir(toolchain.appRoot, toolchain.installRoot)
+    : null;
   try {
     await fs.rm(harnessDir, { recursive: true, force: true });
     for (const file of buildHarnessFiles({
@@ -904,6 +947,41 @@ async function runIsolatedPreview(
         };
         await writeManifest(appRoot, manifest);
         return ok(manifest, scaffold.count);
+      }
+      // The bridged PostCSS pipeline crashed startup (a plugin the harness can't
+      // resolve). Don't give up on the template — re-scaffold with PostCSS
+      // isolated and try once more. The preview comes up (less faithfully styled)
+      // instead of dying or burning the LLM budget on a problem we understand.
+      if (looksLikePostcssFailure(probe.error)) {
+        emit(
+          task,
+          "agent.progress",
+          "warn",
+          `${toolchain.framework} template failed on the app's PostCSS config; retrying with PostCSS isolated`,
+          { error: probe.error },
+        );
+        const isolated = await scaffoldTemplate(harnessDir, toolchain, components, port, false);
+        if (isolated.ok) {
+          const retry = await installStartProbe(
+            task,
+            harnessDir,
+            harnessInstall,
+            startCommand,
+            port,
+          );
+          if (retry.ok) {
+            const manifest: PreviewManifest = {
+              framework: toolchain.framework,
+              generator: "template",
+              installCommand: harnessInstall,
+              startCommand,
+              port,
+            };
+            await writeManifest(appRoot, manifest);
+            return ok(manifest, isolated.count);
+          }
+          probe.error = retry.error;
+        }
       }
       emit(
         task,
