@@ -64,6 +64,16 @@ export interface AliasEntry {
 /** The directory (relative to the harness root) where generated stories live. */
 export const STORIES_DIR = "src/stories";
 
+/**
+ * Dev-server route the harness exposes so the orchestrator can learn which
+ * cards actually RENDER vs. throw for missing context/props. The gallery is a
+ * client-rendered SPA — a plain HTTP GET of `/` only ever sees the empty shell,
+ * so a render failure (e.g. a component that needs `<LogtoProvider>`) is
+ * invisible to a server-side probe. This route renders each story server-side
+ * inside the dev server and returns the pass/fail list, no browser required.
+ */
+export const RENDER_PROBE_PATH = "/__anchorage/render";
+
 interface FrameworkTemplate {
   /** Source extensions for components this framework can render as a story. */
   componentExtensions: string[];
@@ -108,6 +118,82 @@ interface ViteConfigArgs {
   aliasEntries: AliasEntry[];
   /** Dir of the app's PostCSS config to reuse, or null to isolate (empty). */
   postcssConfigDir: string | null;
+  /**
+   * Add a dev-server route ({@link RENDER_PROBE_PATH}) that server-side renders
+   * each story and reports which threw — so the orchestrator can detect cards
+   * that can't render in isolation (missing providers/props) and escalate to the
+   * mock-provider LLM path. React only: it relies on `react-dom/server`.
+   */
+  ssrRenderProbe: boolean;
+}
+
+/** Harness-relative path of the SSR render-probe entry module (React only). */
+const RENDER_PROBE_MODULE = "src/__anchorage_probe.jsx";
+
+// The render-probe ENTRY MODULE. It must import react/react-dom the ordinary way
+// and discover stories via `import.meta.glob`, so Vite's SSR pipeline transforms
+// everything (aliases, TS, CSS-as-empty) and EXTERNALIZES react for us. We do NOT
+// `ssrLoadModule("react")` directly from the plugin — Vite then evaluates React's
+// CJS as ESM and dies with "module is not defined". Each story is rendered with
+// `renderToStaticMarkup`; a synchronous render throw (the missing-context class
+// we care about: `useLogto`, router/query hooks, required props) is caught and
+// reported as a failure. No browser involved.
+function renderProbeEntryModule(): string {
+  return `import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+const stories = import.meta.glob("./stories/*.{jsx,tsx}");
+
+export async function runProbe() {
+  const out = [];
+  for (const [path, load] of Object.entries(stories)) {
+    const fallbackName = path.replace(/^\\.\\/stories\\//, "").replace(/\\.[jt]sx$/, "");
+    let mod;
+    try {
+      mod = await load();
+    } catch (err) {
+      out.push({ name: fallbackName, ok: false, error: String((err && err.message) || err) });
+      continue;
+    }
+    const name = (mod && mod.title) || fallbackName;
+    try {
+      renderToStaticMarkup(React.createElement(mod.default));
+      out.push({ name, ok: true, error: null });
+    } catch (err) {
+      out.push({ name, ok: false, error: String((err && err.message) || err) });
+    }
+  }
+  return out;
+}
+`;
+}
+
+// The dev-server plugin backing RENDER_PROBE_PATH: it loads the probe entry
+// module via SSR and returns its `[{ name, ok, error }]` report. Anything the
+// verifier itself can't do (module fails to load, etc.) degrades to an empty
+// list, so the orchestrator assumes the cards rendered — detection can only ADD a
+// warning/escalation on a real failure, never make the preview worse than before.
+function ssrRenderProbePlugin(): string {
+  return `function anchorageRenderProbe() {
+  return {
+    name: "anchorage-render-probe",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(${JSON.stringify(RENDER_PROBE_PATH)}, async (_req, res) => {
+        let out = [];
+        try {
+          const probe = await server.ssrLoadModule("/" + ${JSON.stringify(RENDER_PROBE_MODULE)});
+          out = await probe.runProbe();
+        } catch (err) {
+          // Verifier unavailable — report nothing.
+        }
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(out));
+      });
+    },
+  };
+}
+`;
 }
 
 function aliasArrayLiteral(entries: AliasEntry[]): string {
@@ -133,9 +219,20 @@ function viteConfig(args: ViteConfigArgs): string {
   const appRoot = JSON.stringify(args.appRoot);
   const installRoot = JSON.stringify(args.installRoot);
   const dedupe = JSON.stringify(args.dedupe);
+  const probePlugin = args.ssrRenderProbe ? ssrRenderProbePlugin() : "";
+  const pluginUses = args.ssrRenderProbe
+    ? `${args.pluginUse}, anchorageRenderProbe()`
+    : args.pluginUse;
+  // Keep react/react-dom EXTERNAL for SSR so the render-probe loads them via
+  // native require (CJS) instead of Vite evaluating their CJS as ESM (which dies
+  // with "module is not defined"). They resolve from the app's node_modules — the
+  // harness is nested inside appRoot, so the require walk-up finds the app's copy.
+  const ssrBlock = args.ssrRenderProbe
+    ? `  ssr: {\n    external: ["react", "react-dom"],\n  },\n`
+    : "";
   return `import { defineConfig } from "vite";
 ${args.pluginImport}
-
+${probePlugin}
 // The frontend app root. The harness lives at <appRoot>/.anchorage/preview.
 const appRoot = ${appRoot};
 // Where the app's dependencies are installed (workspace/monorepo root or appRoot).
@@ -144,7 +241,7 @@ const installRoot = ${installRoot};
 // https://vitejs.dev/config/ — generated by the Anchorage runtime agent.
 export default defineConfig({
   root: __dirname,
-  plugins: [${args.pluginUse}],
+  plugins: [${pluginUses}],
   server: {
     port: ${args.port},
     host: "0.0.0.0",
@@ -163,7 +260,7 @@ export default defineConfig({
     // so component imports resolve regardless of the app's alias scheme.
     alias: ${aliasArrayLiteral(args.aliasEntries)},
   },
-});
+${ssrBlock}});
 `;
 }
 
@@ -205,12 +302,12 @@ function resolveAliasEntries(args: BuildHarnessArgs, frameworkEntries: AliasEntr
   return entries;
 }
 
-function reactAliasEntries(args: BuildHarnessArgs): AliasEntry[] {
-  const entries: AliasEntry[] = [];
-  if (args.frameworkDir) entries.push({ find: "react", replacement: args.frameworkDir });
-  if (args.reactDomDir) entries.push({ find: "react-dom", replacement: args.reactDomDir });
-  return entries;
-}
+// NOTE: React/react-dom are pinned to the app's single copy via `resolve.dedupe`
+// (see viteConfig), NOT a `resolve.alias` to an absolute dir. An absolute-path
+// alias defeats Vite's SSR externalization of react — the render probe then
+// evaluates React's CJS as ESM and dies with "module is not defined". dedupe
+// gives the same single-runtime guarantee (the reason hooks/state work across the
+// repo/harness boundary) without breaking the probe.
 
 function reactSkeleton(args: BuildHarnessArgs): HarnessFile[] {
   const { toolchain, port } = args;
@@ -314,14 +411,19 @@ export function Gallery() {
         pluginImport,
         pluginUse,
         dedupe,
-        aliasEntries: resolveAliasEntries(args, preact ? [] : reactAliasEntries(args)),
+        aliasEntries: resolveAliasEntries(args, []),
         postcssConfigDir: args.postcssConfigDir ?? null,
+        // SSR verification needs react-dom/server; enable for React, not Preact.
+        ssrRenderProbe: !preact,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.jsx") },
     { path: "src/main.jsx", content: main },
     { path: "src/gallery.jsx", content: gallery },
     { path: "src/ErrorBoundary.jsx", content: errorBoundary },
+    // React-only: the SSR render-probe entry module (no-op for Preact, which
+    // doesn't enable the probe — harmless extra file there).
+    ...(preact ? [] : [{ path: RENDER_PROBE_MODULE, content: renderProbeEntryModule() }]),
   ];
 }
 
@@ -404,6 +506,7 @@ export function Gallery() {
         dedupe: ["solid-js"],
         aliasEntries: resolveAliasEntries(args, []),
         postcssConfigDir: args.postcssConfigDir ?? null,
+        ssrRenderProbe: false,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.jsx") },
@@ -499,6 +602,7 @@ export default {
         dedupe: ["vue"],
         aliasEntries: resolveAliasEntries(args, []),
         postcssConfigDir: args.postcssConfigDir ?? null,
+        ssrRenderProbe: false,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.js") },
@@ -578,6 +682,7 @@ mount(Gallery, { target: document.getElementById("root") });
         dedupe: ["svelte"],
         aliasEntries: resolveAliasEntries(args, []),
         postcssConfigDir: args.postcssConfigDir ?? null,
+        ssrRenderProbe: false,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.js") },

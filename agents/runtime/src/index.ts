@@ -23,6 +23,7 @@ import {
   buildStoryFor,
   componentExtensionsFor,
   hasTemplate,
+  RENDER_PROBE_PATH,
   runtimePackageName,
   STORIES_DIR,
 } from "./harness.js";
@@ -127,9 +128,19 @@ async function main(): Promise<number> {
     if (isolatedPreviewEnabled()) {
       const isolated = await runIsolatedPreview(task.value, workspacePath, changedFiles);
       if ("ok" in isolated && isolated.ok) {
+        const unrendered = isolated.unrendered;
+        const rendered = isolated.componentCount - unrendered.length;
+        // Flag un-renderable cards LOUDLY instead of passing off an error card as
+        // a healthy preview: the PR still opens, but those components are called
+        // out as UNVERIFIED rather than silently looking fine.
+        const summary = unrendered.length
+          ? `Rendered ${rendered} of ${isolated.componentCount} changed component(s) in isolation at ${isolated.previewUrl}. ${unrendered.length} could not be previewed (needs app context/props): ${unrendered
+              .map((u) => u.name)
+              .join(", ")} — the PR opens, but those are UNVERIFIED by preview.`
+          : `Rendering ${isolated.componentCount} changed component(s) in isolation at ${isolated.previewUrl} — the app itself is not running.`;
         const preview = buildRuntimePreview({
           status: "running",
-          summary: `Rendering ${isolated.componentCount} changed component(s) in isolation at ${isolated.previewUrl} — the app itself is not running.`,
+          summary,
           previewUrl: isolated.previewUrl,
           strategy: {
             kind: "isolated",
@@ -138,15 +149,16 @@ async function main(): Promise<number> {
             url: isolated.localUrl,
           },
         });
-        await emitPreview(task.value, preview, "info");
+        await emitPreview(task.value, preview, unrendered.length ? "warn" : "info");
         emit(
           task.value,
           "agent.completed",
-          "info",
+          unrendered.length ? "warn" : "info",
           "runtime started an isolated component preview",
           {
             previewUrl: isolated.previewUrl,
             components: isolated.componentCount,
+            ...(unrendered.length ? { unrendered: unrendered.map((u) => u.name) } : {}),
           },
         );
         return ExitCode.Success;
@@ -640,6 +652,13 @@ interface StartFailure {
 // default (set ANCHORAGE_RUNTIME_ISOLATED=0 to opt out); on any failure the gate
 // is skipped cleanly — we never fall back to booting the real app.
 
+/** A changed component that came up in the harness but threw on render (e.g. it
+ * needs an app context provider or required props it didn't get in isolation). */
+interface UnrenderedComponent {
+  name: string;
+  error: string;
+}
+
 interface IsolatedOk {
   ok: true;
   previewUrl: string;
@@ -647,6 +666,9 @@ interface IsolatedOk {
   port: number;
   componentCount: number;
   manifest: PreviewManifest;
+  /** Components that could not be rendered in isolation, for a loud "UNVERIFIED"
+   * note. Empty when every changed component rendered. */
+  unrendered: UnrenderedComponent[];
 }
 interface IsolatedSkip {
   skip: true;
@@ -729,6 +751,74 @@ async function installStartProbe(
     };
   }
   return { ok: true, localUrl };
+}
+
+// One card's render outcome, as reported by the harness's SSR render-probe route.
+interface CardRenderReport {
+  name: string;
+  ok: boolean;
+  error: string | null;
+}
+
+// Poll counts for the render-verification route. The route renders synchronously
+// server-side, so it's authoritative on the first successful GET; we retry a few
+// times only to ride out the dev server still warming its SSR pipeline.
+const RENDER_PROBE_TRIES = 5;
+const RENDER_PROBE_POLL_MS = 400;
+
+// Ask the harness which changed components actually rendered. Returns the ones
+// that threw (missing provider/props), or [] when there's no signal — a harness
+// without the probe (non-React templates, the LLM path) or a verifier that
+// couldn't run. "[] = assume rendered" so detection NEVER makes the preview worse
+// than before; it can only ADD an escalation/warning when it has a real failure.
+async function detectUnrendered(port: number): Promise<UnrenderedComponent[]> {
+  const url = `http://localhost:${port}${RENDER_PROBE_PATH}`;
+  for (let attempt = 0; attempt < RENDER_PROBE_TRIES; attempt++) {
+    const reports = await fetchRenderReports(url);
+    if (reports.length > 0) {
+      // A name is failed if ANY report for it failed (a late error can follow an
+      // initial success).
+      const failed = new Map<string, string>();
+      for (const r of reports) {
+        if (r && r.ok === false && !failed.has(r.name)) {
+          failed.set(r.name, r.error ?? "did not render in isolation");
+        }
+      }
+      return [...failed].map(([name, error]) => ({ name, error }));
+    }
+    await delay(RENDER_PROBE_POLL_MS);
+  }
+  return [];
+}
+
+function fetchRenderReports(url: string): Promise<CardRenderReport[]> {
+  return new Promise((resolve) => {
+    const req = http.get(url, { timeout: 3_000 }, (res) => {
+      if ((res.statusCode ?? 0) >= 400) {
+        res.resume();
+        resolve([]);
+        return;
+      }
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(body);
+          resolve(Array.isArray(parsed) ? (parsed as CardRenderReport[]) : []);
+        } catch {
+          resolve([]);
+        }
+      });
+    });
+    req.on("error", () => resolve([]));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve([]);
+    });
+  });
 }
 
 // Write the deterministic framework-template harness (skeleton + no-prop
@@ -869,7 +959,11 @@ async function runIsolatedPreview(
     return { ok: false, error: `repo dependency install failed: ${repoInstall.error}` };
   }
 
-  const ok = (manifest: PreviewManifest, count: number): IsolatedOk => {
+  const ok = (
+    manifest: PreviewManifest,
+    count: number,
+    unrendered: UnrenderedComponent[] = [],
+  ): IsolatedOk => {
     const localUrl = `http://localhost:${manifest.port || port}`;
     return {
       ok: true,
@@ -878,8 +972,18 @@ async function runIsolatedPreview(
       port: manifest.port || port,
       componentCount: count,
       manifest,
+      unrendered,
     };
   };
+
+  // Whether escalating to the mock-provider LLM path is even possible. When a
+  // template comes up but some cards can't render in isolation (missing
+  // providers/props), we hand those to the LLM path — but only if one is
+  // configured; otherwise we ship the partial preview and flag the gaps loudly.
+  const llmConfigured = !!resolveRuntimeLlmConfig();
+  // Render failures the template couldn't satisfy, handed to the LLM path as
+  // targeted guidance (which providers/props to mock).
+  let templateRenderFailures: UnrenderedComponent[] = [];
 
   // 1) Cache: reuse a previously-working harness, skipping the LLM. The template
   //    generator re-scaffolds deterministically (picks up this change's
@@ -904,10 +1008,24 @@ async function runIsolatedPreview(
         cached.startCommand,
         cached.port || port,
       );
-      if (probe.ok) return ok(cached, components.length);
-      emit(task, "agent.progress", "warn", "Cached harness no longer works; regenerating", {
-        error: probe.error,
-      });
+      if (probe.ok) {
+        const unrendered = await detectUnrendered(cached.port || port);
+        // A cached TEMPLATE that still can't render some cards isn't a usable
+        // cache hit — regenerate (the LLM path) instead of re-shipping error
+        // cards. The LLM cache has no probe, so trust it as before.
+        if (cached.generator === "template" && unrendered.length > 0 && llmConfigured) {
+          templateRenderFailures = unrendered;
+          emit(task, "agent.progress", "info", "Cached template can't render some cards; regenerating", {
+            unrendered: unrendered.map((u) => u.name),
+          });
+        } else {
+          return ok(cached, components.length, unrendered);
+        }
+      } else {
+        emit(task, "agent.progress", "warn", "Cached harness no longer works; regenerating", {
+          error: probe.error,
+        });
+      }
     }
   }
 
@@ -936,23 +1054,13 @@ async function runIsolatedPreview(
       const harnessInstall =
         "npm install --no-workspaces --include=dev --production=false --no-audit --no-fund --loglevel=error";
       const startCommand = "npm run dev";
-      const probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
-      if (probe.ok) {
-        const manifest: PreviewManifest = {
-          framework: toolchain.framework,
-          generator: "template",
-          installCommand: harnessInstall,
-          startCommand,
-          port,
-        };
-        await writeManifest(appRoot, manifest);
-        return ok(manifest, scaffold.count);
-      }
+      let probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
+      let count = scaffold.count;
       // The bridged PostCSS pipeline crashed startup (a plugin the harness can't
       // resolve). Don't give up on the template — re-scaffold with PostCSS
       // isolated and try once more. The preview comes up (less faithfully styled)
       // instead of dying or burning the LLM budget on a problem we understand.
-      if (looksLikePostcssFailure(probe.error)) {
+      if (!probe.ok && looksLikePostcssFailure(probe.error)) {
         emit(
           task,
           "agent.progress",
@@ -962,34 +1070,51 @@ async function runIsolatedPreview(
         );
         const isolated = await scaffoldTemplate(harnessDir, toolchain, components, port, false);
         if (isolated.ok) {
-          const retry = await installStartProbe(
-            task,
-            harnessDir,
-            harnessInstall,
-            startCommand,
-            port,
-          );
+          const retry = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
           if (retry.ok) {
-            const manifest: PreviewManifest = {
-              framework: toolchain.framework,
-              generator: "template",
-              installCommand: harnessInstall,
-              startCommand,
-              port,
-            };
-            await writeManifest(appRoot, manifest);
-            return ok(manifest, isolated.count);
+            probe = retry;
+            count = isolated.count;
+          } else {
+            probe.error = retry.error;
           }
-          probe.error = retry.error;
         }
       }
-      emit(
-        task,
-        "agent.progress",
-        "warn",
-        `${toolchain.framework} template did not come up; falling back to the LLM`,
-        { error: probe.error },
-      );
+      if (probe.ok) {
+        const manifest: PreviewManifest = {
+          framework: toolchain.framework,
+          generator: "template",
+          installCommand: harnessInstall,
+          startCommand,
+          port,
+        };
+        // Did every changed card actually render, or do some need app context the
+        // isolated harness doesn't provide (e.g. <LogtoProvider>, a router)?
+        const unrendered = await detectUnrendered(port);
+        if (unrendered.length === 0 || !llmConfigured) {
+          await writeManifest(appRoot, manifest);
+          return ok(manifest, count, unrendered);
+        }
+        // Hand the un-renderable cards to the mock-provider LLM path, which wraps
+        // them in the providers/props they need. Its result is cached, so this
+        // costs an LLM pass only the first time a context-dependent component
+        // shows up.
+        templateRenderFailures = unrendered;
+        emit(
+          task,
+          "agent.progress",
+          "info",
+          `Template rendered ${count - unrendered.length}/${count} component(s); ${unrendered.length} need app context — building a mock-provider harness`,
+          { unrendered: unrendered.map((u) => u.name) },
+        );
+      } else {
+        emit(
+          task,
+          "agent.progress",
+          "warn",
+          `${toolchain.framework} template did not come up; falling back to the LLM`,
+          { error: probe.error },
+        );
+      }
     } else {
       emit(task, "agent.progress", "warn", "Template scaffold skipped; trying the LLM", {
         reason: scaffold.error,
@@ -1034,6 +1159,9 @@ async function runIsolatedPreview(
       onEvent: (event) => emitLlmToolEvent(task, event),
       ...(toolchain ? { frameworkHint: toolchain.framework } : {}),
       ...(previousError ? { previousError } : {}),
+      // When we escalated from the template because cards threw in isolation,
+      // tell the model exactly which components need which providers/props.
+      ...(templateRenderFailures.length > 0 ? { renderFailures: templateRenderFailures } : {}),
     });
     if (!gen.ok) {
       previousError = gen.error;
@@ -1058,7 +1186,11 @@ async function runIsolatedPreview(
         port,
       };
       await writeManifest(appRoot, manifest);
-      return ok(manifest, components.length);
+      // The LLM harness has no SSR probe route, so this is [] (we trust the
+      // model wired the providers/props it was told to). For a React harness it
+      // built that happens to expose the route, any remaining gaps still surface.
+      const unrendered = await detectUnrendered(port);
+      return ok(manifest, components.length, unrendered);
     }
     previousError = probe.error;
   }

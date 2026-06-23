@@ -35,6 +35,14 @@ export interface LlmHarnessRequest {
   frameworkHint?: string;
   /** A previous startup failure to repair, when this is a retry pass. */
   previousError?: string;
+  /**
+   * Components the fast template brought up but which THREW on render in
+   * isolation — typically because they consume an app context provider (auth,
+   * router, query, theme) or required props they didn't get. Each entry is the
+   * component name and the render error. The model uses these to wrap exactly
+   * those components in the providers/props they need (with mock config).
+   */
+  renderFailures?: { name: string; error: string }[];
   env: Record<string, string>;
   capabilities: Iterable<string>;
   onEvent?: (event: ToolEvent) => void;
@@ -86,6 +94,7 @@ function systemPrompt(): string {
     "HARD CONSTRAINTS:",
     "- NEVER import or start the application's own entry point / server. The app needs secrets (DB, auth, external APIs) you do NOT have; booting it is forbidden and will fail.",
     "- Render ONLY the changed components listed below, each in isolation, with realistic MOCK data/props and mock providers (router, theme, store, data-fetching) as needed. Stub any module a component imports that does network/auth/DB work so it renders offline.",
+    "- A component that throws 'must be used inside <SomeProvider>' (or similar context errors — auth like Logto/Clerk/Auth0, react-router, react-query, theme/store) needs that provider as an ANCESTOR. Wrap it in the real provider from the app's own installed package with a MOCK/offline config (no real endpoints, no sign-in), OR alias the offending module to a tiny stub that returns benign defaults. Pick whichever renders the logged-out/default state without touching the network.",
     "- The harness must be a small, throwaway dev app (prefer Vite) living entirely under the harness directory. Reuse the repository's own framework dependencies (they're installed); keep the harness's own deps minimal.",
     "- INSTALL THE HARNESS WITH npm, and use this exact installCommand: `npm install --no-workspaces --include=dev --production=false`. startCommand: `npm run dev`. Reasons: yarn/pnpm (or plain npm) from this nested dir can attach to a parent WORKSPACE and skip the harness's own deps; and the container runs with NODE_ENV=production, so a plain `npm install` SKIPS devDependencies (you'll get 'vite: not found'). The flags above force the harness's deps in regardless.",
     "- Put the harness's own build deps (vite, the framework plugin) in `dependencies`, NOT `devDependencies`, so they survive NODE_ENV=production.",
@@ -111,6 +120,15 @@ function userPrompt(req: LlmHarnessRequest): string {
     );
   }
   lines.push("", "Changed components to preview in isolation:", components);
+  if (req.renderFailures && req.renderFailures.length > 0) {
+    lines.push(
+      "",
+      "The fast template brought the preview up, but these components THREW on render in isolation — give each the providers/props it needs (mock config, offline), then they must render:",
+    );
+    for (const f of req.renderFailures) {
+      lines.push(`- ${f.name}: ${f.error}`);
+    }
+  }
   if (req.previousError) {
     lines.push(
       "",
