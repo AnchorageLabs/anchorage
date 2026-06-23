@@ -741,7 +741,10 @@ async function ensureBranch(
   // branch, so the local `git checkout <branch>` fails with "pathspec … did not
   // match". The work is on origin — fetch it and check it out before failing.
   if (opts?.preserveExisting === true) {
-    const fetched = await runGit(workspacePath, ["fetch", "origin", branchName]);
+    // Fresh token-auth URL, not bare `origin` — the baked-in clone token may be
+    // a long-expired GitHub App installation token (see authenticatedFetchRemote).
+    const { remote } = await authenticatedFetchRemote(workspacePath);
+    const fetched = await runGit(workspacePath, ["fetch", remote, branchName]);
     if (fetched.exitCode === 0) {
       const fromRemote = await runGit(workspacePath, ["checkout", "-B", branchName, "FETCH_HEAD"]);
       if (fromRemote.exitCode === 0) {
@@ -777,14 +780,20 @@ async function syncBaseBranch(
     input: { baseBranch, workspacePath },
   });
 
+  // Fetch through a freshly token-authenticated URL, not the bare `origin` whose
+  // baked-in token may have expired (see authenticatedFetchRemote). The explicit
+  // refspec still writes refs/remotes/origin/<base> so the checkout below works.
+  const { remote, token } = await authenticatedFetchRemote(workspacePath);
   const fetch = await runGit(workspacePath, [
     "fetch",
-    "origin",
+    remote,
     `${baseBranch}:refs/remotes/origin/${baseBranch}`,
   ]);
   if (fetch.exitCode !== 0) {
-    const message =
-      fetch.stderr.trim() || fetch.stdout.trim() || `git fetch failed (exit ${fetch.exitCode})`;
+    const message = redactToken(
+      fetch.stderr.trim() || fetch.stdout.trim() || `git fetch failed (exit ${fetch.exitCode})`,
+      token,
+    );
     emitGitError(task, "git.sync_base", "base_fetch_failed", message);
     return failure("base_fetch_failed", message, ExitCode.ExternalDependencyFailure);
   }
@@ -1126,6 +1135,27 @@ function authenticatedPushUrl(origin: string, token: string | undefined): null |
   if (!httpsOrigin) return null;
   const withoutCreds = httpsOrigin.replace(/^https:\/\/([^@/]*@)?/, "");
   return `https://x-access-token:${token}@${withoutCreds}`;
+}
+
+/**
+ * The remote to hand to a `git fetch`. Resolves `origin`'s URL and, when a token
+ * is available, returns an ephemeral token-authenticated URL so the credential
+ * is injected FRESH per call — rather than reusing whatever token was baked into
+ * `origin` at clone time. GitHub App installation tokens expire ~1h, so a reused
+ * or approval-paused workspace's baked-in `origin` token goes stale and a bare
+ * `git fetch origin` fails with "Invalid username or token". Mirrors how
+ * {@link pushBranch} already re-authenticates every push. Falls back to the bare
+ * `origin` remote when there's no token or the remote isn't a GitHub URL (so SSH
+ * and token-less local setups keep working unchanged).
+ */
+async function authenticatedFetchRemote(
+  workspacePath: string,
+): Promise<{ remote: string; token: string | undefined }> {
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const originResult = await runGit(workspacePath, ["remote", "get-url", "origin"]);
+  const origin = originResult.stdout.trim();
+  if (originResult.exitCode !== 0 || !origin) return { remote: "origin", token };
+  return { remote: authenticatedPushUrl(origin, token) ?? "origin", token };
 }
 
 function githubHttpsOrigin(origin: string): null | string {
