@@ -75,14 +75,19 @@ interface FrameworkTemplate {
 
 // ── Shared building blocks ────────────────────────────────────────────────────
 
-function harnessPackageJson(devDependencies: Record<string, string>): string {
+function harnessPackageJson(deps: Record<string, string>): string {
   return `${JSON.stringify(
     {
       name: "anchorage-preview-harness",
       private: true,
       type: "module",
       scripts: { dev: "vite" },
-      devDependencies,
+      // Vite + the framework plugin go in `dependencies`, NOT `devDependencies`,
+      // so they install even when the runtime container runs with
+      // NODE_ENV=production (which makes `npm install` skip devDependencies and
+      // would leave `vite` absent → "vite: not found"). The harness is a
+      // throwaway dev app; the dev/prod split is meaningless here anyway.
+      dependencies: deps,
     },
     null,
     2,
