@@ -32,6 +32,7 @@ describe("buildHarnessFiles (react)", () => {
         "index.html",
         "package.json",
         "src/ErrorBoundary.jsx",
+        "src/__anchorage_probe.jsx",
         "src/gallery.jsx",
         "src/main.jsx",
         "vite.config.js",
@@ -48,8 +49,10 @@ describe("buildHarnessFiles (react)", () => {
   it("dedupes react to the app's copy and binds the configured port", () => {
     const cfg = files().find((f) => f.path === "vite.config.js")?.content ?? "";
     expect(cfg).toContain('dedupe: ["react","react-dom"]');
-    expect(cfg).toContain('{ find: "react", replacement: "/repo/node_modules/react" }');
-    expect(cfg).toContain('{ find: "react-dom", replacement: "/repo/node_modules/react-dom" }');
+    // react/react-dom are pinned via dedupe, NOT an absolute-path alias — an
+    // alias would break the SSR render probe's externalization of react.
+    expect(cfg).not.toContain('{ find: "react",');
+    expect(cfg).not.toContain('{ find: "react-dom",');
     expect(cfg).toContain("port: 3101");
     expect(cfg).toContain('const appRoot = "/repo";');
   });
@@ -107,6 +110,22 @@ describe("buildHarnessFiles (react)", () => {
   it("places stories under the harness src dir", () => {
     expect(STORIES_DIR).toBe("src/stories");
   });
+
+  it("adds the SSR render-probe route + entry module so render failures are detectable without a browser", () => {
+    const all = files();
+    const cfg = all.find((f) => f.path === "vite.config.js")?.content ?? "";
+    expect(cfg).toContain("anchorageRenderProbe()");
+    expect(cfg).toContain("/__anchorage/render");
+    // react/react-dom MUST be SSR-external or Vite evaluates their CJS as ESM and
+    // the probe silently returns nothing.
+    expect(cfg).toContain('external: ["react", "react-dom"]');
+
+    const probe = all.find((f) => f.path === "src/__anchorage_probe.jsx")?.content ?? "";
+    expect(probe).toContain("renderToStaticMarkup");
+    // The probe renders the STORIES, never the app entry point.
+    expect(probe).toContain('import.meta.glob("./stories/*.{jsx,tsx}")');
+    expect(probe).toContain("runProbe");
+  });
 });
 
 describe("buildHarnessFiles (other frameworks)", () => {
@@ -140,5 +159,12 @@ describe("buildHarnessFiles (other frameworks)", () => {
     expect(Object.keys(pkg.dependencies)).toContain("vite-plugin-solid");
     const cfg = f.find((x) => x.path === "vite.config.js")?.content ?? "";
     expect(cfg).toContain('dedupe: ["solid-js"]');
+  });
+
+  it("does not add the React-only SSR render probe to non-React harnesses", () => {
+    for (const framework of ["vue", "svelte", "solid", "preact"] as const) {
+      const cfg = harnessFor(framework).find((x) => x.path === "vite.config.js")?.content ?? "";
+      expect(cfg).not.toContain("anchorageRenderProbe");
+    }
   });
 });
