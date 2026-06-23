@@ -39,10 +39,10 @@ describe("buildHarnessFiles (react)", () => {
     );
   });
 
-  it("only depends on vite + react plugin (react comes from the repo)", () => {
+  it("declares vite + react plugin in dependencies (survives NODE_ENV=production)", () => {
     const pkg = JSON.parse(files().find((f) => f.path === "package.json")?.content ?? "{}");
-    expect(Object.keys(pkg.devDependencies)).toEqual(["vite", "@vitejs/plugin-react"]);
-    expect(pkg.dependencies).toBeUndefined();
+    expect(Object.keys(pkg.dependencies)).toEqual(["vite", "@vitejs/plugin-react"]);
+    expect(pkg.devDependencies).toBeUndefined();
   });
 
   it("dedupes react to the app's copy and binds the configured port", () => {
@@ -121,7 +121,7 @@ describe("buildHarnessFiles (other frameworks)", () => {
   it("builds a Vue harness with the vue plugin and SFC gallery", () => {
     const f = harnessFor("vue");
     const pkg = JSON.parse(f.find((x) => x.path === "package.json")?.content ?? "{}");
-    expect(Object.keys(pkg.devDependencies)).toContain("@vitejs/plugin-vue");
+    expect(Object.keys(pkg.dependencies)).toContain("@vitejs/plugin-vue");
     expect(f.map((x) => x.path)).toContain("src/Gallery.vue");
     const cfg = f.find((x) => x.path === "vite.config.js")?.content ?? "";
     expect(cfg).toContain('dedupe: ["vue"]');
@@ -130,14 +130,14 @@ describe("buildHarnessFiles (other frameworks)", () => {
   it("builds a Svelte harness with the svelte plugin", () => {
     const f = harnessFor("svelte");
     const pkg = JSON.parse(f.find((x) => x.path === "package.json")?.content ?? "{}");
-    expect(Object.keys(pkg.devDependencies)).toContain("@sveltejs/vite-plugin-svelte");
+    expect(Object.keys(pkg.dependencies)).toContain("@sveltejs/vite-plugin-svelte");
     expect(f.map((x) => x.path)).toContain("src/Gallery.svelte");
   });
 
   it("builds a Solid harness with the solid plugin", () => {
     const f = harnessFor("solid");
     const pkg = JSON.parse(f.find((x) => x.path === "package.json")?.content ?? "{}");
-    expect(Object.keys(pkg.devDependencies)).toContain("vite-plugin-solid");
+    expect(Object.keys(pkg.dependencies)).toContain("vite-plugin-solid");
     const cfg = f.find((x) => x.path === "vite.config.js")?.content ?? "";
     expect(cfg).toContain('dedupe: ["solid-js"]');
   });
