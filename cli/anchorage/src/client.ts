@@ -86,6 +86,8 @@ export interface TriggerParams {
   gitlabIssue?: string;
   bitbucketIssue?: string;
   pipeline?: string;
+  llmProvider?: string;
+  llmModel?: string;
 }
 
 export interface ProtocolEvent {
