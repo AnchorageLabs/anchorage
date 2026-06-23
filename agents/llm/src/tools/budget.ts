@@ -160,3 +160,14 @@ function pickBool(override: boolean | undefined, fallback: boolean, envName: str
   if (fromEnv === undefined) return fallback;
   return /^(true|1|yes|on)$/i.test(fromEnv);
 }
+
+/**
+ * Whether web tools (web_search / web_fetch / github_search_issues) are enabled
+ * for this process, by the same `ANCHORAGE_TOOL_WEB_ENABLED` gate the budget
+ * uses to refuse web calls. Exposed so agents can avoid OFFERING or ADVERTISING
+ * web tools the budget will only reject at call time — otherwise the model
+ * burns turns calling tools that always fail with `web_disabled`.
+ */
+export function webToolsEnabled(): boolean {
+  return pickBool(undefined, DEFAULT_BUDGET.webEnabled, "ANCHORAGE_TOOL_WEB_ENABLED");
+}

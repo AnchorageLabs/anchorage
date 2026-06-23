@@ -250,8 +250,7 @@ function runtimeFailureReason(error: string): string {
     return "it needs secrets/credentials not available here";
   if (/install|enoent|module not found|cannot find module/.test(e))
     return "dependencies could not be prepared";
-  if (/timed out|timeout|did not become|health/.test(e))
-    return "it did not become healthy in time";
+  if (/timed out|timeout|did not become|health/.test(e)) return "it did not become healthy in time";
   return "the app did not start in this environment";
 }
 

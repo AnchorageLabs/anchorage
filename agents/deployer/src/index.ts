@@ -28,9 +28,13 @@ let eventSequence = 0;
 /** The branch checked out in the workspace — the coder's pushed working branch. */
 async function currentBranch(workspacePath: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", workspacePath, "rev-parse", "--abbrev-ref", "HEAD"], {
-      timeout: 15_000,
-    });
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", workspacePath, "rev-parse", "--abbrev-ref", "HEAD"],
+      {
+        timeout: 15_000,
+      },
+    );
     const branch = stdout.trim();
     return branch && branch !== "HEAD" ? branch : null;
   } catch {
@@ -143,8 +147,7 @@ async function main(): Promise<number> {
         description: `Anchorage stage deploy of ${ref} to ${environment}`,
       });
       // 202 = merged/queued without a deployment object; treat as triggered.
-      const deploymentId =
-        "id" in dep.data ? (dep.data.id as number) : undefined;
+      const deploymentId = "id" in dep.data ? (dep.data.id as number) : undefined;
       emit(task.value, "tool.result", "info", "GitHub deployment created", {
         tool: "github.repos.createDeployment",
         success: true,
@@ -208,7 +211,13 @@ async function main(): Promise<number> {
     return ExitCode.Success;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return fail(task.value, "deploy_trigger_failed", message, ExitCode.ExternalDependencyFailure, environment);
+    return fail(
+      task.value,
+      "deploy_trigger_failed",
+      message,
+      ExitCode.ExternalDependencyFailure,
+      environment,
+    );
   }
 }
 
@@ -241,9 +250,7 @@ async function detectDeployWorkflow(
     }
     if (!/^\s*on:|workflow_dispatch/m.test(text)) continue;
     if (!/workflow_dispatch/.test(text)) continue;
-    const inputName = ENV_INPUT_NAMES.find((n) =>
-      new RegExp(`^\\s{2,}${n}\\s*:`, "m").test(text),
-    );
+    const inputName = ENV_INPUT_NAMES.find((n) => new RegExp(`^\\s{2,}${n}\\s*:`, "m").test(text));
     if (inputName) return { file, inputName };
   }
   return null;
@@ -294,8 +301,7 @@ async function watchEnvironment(
         const latest = statuses.data[0];
         if (latest) {
           const state = latest.state;
-          const environmentUrl =
-            (latest.environment_url as string | undefined) || undefined;
+          const environmentUrl = (latest.environment_url as string | undefined) || undefined;
           if (state === "success") return { state: "live", environmentUrl, runUrl };
           if (state === "failure" || state === "error") {
             return { state: "failed", detail: latest.description ?? state, runUrl };
@@ -358,7 +364,11 @@ function parseInput(task: TaskEnvelope): {
   };
 }
 
-function finishNotApplicable(task: TaskEnvelope, summary: string, environment: string | null): number {
+function finishNotApplicable(
+  task: TaskEnvelope,
+  summary: string,
+  environment: string | null,
+): number {
   const preview = buildDeployPreview({
     status: "not_applicable",
     summary,
@@ -373,7 +383,9 @@ function finishNotApplicable(task: TaskEnvelope, summary: string, environment: s
 
 // ── plumbing ───────────────────────────────────────────────────────────────────
 
-function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | { ok: false; exitCode: number } {
+function parseTask(
+  rawTask: string,
+): { ok: true; value: TaskEnvelope } | { ok: false; exitCode: number } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawTask);
