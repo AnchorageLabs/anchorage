@@ -868,8 +868,14 @@ async function runIsolatedPreview(
         `Scaffolded ${toolchain.framework} preview for ${scaffold.count} component(s)`,
         { harnessDir, framework: toolchain.framework },
       );
-      const harnessInstall = installCommand(toolchain.packageManager);
-      const startCommand = `${toolchain.packageManager} run dev`;
+      // The harness is a throwaway, self-contained Vite app. Install + run it
+      // with npm, NOT the repo's package manager: inside a yarn/pnpm WORKSPACE,
+      // `yarn|pnpm install` run from a nested non-member dir attaches to the
+      // workspace root and never installs the harness's own devDeps (vite), so
+      // the dev server dies with "vite: not found". npm installs the local
+      // package.json in isolation regardless of any parent workspace.
+      const harnessInstall = "npm install --no-audit --no-fund --loglevel=error";
+      const startCommand = "npm run dev";
       const probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
       if (probe.ok) {
         const manifest: PreviewManifest = {

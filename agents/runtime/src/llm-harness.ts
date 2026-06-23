@@ -87,6 +87,7 @@ function systemPrompt(): string {
     "- NEVER import or start the application's own entry point / server. The app needs secrets (DB, auth, external APIs) you do NOT have; booting it is forbidden and will fail.",
     "- Render ONLY the changed components listed below, each in isolation, with realistic MOCK data/props and mock providers (router, theme, store, data-fetching) as needed. Stub any module a component imports that does network/auth/DB work so it renders offline.",
     "- The harness must be a small, throwaway dev app (prefer Vite) living entirely under the harness directory. Reuse the repository's own framework dependencies (they're installed); keep the harness's own deps minimal.",
+    "- INSTALL THE HARNESS WITH npm (e.g. installCommand `npm install`, startCommand `npm run dev`), NOT yarn/pnpm. The repo may be a yarn/pnpm WORKSPACE; running those from this nested dir attaches to the workspace root and fails to install the harness's own devDeps (you'll get 'vite: not found'). npm installs the local package.json in isolation.",
     "- It is a VISUAL preview: no real data, no logins, no backend. Better to render with mock data than to wire anything real.",
     "",
     "WORKFLOW:",
@@ -121,16 +122,22 @@ function userPrompt(req: LlmHarnessRequest): string {
   return lines.join("\n");
 }
 
-// Wall-clock cap for ONE harness-generation pass. The preview is best-effort; it
-// must never hold the run hostage. Default 4 minutes, overridable.
+// Bounds for ONE harness-generation pass. The preview is best-effort; it must
+// never hold the run hostage NOR thrash on exploratory tool calls. Building a
+// harness needs maybe ~15-40 tool calls (inspect repo, write files, install,
+// start, one repair); these are generous backstops against a model that loops
+// re-reading/re-grepping. All overridable.
 const DEFAULT_HARNESS_TIMEOUT_MS = 240_000;
-function runtimeHarnessTimeoutMs(env: Record<string, string>): number {
-  const raw = env.ANCHORAGE_RUNTIME_LLM_TIMEOUT_MS;
+const DEFAULT_HARNESS_MAX_TURNS = 50;
+const DEFAULT_HARNESS_MAX_SHELL_CALLS = 40;
+
+function envInt(env: Record<string, string>, name: string, fallback: number): number {
+  const raw = env[name];
   if (raw && raw.trim().length > 0) {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
-  return DEFAULT_HARNESS_TIMEOUT_MS;
+  return fallback;
 }
 
 /** Resolve the runtime role's LLM config, or null when none is configured. */
@@ -168,10 +175,22 @@ export async function generateHarnessWithLlm(
     capabilities: new Set(req.capabilities),
     env: req.env,
     temperature: 0.1,
-    // Bound the whole harness-generation loop. Combined with the per-request
-    // provider timeout, this guarantees the runtime gate can never hang — it
-    // finishes, fails cleanly, and the run continues. Overridable via env.
-    budget: { maxWallClockMs: runtimeHarnessTimeoutMs(req.env) },
+    // Bound the whole harness-generation loop on wall-clock AND tool calls.
+    // Combined with the per-request provider timeout, this guarantees the gate
+    // can never hang or thrash — it finishes, fails cleanly, the run continues.
+    budget: {
+      maxWallClockMs: envInt(
+        req.env,
+        "ANCHORAGE_RUNTIME_LLM_TIMEOUT_MS",
+        DEFAULT_HARNESS_TIMEOUT_MS,
+      ),
+      maxTurns: envInt(req.env, "ANCHORAGE_RUNTIME_LLM_MAX_TURNS", DEFAULT_HARNESS_MAX_TURNS),
+      maxShellCalls: envInt(
+        req.env,
+        "ANCHORAGE_RUNTIME_LLM_MAX_SHELL",
+        DEFAULT_HARNESS_MAX_SHELL_CALLS,
+      ),
+    },
     ...(req.onEvent ? { onEvent: req.onEvent } : {}),
   });
 
