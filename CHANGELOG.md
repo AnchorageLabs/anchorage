@@ -29,6 +29,29 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-23 — CI coverage step has the required `@vitest/coverage-v8` dependency.
+
+**Intent:** The `Run tests with coverage` CI step was failing on every PR with `Cannot find dependency '@vitest/coverage-v8'`, blocking merges. The dependency is now declared in `sdk/typescript` at the same version as the repo's Vitest (`4.1.7`) so coverage runs succeed.
+
+**Files touched:**
+- sdk/typescript/package.json
+- pnpm-lock.yaml
+
+**Reason:** CI failure observed on PR #181 (2026-06-23) — coverage step missing `@vitest/coverage-v8`.
+
+**Author:** Valentìn Torassa Colombero
+
+### 2026-06-23 — CLI README explains install, update, auth, and command flow for released users.
+
+**Intent:** New users landing on the CLI README can copy-paste the curl/PowerShell installer, verify they have the latest version, authenticate securely, and run their first command without reading source code.
+
+**Files touched:**
+- cli/anchorage/README.md
+
+**Reason:** user request (2026-06-23): provide a README that shows how to download and use the Anchorage CLI from GitHub Releases.
+
+**Author:** Valentìn Torassa Colombero
+
 ### 2026-06-23 — Released CLI installs safely and works against the public API by default.
 
 **Intent:** Users installing the standalone `anchorage` binary from GitHub Releases can use it immediately without discovering an internal localhost default. The CLI now defaults to `https://api.anchoragelabs.dev`, exposes `anchorage --version` / `anchorage version`, and both release installers verify downloaded binaries against `SHA256SUMS` before installing. Local development still works with `--server http://localhost:3001`.
