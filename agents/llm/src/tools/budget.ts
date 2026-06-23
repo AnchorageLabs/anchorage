@@ -24,6 +24,11 @@ export function createBudgetState(overrides: Partial<BudgetConfig> = {}): Budget
       DEFAULT_BUDGET.maxShellCalls,
       "ANCHORAGE_TOOL_MAX_SHELL_CALLS",
     ),
+    maxWallClockMs: pickInt(
+      overrides.maxWallClockMs,
+      DEFAULT_BUDGET.maxWallClockMs,
+      "ANCHORAGE_TOOL_MAX_WALL_CLOCK_MS",
+    ),
     webEnabled: pickBool(
       overrides.webEnabled,
       DEFAULT_BUDGET.webEnabled,
@@ -33,6 +38,9 @@ export function createBudgetState(overrides: Partial<BudgetConfig> = {}): Budget
 
   return {
     ...config,
+    deadlineMs: Number.isFinite(config.maxWallClockMs)
+      ? Date.now() + config.maxWallClockMs
+      : Number.POSITIVE_INFINITY,
     turns: 0,
     inputTokensTotal: 0,
     outputTokensTotal: 0,
@@ -52,6 +60,13 @@ export interface BudgetCheck {
 }
 
 export function checkTurnBudget(state: BudgetState): BudgetCheck {
+  if (Date.now() >= state.deadlineMs) {
+    return {
+      ok: false,
+      reason: "max_wall_clock",
+      message: `Tool loop exceeded its wall-clock budget (${Math.round(state.maxWallClockMs / 1000)}s).`,
+    };
+  }
   if (state.turns >= state.maxTurns) {
     return {
       ok: false,

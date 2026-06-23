@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFallbackStory,
+  buildStoryFor,
   componentTitle,
   detectExport,
   isRenderableComponent,
-  storyFileName,
 } from "../src/stories.js";
 
 describe("isRenderableComponent", () => {
-  it("accepts tsx/jsx", () => {
+  it("accepts tsx/jsx/vue/svelte", () => {
     expect(isRenderableComponent("/repo/src/Button.tsx")).toBe(true);
     expect(isRenderableComponent("/repo/src/Button.jsx")).toBe(true);
+    expect(isRenderableComponent("/repo/src/Button.vue")).toBe(true);
+    expect(isRenderableComponent("/repo/src/Button.svelte")).toBe(true);
   });
   it("rejects styles/assets/other", () => {
     expect(isRenderableComponent("/repo/src/app.css")).toBe(false);
@@ -19,12 +21,43 @@ describe("isRenderableComponent", () => {
   });
 });
 
-describe("componentTitle / storyFileName", () => {
-  it("derives a title from the file name", () => {
+describe("componentTitle", () => {
+  it("derives a title from the file name (any framework extension)", () => {
     expect(componentTitle("/repo/src/components/Button.tsx")).toBe("Button");
+    expect(componentTitle("/repo/src/components/Button.vue")).toBe("Button");
+    expect(componentTitle("/repo/src/components/Button.svelte")).toBe("Button");
   });
-  it("builds a .story.jsx filename", () => {
-    expect(storyFileName("/repo/src/Card.tsx")).toBe("Card.story.jsx");
+});
+
+describe("buildStoryFor", () => {
+  it("builds a JSX story for react", () => {
+    const story = buildStoryFor("react", {
+      absPath: "/repo/src/Card.tsx",
+      source: "export default function Card() { return null; }",
+    });
+    expect(story?.fileName).toBe("Card.story.jsx");
+    expect(story?.content).toContain('import Component from "/repo/src/Card.tsx";');
+  });
+
+  it("builds a JSX story for solid", () => {
+    const story = buildStoryFor("solid", {
+      absPath: "/repo/src/Card.tsx",
+      source: "export default function Card() { return null; }",
+    });
+    expect(story?.fileName).toBe("Card.story.jsx");
+  });
+
+  it("re-exports the SFC for vue", () => {
+    const story = buildStoryFor("vue", { absPath: "/repo/src/Card.vue", source: "" });
+    expect(story?.fileName).toBe("Card.story.js");
+    expect(story?.content).toContain('export { default } from "/repo/src/Card.vue";');
+  });
+
+  it("wraps the component for svelte", () => {
+    const story = buildStoryFor("svelte", { absPath: "/repo/src/Card.svelte", source: "" });
+    expect(story?.fileName).toBe("Card.story.svelte");
+    expect(story?.content).toContain('import Component from "/repo/src/Card.svelte";');
+    expect(story?.content).toContain("<Component />");
   });
 });
 

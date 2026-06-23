@@ -7,6 +7,7 @@ import {
   CachePointType,
   ConverseCommand,
   type ConverseCommandInput,
+  type ConverseCommandOutput,
 } from "@aws-sdk/client-bedrock-runtime";
 import type {
   ContentBlock,
@@ -18,7 +19,30 @@ import type {
   ToolDefinition,
 } from "../types.js";
 import { isPromptCachingUnsupported, isTemperatureUnsupported } from "./param-support.js";
-import { sendAwsWithRetry } from "./retry.js";
+import { llmRequestTimeoutMs, sendAwsWithRetry } from "./retry.js";
+
+// One Converse call, bounded by a hard timeout. The AWS SDK has its own socket
+// timeouts but they can be generous/absent; this guarantees a stalled call can
+// never hang the turn (and therefore the agent) forever — the abort surfaces as
+// a normal thrown error the caller maps to a provider error and retries.
+async function sendWithTimeout(
+  client: BedrockRuntimeClient,
+  command: ConverseCommand,
+): Promise<ConverseCommandOutput> {
+  const controller = new AbortController();
+  const timeoutMs = llmRequestTimeoutMs();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await client.send(command, { abortSignal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Bedrock request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface BedrockProviderConfig {
   model: string;
@@ -88,7 +112,7 @@ export function createBedrockProvider(config: BedrockProviderConfig): ProviderAd
         // here with backoff before the param-compat retries below — a rate limit
         // should cost seconds, not a full agent step. Validation/auth errors are
         // not retryable, so they fall straight through to the catch below.
-        return sendAwsWithRetry(() => client.send(new ConverseCommand(commandInput)));
+        return sendAwsWithRetry(() => sendWithTimeout(client, new ConverseCommand(commandInput)));
       };
 
       // Caching is additive and lossless; temperature may be rejected by newer

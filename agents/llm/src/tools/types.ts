@@ -142,10 +142,16 @@ export interface BudgetConfig {
   maxFiles: number;
   maxWebCalls: number;
   maxShellCalls: number;
+  // Wall-clock cap (ms) for the whole tool loop. The last-resort backstop against
+  // a run that makes no progress yet never errors (e.g. a provider that keeps
+  // answering slowly). Infinity = uncapped (default); set per run or via env.
+  maxWallClockMs: number;
   webEnabled: boolean;
 }
 
 export interface BudgetState extends BudgetConfig {
+  // Absolute time (ms epoch) the loop must finish by; Infinity when uncapped.
+  deadlineMs: number;
   turns: number;
   inputTokensTotal: number;
   outputTokensTotal: number;
@@ -163,6 +169,7 @@ export type BudgetExceededReason =
   | "max_files"
   | "max_web_calls"
   | "max_shell_calls"
+  | "max_wall_clock"
   | "web_disabled";
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -343,5 +350,6 @@ export const DEFAULT_BUDGET: BudgetConfig = {
   maxFiles: Number.POSITIVE_INFINITY,
   maxWebCalls: Number.POSITIVE_INFINITY,
   maxShellCalls: Number.POSITIVE_INFINITY,
+  maxWallClockMs: Number.POSITIVE_INFINITY,
   webEnabled: false,
 };

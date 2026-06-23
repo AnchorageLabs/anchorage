@@ -8,6 +8,46 @@
 /** Statuses worth retrying: rate limits, overload, and transient 5xx. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
 
+// Per-request wall-clock cap for an LLM HTTP call. Node's global fetch has no
+// response timeout, so a provider that accepts the connection but never answers
+// (or a stalled stream) hangs the whole turn — and therefore the whole agent —
+// forever. This bounds every request; an abort surfaces as a normal network
+// error, which the turn maps to `network_error` and the orchestrator retries.
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
+export function llmRequestTimeoutMs(): number {
+  const raw = process.env.ANCHORAGE_LLM_TIMEOUT_MS;
+  if (raw && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+/**
+ * `fetch` with a hard timeout via AbortController. On timeout the request is
+ * aborted and a clear Error is thrown (not a silent hang). Pass an external
+ * `signal` to compose with a caller's cancellation.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = llmRequestTimeoutMs(),
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`LLM request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Extra attempts after the first (4 requests total). */
 export const MAX_RATE_LIMIT_RETRIES = 3;
 

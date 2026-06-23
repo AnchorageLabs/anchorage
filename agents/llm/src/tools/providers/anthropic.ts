@@ -14,7 +14,7 @@ import type {
   UserMessage,
 } from "../types.js";
 import { isTemperatureUnsupported } from "./param-support.js";
-import { sendWithRateLimitRetry } from "./retry.js";
+import { fetchWithTimeout, sendWithRateLimitRetry } from "./retry.js";
 
 export interface AnthropicProviderConfig {
   apiKey: string;
@@ -61,7 +61,7 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): Provid
         if (includeTemperature && typeof input.temperature === "number") {
           body.temperature = input.temperature;
         }
-        return fetch(`${baseUrl}/messages`, {
+        return fetchWithTimeout(`${baseUrl}/messages`, {
           method: "POST",
           headers: {
             "anthropic-version": anthropicVersion,

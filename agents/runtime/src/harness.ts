@@ -1,15 +1,22 @@
-// Builds the throwaway Vite + React harness that renders changed components in
-// isolation. Pure: every function returns file {path, content} pairs the caller
-// writes under `.anchorage/preview/`. The harness NEVER imports the app's entry
-// point — only the changed components (via generated stories under `stories/`),
-// so it comes up without the app's auth/data/secret machinery.
+// Builds the throwaway Vite harness that renders changed components in
+// isolation, for whichever framework the repo uses. Pure: every builder returns
+// file {path, content} pairs the caller writes under `<appRoot>/.anchorage/preview/`.
+// The harness NEVER imports the app's entry point — only the changed components
+// (via generated stories under `stories/`), so it comes up without the app's
+// auth/data/secret machinery.
 //
 // Fidelity comes from two things: the repo's global stylesheets are imported
-// into the harness, and React is de-duped to the repo's own copy so hooks work
-// across the module boundary.
+// into the harness, and the framework runtime is de-duped to the app's own copy
+// so component state/hooks work across the module boundary.
+//
+// Per-framework templates live in the FRAMEWORK_TEMPLATES registry. React/Preact,
+// Vue, Svelte and Solid each ship a deterministic template; anything else is
+// handled by the LLM general path in the caller. A template that fails to come
+// up is NOT fatal — the caller falls through to the LLM path.
 
 import path from "node:path";
-import type { FrontendToolchain } from "./toolchain.js";
+import { buildStoryFor } from "./stories.js";
+import type { FrontendFramework, FrontendToolchain } from "./toolchain.js";
 
 export interface HarnessFile {
   /** Path relative to the harness root (.anchorage/preview). */
@@ -19,63 +26,99 @@ export interface HarnessFile {
 
 export interface BuildHarnessArgs {
   toolchain: FrontendToolchain;
-  /** Absolute path to the repository worktree. */
-  workspacePath: string;
   /** Port the harness dev server binds to. */
   port: number;
+  /**
+   * Absolute dir of the framework runtime package as installed for the app
+   * (e.g. <appRoot>/node_modules/react), or null when not resolvable. Used to
+   * pin a single copy of the runtime so cross-boundary state works.
+   */
+  frameworkDir: string | null;
+  /** Absolute dir of react-dom (react/preact family only), or null. */
+  reactDomDir?: string | null;
 }
 
-// Harness deps are deliberately minimal — react/react-dom are aliased to the
-// repo's copy (see vite.config), so we only need Vite and the React plugin here.
-const HARNESS_PACKAGE_JSON = {
-  name: "anchorage-preview-harness",
-  private: true,
-  type: "module",
-  scripts: { dev: "vite" },
-  devDependencies: {
-    vite: "^5.4.0",
-    "@vitejs/plugin-react": "^4.3.0",
-  },
-};
+/** The directory (relative to the harness root) where generated stories live. */
+export const STORIES_DIR = "src/stories";
 
-function viteConfig(workspacePath: string, port: number): string {
-  // JSON.stringify keeps the absolute paths correctly escaped on every OS.
-  const repo = JSON.stringify(workspacePath);
+interface FrameworkTemplate {
+  /** Source extensions for components this framework can render as a story. */
+  componentExtensions: string[];
+  /** Harness-local devDependencies (vite plugin + anything the entry needs). */
+  devDependencies: Record<string, string>;
+  /** Build the skeleton files (everything but the per-component stories). */
+  buildSkeleton(args: BuildHarnessArgs): HarnessFile[];
+}
+
+// ── Shared building blocks ────────────────────────────────────────────────────
+
+function harnessPackageJson(devDependencies: Record<string, string>): string {
+  return `${JSON.stringify(
+    {
+      name: "anchorage-preview-harness",
+      private: true,
+      type: "module",
+      scripts: { dev: "vite" },
+      devDependencies,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+interface ViteConfigArgs {
+  appRoot: string;
+  installRoot: string;
+  port: number;
+  /** e.g. `import react from "@vitejs/plugin-react";` */
+  pluginImport: string;
+  /** e.g. `react()` — inserted into the plugins array. */
+  pluginUse: string;
+  /** Packages to dedupe to a single copy. */
+  dedupe: string[];
+  /** Extra `resolve.alias` entries as literal JS object lines. */
+  aliasLines: string[];
+}
+
+function viteConfig(args: ViteConfigArgs): string {
+  const appRoot = JSON.stringify(args.appRoot);
+  const installRoot = JSON.stringify(args.installRoot);
+  const dedupe = JSON.stringify(args.dedupe);
+  const alias = args.aliasLines.length ? `\n      ${args.aliasLines.join(",\n      ")},` : "";
   return `import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+${args.pluginImport}
 import path from "node:path";
 
-// The repository worktree. The harness lives at <repo>/.anchorage/preview.
-const repo = ${repo};
+// The frontend app root. The harness lives at <appRoot>/.anchorage/preview.
+const appRoot = ${appRoot};
+// Where the app's dependencies are installed (workspace/monorepo root or appRoot).
+const installRoot = ${installRoot};
 
 // https://vitejs.dev/config/ — generated by the Anchorage runtime agent.
 export default defineConfig({
   root: __dirname,
-  plugins: [react()],
+  plugins: [${args.pluginUse}],
   server: {
-    port: ${port},
+    port: ${args.port},
     host: "0.0.0.0",
     strictPort: false,
-    // Allow Vite to read component sources from the repo, not just the harness.
-    fs: { allow: [__dirname, repo] },
+    // Let Vite read component sources + hoisted deps from anywhere on the chain.
+    fs: { allow: [__dirname, appRoot, installRoot] },
   },
   resolve: {
-    // One React instance only — alias to the repo's copy so component hooks run
-    // in the same React as the harness (mismatched copies throw "invalid hook").
-    dedupe: ["react", "react-dom"],
-    alias: {
-      react: path.join(repo, "node_modules/react"),
-      "react-dom": path.join(repo, "node_modules/react-dom"),
-      // Best-effort support for the common "@/..." -> src alias. Repos that use a
-      // different alias resolve via their own tsconfig paths in a later increment.
-      "@": path.join(repo, "src"),
+    // One framework copy only — state/hooks must run in the same runtime as the
+    // harness, even across the repo/harness module boundary.
+    dedupe: ${dedupe},
+    alias: {${alias}
+      // Best-effort support for the common "@/..." -> src alias.
+      "@": path.join(appRoot, "src"),
     },
   },
 });
 `;
 }
 
-function indexHtml(): string {
+function indexHtml(entrySrc: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -85,25 +128,48 @@ function indexHtml(): string {
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="${entrySrc}"></script>
   </body>
 </html>
 `;
 }
 
-function mainJsx(globalCssAbsImports: string[]): string {
-  const cssImports = globalCssAbsImports.map((p) => `import ${JSON.stringify(p)};`).join("\n");
-  return `import React from "react";
+function cssImportLines(args: BuildHarnessArgs): string {
+  const { toolchain } = args;
+  return toolchain.globalCss
+    .map((rel) => `import ${JSON.stringify(path.join(toolchain.appRoot, rel))};`)
+    .join("\n");
+}
+
+const GALLERY_HEADER_NOTE = "rendered in isolation with mock data — the app itself is not running.";
+
+// ── React / Preact ─────────────────────────────────────────────────────────────
+
+function reactAliasLines(args: BuildHarnessArgs): string[] {
+  const lines: string[] = [];
+  if (args.frameworkDir) lines.push(`react: ${JSON.stringify(args.frameworkDir)}`);
+  if (args.reactDomDir) lines.push(`"react-dom": ${JSON.stringify(args.reactDomDir)}`);
+  return lines;
+}
+
+function reactSkeleton(args: BuildHarnessArgs): HarnessFile[] {
+  const { toolchain, port } = args;
+  const preact = toolchain.framework === "preact";
+  const pluginImport = preact
+    ? `import preact from "@preact/preset-vite";`
+    : `import react from "@vitejs/plugin-react";`;
+  const pluginUse = preact ? "preact()" : "react()";
+  const dedupe = preact ? ["preact"] : ["react", "react-dom"];
+
+  const main = `import React from "react";
 import { createRoot } from "react-dom/client";
 import { Gallery } from "./gallery.jsx";
-${cssImports}
+${cssImportLines(args)}
 
 createRoot(document.getElementById("root")).render(<Gallery />);
 `;
-}
 
-function errorBoundaryJsx(): string {
-  return `import React from "react";
+  const errorBoundary = `import React from "react";
 
 // Isolates one card's failure so a single un-renderable component doesn't blank
 // the whole gallery — it shows the error inline instead.
@@ -127,12 +193,8 @@ export class CardErrorBoundary extends React.Component {
   }
 }
 `;
-}
 
-function galleryJsx(): string {
-  // import.meta.glob auto-discovers every generated story, so the gallery never
-  // needs regenerating when the story set changes — only the stories dir does.
-  return `import React from "react";
+  const gallery = `import React from "react";
 import { CardErrorBoundary } from "./ErrorBoundary.jsx";
 
 const modules = import.meta.glob("./stories/*.{jsx,tsx}", { eager: true });
@@ -151,7 +213,7 @@ export function Gallery() {
       <header style={{ marginBottom: 20, fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Component preview</div>
         <div style={{ fontSize: 13, opacity: 0.6 }}>
-          {stories.length} component{stories.length === 1 ? "" : "s"} rendered in isolation with mock data — the app itself is not running.
+          {stories.length} component{stories.length === 1 ? "" : "s"} ${GALLERY_HEADER_NOTE}
         </div>
       </header>
       {stories.length === 0 && (
@@ -177,25 +239,352 @@ export function Gallery() {
   );
 }
 `;
-}
-
-/**
- * Build the harness skeleton (everything except the per-component stories, which
- * are generated separately under `stories/`). Pure — returns the files to write.
- */
-export function buildHarnessFiles(args: BuildHarnessArgs): HarnessFile[] {
-  const { toolchain, workspacePath, port } = args;
-  const globalCssAbs = toolchain.globalCss.map((rel) => path.join(workspacePath, rel));
 
   return [
-    { path: "package.json", content: `${JSON.stringify(HARNESS_PACKAGE_JSON, null, 2)}\n` },
-    { path: "vite.config.js", content: viteConfig(workspacePath, port) },
-    { path: "index.html", content: indexHtml() },
-    { path: "src/main.jsx", content: mainJsx(globalCssAbs) },
-    { path: "src/gallery.jsx", content: galleryJsx() },
-    { path: "src/ErrorBoundary.jsx", content: errorBoundaryJsx() },
+    {
+      path: "package.json",
+      content: harnessPackageJson(reactSkeletonDeps(preact)),
+    },
+    {
+      path: "vite.config.js",
+      content: viteConfig({
+        appRoot: toolchain.appRoot,
+        installRoot: toolchain.installRoot,
+        port,
+        pluginImport,
+        pluginUse,
+        dedupe,
+        aliasLines: preact ? [] : reactAliasLines(args),
+      }),
+    },
+    { path: "index.html", content: indexHtml("/src/main.jsx") },
+    { path: "src/main.jsx", content: main },
+    { path: "src/gallery.jsx", content: gallery },
+    { path: "src/ErrorBoundary.jsx", content: errorBoundary },
   ];
 }
 
-/** The directory (relative to the harness root) where generated stories live. */
-export const STORIES_DIR = "src/stories";
+function reactSkeletonDeps(preact: boolean): Record<string, string> {
+  return preact
+    ? { vite: "^5.4.0", "@preact/preset-vite": "^2.9.0" }
+    : { vite: "^5.4.0", "@vitejs/plugin-react": "^4.3.0" };
+}
+
+// ── Solid ────────────────────────────────────────────────────────────────────
+
+function solidSkeleton(args: BuildHarnessArgs): HarnessFile[] {
+  const { toolchain, port } = args;
+  const main = `import { render } from "solid-js/web";
+import { Gallery } from "./gallery.jsx";
+${cssImportLines(args)}
+
+render(() => <Gallery />, document.getElementById("root"));
+`;
+
+  const gallery = `import { ErrorBoundary, For } from "solid-js";
+
+const modules = import.meta.glob("./stories/*.{jsx,tsx}", { eager: true });
+
+const stories = Object.entries(modules)
+  .map(([file, mod]) => ({
+    name: (mod && mod.title) || file.replace(/^\\.\\/stories\\//, "").replace(/\\.[jt]sx$/, ""),
+    Component: mod && mod.default,
+  }))
+  .filter((s) => typeof s.Component === "function")
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+export function Gallery() {
+  return (
+    <div style={{ "min-height": "100vh", padding: "24px", "box-sizing": "border-box" }}>
+      <header style={{ "margin-bottom": "20px", "font-family": "ui-sans-serif, system-ui, sans-serif" }}>
+        <div style={{ "font-size": "18px", "font-weight": 700 }}>Component preview</div>
+        <div style={{ "font-size": "13px", opacity: 0.6 }}>
+          {stories.length} component{stories.length === 1 ? "" : "s"} ${GALLERY_HEADER_NOTE}
+        </div>
+      </header>
+      <div style={{ display: "grid", gap: "20px" }}>
+        <For each={stories}>
+          {({ name, Component }) => (
+            <section style={{ border: "1px solid #e5e7eb", "border-radius": "12px", overflow: "hidden" }}>
+              <div style={{ padding: "8px 12px", "font-size": "12px", "font-weight": 600, "font-family": "ui-monospace, monospace", background: "#f9fafb", "border-bottom": "1px solid #e5e7eb" }}>
+                {name}
+              </div>
+              <div style={{ padding: "16px" }}>
+                <ErrorBoundary fallback={(err) => (
+                  <pre style={{ margin: 0, padding: "12px", color: "#b91c1c", background: "#fef2f2", "border-radius": "8px", "white-space": "pre-wrap", "font-size": "12px" }}>
+                    {"Couldn't render: " + String(err?.message ?? err)}
+                  </pre>
+                )}>
+                  <Component />
+                </ErrorBoundary>
+              </div>
+            </section>
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}
+`;
+
+  return [
+    {
+      path: "package.json",
+      content: harnessPackageJson({ vite: "^5.4.0", "vite-plugin-solid": "^2.10.0" }),
+    },
+    {
+      path: "vite.config.js",
+      content: viteConfig({
+        appRoot: toolchain.appRoot,
+        installRoot: toolchain.installRoot,
+        port,
+        pluginImport: `import solid from "vite-plugin-solid";`,
+        pluginUse: "solid()",
+        dedupe: ["solid-js"],
+        aliasLines: [],
+      }),
+    },
+    { path: "index.html", content: indexHtml("/src/main.jsx") },
+    { path: "src/main.jsx", content: main },
+    { path: "src/gallery.jsx", content: gallery },
+  ];
+}
+
+// ── Vue ──────────────────────────────────────────────────────────────────────
+
+function vueSkeleton(args: BuildHarnessArgs): HarnessFile[] {
+  const { toolchain, port } = args;
+  const main = `import { createApp } from "vue";
+import Gallery from "./Gallery.vue";
+${cssImportLines(args)}
+
+createApp(Gallery).mount("#root");
+`;
+
+  const card = `<script>
+export default {
+  props: { name: String, comp: [Object, Function] },
+  data() {
+    return { error: null };
+  },
+  errorCaptured(err) {
+    this.error = err;
+    return false;
+  },
+};
+</script>
+
+<template>
+  <section :style="{ border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden' }">
+    <div :style="{ padding: '8px 12px', fontSize: '12px', fontWeight: 600, fontFamily: 'ui-monospace, monospace', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }">
+      {{ name }}
+    </div>
+    <div :style="{ padding: '16px' }">
+      <pre v-if="error" :style="{ margin: 0, padding: '12px', color: '#b91c1c', background: '#fef2f2', borderRadius: '8px', whiteSpace: 'pre-wrap', fontSize: '12px' }">{{ "Couldn't render: " + String(error && error.message || error) }}</pre>
+      <component v-else :is="comp" />
+    </div>
+  </section>
+</template>
+`;
+
+  const gallery = `<script>
+const modules = import.meta.glob("./stories/*.{vue,js,ts,jsx,tsx}", { eager: true });
+const stories = Object.entries(modules)
+  .map(([file, mod]) => ({
+    name: (mod && mod.title) || file.replace(/^\\.\\/stories\\//, "").replace(/\\.[a-z]+$/i, ""),
+    comp: mod && mod.default,
+  }))
+  .filter((s) => s.comp)
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+import Card from "./Card.vue";
+export default {
+  components: { Card },
+  data() {
+    return { stories };
+  },
+};
+</script>
+
+<template>
+  <div :style="{ minHeight: '100vh', padding: '24px', boxSizing: 'border-box' }">
+    <header :style="{ marginBottom: '20px', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }">
+      <div :style="{ fontSize: '18px', fontWeight: 700 }">Component preview</div>
+      <div :style="{ fontSize: '13px', opacity: 0.6 }">
+        {{ stories.length }} component{{ stories.length === 1 ? "" : "s" }} ${GALLERY_HEADER_NOTE}
+      </div>
+    </header>
+    <div :style="{ display: 'grid', gap: '20px' }">
+      <Card v-for="s in stories" :key="s.name" :name="s.name" :comp="s.comp" />
+    </div>
+  </div>
+</template>
+`;
+
+  return [
+    {
+      path: "package.json",
+      content: harnessPackageJson({ vite: "^5.4.0", "@vitejs/plugin-vue": "^5.1.0" }),
+    },
+    {
+      path: "vite.config.js",
+      content: viteConfig({
+        appRoot: toolchain.appRoot,
+        installRoot: toolchain.installRoot,
+        port,
+        pluginImport: `import vue from "@vitejs/plugin-vue";`,
+        pluginUse: "vue()",
+        dedupe: ["vue"],
+        aliasLines: [],
+      }),
+    },
+    { path: "index.html", content: indexHtml("/src/main.js") },
+    { path: "src/main.js", content: main },
+    { path: "src/Gallery.vue", content: gallery },
+    { path: "src/Card.vue", content: card },
+  ];
+}
+
+// ── Svelte ───────────────────────────────────────────────────────────────────
+
+function svelteSkeleton(args: BuildHarnessArgs): HarnessFile[] {
+  const { toolchain, port } = args;
+  // Svelte 5's `mount` API; on Svelte 4 the template self-heals via the LLM
+  // fall-through when this fails to start.
+  const main = `import { mount } from "svelte";
+import Gallery from "./Gallery.svelte";
+${cssImportLines(args)}
+
+mount(Gallery, { target: document.getElementById("root") });
+`;
+
+  const gallery = `<script>
+  const modules = import.meta.glob("./stories/*.svelte", { eager: true });
+  const stories = Object.entries(modules)
+    .map(([file, mod]) => ({
+      name: file.replace(/^\\.\\/stories\\//, "").replace(/\\.svelte$/, ""),
+      Component: mod && mod.default,
+    }))
+    .filter((s) => s.Component)
+    .sort((a, b) => a.name.localeCompare(b.name));
+</script>
+
+<div style="min-height:100vh;padding:24px;box-sizing:border-box;">
+  <header style="margin-bottom:20px;font-family:ui-sans-serif, system-ui, sans-serif;">
+    <div style="font-size:18px;font-weight:700;">Component preview</div>
+    <div style="font-size:13px;opacity:0.6;">
+      {stories.length} component{stories.length === 1 ? "" : "s"} ${GALLERY_HEADER_NOTE}
+    </div>
+  </header>
+  <div style="display:grid;gap:20px;">
+    {#each stories as { name, Component } (name)}
+      <section style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+        <div style="padding:8px 12px;font-size:12px;font-weight:600;font-family:ui-monospace, monospace;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+          {name}
+        </div>
+        <div style="padding:16px;">
+          <svelte:boundary>
+            <svelte:component this={Component} />
+            {#snippet failed(error)}
+              <pre style="margin:0;padding:12px;color:#b91c1c;background:#fef2f2;border-radius:8px;white-space:pre-wrap;font-size:12px;">{"Couldn't render: " + String(error && error.message || error)}</pre>
+            {/snippet}
+          </svelte:boundary>
+        </div>
+      </section>
+    {/each}
+  </div>
+</div>
+`;
+
+  return [
+    {
+      path: "package.json",
+      content: harnessPackageJson({
+        vite: "^5.4.0",
+        "@sveltejs/vite-plugin-svelte": "^4.0.0",
+      }),
+    },
+    {
+      path: "vite.config.js",
+      content: viteConfig({
+        appRoot: toolchain.appRoot,
+        installRoot: toolchain.installRoot,
+        port,
+        pluginImport: `import { svelte } from "@sveltejs/vite-plugin-svelte";`,
+        pluginUse: "svelte()",
+        dedupe: ["svelte"],
+        aliasLines: [],
+      }),
+    },
+    { path: "index.html", content: indexHtml("/src/main.js") },
+    { path: "src/main.js", content: main },
+    { path: "src/Gallery.svelte", content: gallery },
+  ];
+}
+
+// ── Registry ───────────────────────────────────────────────────────────────────
+
+const FRAMEWORK_TEMPLATES: Record<FrontendFramework, FrameworkTemplate> = {
+  react: {
+    componentExtensions: [".tsx", ".jsx"],
+    devDependencies: reactSkeletonDeps(false),
+    buildSkeleton: reactSkeleton,
+  },
+  preact: {
+    componentExtensions: [".tsx", ".jsx"],
+    devDependencies: reactSkeletonDeps(true),
+    buildSkeleton: reactSkeleton,
+  },
+  solid: {
+    componentExtensions: [".tsx", ".jsx"],
+    devDependencies: { vite: "^5.4.0", "vite-plugin-solid": "^2.10.0" },
+    buildSkeleton: solidSkeleton,
+  },
+  vue: {
+    componentExtensions: [".vue"],
+    devDependencies: { vite: "^5.4.0", "@vitejs/plugin-vue": "^5.1.0" },
+    buildSkeleton: vueSkeleton,
+  },
+  svelte: {
+    componentExtensions: [".svelte"],
+    devDependencies: { vite: "^5.4.0", "@sveltejs/vite-plugin-svelte": "^4.0.0" },
+    buildSkeleton: svelteSkeleton,
+  },
+};
+
+/** Whether a deterministic template exists for this framework. */
+export function hasTemplate(framework: FrontendFramework): boolean {
+  return Object.hasOwn(FRAMEWORK_TEMPLATES, framework);
+}
+
+/** Source extensions this framework renders as standalone story cards. */
+export function componentExtensionsFor(framework: FrontendFramework): string[] {
+  return FRAMEWORK_TEMPLATES[framework].componentExtensions;
+}
+
+/**
+ * Build the harness skeleton (everything except per-component stories, generated
+ * separately under `stories/`) for the toolchain's framework. Pure.
+ */
+export function buildHarnessFiles(args: BuildHarnessArgs): HarnessFile[] {
+  return FRAMEWORK_TEMPLATES[args.toolchain.framework].buildSkeleton(args);
+}
+
+/** The npm dependency name of a framework's runtime (for alias resolution). */
+export function runtimePackageName(framework: FrontendFramework): string {
+  switch (framework) {
+    case "react":
+      return "react";
+    case "preact":
+      return "preact";
+    case "vue":
+      return "vue";
+    case "svelte":
+      return "svelte";
+    case "solid":
+      return "solid-js";
+  }
+}
+
+// Re-export the framework-aware story builder so the caller has one import site.
+export { buildStoryFor };
