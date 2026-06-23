@@ -36,6 +36,29 @@ export interface BuildHarnessArgs {
   frameworkDir: string | null;
   /** Absolute dir of react-dom (react/preact family only), or null. */
   reactDomDir?: string | null;
+  /**
+   * Absolute dir of the APP's PostCSS config (postcss.config.*), or null. When
+   * set, the harness points Vite's `css.postcss` at it so the app's REAL PostCSS
+   * pipeline (Tailwind v3/v4, autoprefixer, nesting — whatever the app uses)
+   * runs, resolving plugins from the app's own installed node_modules. When null,
+   * `css.postcss` is pinned to an empty config so Vite never walks up and
+   * auto-loads a config whose plugins the isolated harness lacks (which crashes
+   * startup). Either way the app's config is never inherited by accident.
+   */
+  postcssConfigDir?: string | null;
+  /**
+   * Module aliases the app declares (tsconfig `compilerOptions.paths`, etc.),
+   * with absolute replacements — so component imports like `@/`, `~/`,
+   * `@components/` resolve regardless of the app's alias scheme. Merged with the
+   * framework's own runtime aliases.
+   */
+  aliasEntries?: AliasEntry[];
+}
+
+/** A module alias: `find` (import prefix) → `replacement` (absolute path). */
+export interface AliasEntry {
+  find: string;
+  replacement: string;
 }
 
 /** The directory (relative to the harness root) where generated stories live. */
@@ -76,18 +99,37 @@ interface ViteConfigArgs {
   pluginUse: string;
   /** Packages to dedupe to a single copy. */
   dedupe: string[];
-  /** Extra `resolve.alias` entries as literal JS object lines. */
-  aliasLines: string[];
+  /** Resolve.alias entries (framework runtime + the app's declared aliases). */
+  aliasEntries: AliasEntry[];
+  /** Dir of the app's PostCSS config to reuse, or null to isolate (empty). */
+  postcssConfigDir: string | null;
+}
+
+function aliasArrayLiteral(entries: AliasEntry[]): string {
+  if (entries.length === 0) return "[]";
+  const lines = entries
+    .map(
+      (e) =>
+        `      { find: ${JSON.stringify(e.find)}, replacement: ${JSON.stringify(e.replacement)} }`,
+    )
+    .join(",\n");
+  return `[\n${lines},\n    ]`;
+}
+
+function postcssLiteral(dir: string | null): string {
+  // A string path makes Vite load the app's REAL config (plugins resolve from
+  // the app's own node_modules). An inline empty object pins PostCSS off AND
+  // stops Vite from walking up to auto-load a config the isolated harness can't
+  // satisfy — either way the app's config is never inherited by accident.
+  return dir ? JSON.stringify(dir) : "{ plugins: [] }";
 }
 
 function viteConfig(args: ViteConfigArgs): string {
   const appRoot = JSON.stringify(args.appRoot);
   const installRoot = JSON.stringify(args.installRoot);
   const dedupe = JSON.stringify(args.dedupe);
-  const alias = args.aliasLines.length ? `\n      ${args.aliasLines.join(",\n      ")},` : "";
   return `import { defineConfig } from "vite";
 ${args.pluginImport}
-import path from "node:path";
 
 // The frontend app root. The harness lives at <appRoot>/.anchorage/preview.
 const appRoot = ${appRoot};
@@ -105,14 +147,16 @@ export default defineConfig({
     // Let Vite read component sources + hoisted deps from anywhere on the chain.
     fs: { allow: [__dirname, appRoot, installRoot] },
   },
+  css: {
+    postcss: ${postcssLiteral(args.postcssConfigDir)},
+  },
   resolve: {
     // One framework copy only — state/hooks must run in the same runtime as the
     // harness, even across the repo/harness module boundary.
     dedupe: ${dedupe},
-    alias: {${alias}
-      // Best-effort support for the common "@/..." -> src alias.
-      "@": path.join(appRoot, "src"),
-    },
+    // Framework runtime + the app's own declared aliases (tsconfig paths, etc.),
+    // so component imports resolve regardless of the app's alias scheme.
+    alias: ${aliasArrayLiteral(args.aliasEntries)},
   },
 });
 `;
@@ -145,11 +189,22 @@ const GALLERY_HEADER_NOTE = "rendered in isolation with mock data — the app it
 
 // ── React / Preact ─────────────────────────────────────────────────────────────
 
-function reactAliasLines(args: BuildHarnessArgs): string[] {
-  const lines: string[] = [];
-  if (args.frameworkDir) lines.push(`react: ${JSON.stringify(args.frameworkDir)}`);
-  if (args.reactDomDir) lines.push(`"react-dom": ${JSON.stringify(args.reactDomDir)}`);
-  return lines;
+// The full alias set for a harness: the framework's own runtime aliases, plus
+// the app's declared aliases, plus a default "@" -> src when the app didn't
+// already define one. All replacements are absolute.
+function resolveAliasEntries(args: BuildHarnessArgs, frameworkEntries: AliasEntry[]): AliasEntry[] {
+  const entries = [...frameworkEntries, ...(args.aliasEntries ?? [])];
+  if (!entries.some((e) => e.find === "@")) {
+    entries.push({ find: "@", replacement: path.join(args.toolchain.appRoot, "src") });
+  }
+  return entries;
+}
+
+function reactAliasEntries(args: BuildHarnessArgs): AliasEntry[] {
+  const entries: AliasEntry[] = [];
+  if (args.frameworkDir) entries.push({ find: "react", replacement: args.frameworkDir });
+  if (args.reactDomDir) entries.push({ find: "react-dom", replacement: args.reactDomDir });
+  return entries;
 }
 
 function reactSkeleton(args: BuildHarnessArgs): HarnessFile[] {
@@ -254,7 +309,8 @@ export function Gallery() {
         pluginImport,
         pluginUse,
         dedupe,
-        aliasLines: preact ? [] : reactAliasLines(args),
+        aliasEntries: resolveAliasEntries(args, preact ? [] : reactAliasEntries(args)),
+        postcssConfigDir: args.postcssConfigDir ?? null,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.jsx") },
@@ -341,7 +397,8 @@ export function Gallery() {
         pluginImport: `import solid from "vite-plugin-solid";`,
         pluginUse: "solid()",
         dedupe: ["solid-js"],
-        aliasLines: [],
+        aliasEntries: resolveAliasEntries(args, []),
+        postcssConfigDir: args.postcssConfigDir ?? null,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.jsx") },
@@ -435,7 +492,8 @@ export default {
         pluginImport: `import vue from "@vitejs/plugin-vue";`,
         pluginUse: "vue()",
         dedupe: ["vue"],
-        aliasLines: [],
+        aliasEntries: resolveAliasEntries(args, []),
+        postcssConfigDir: args.postcssConfigDir ?? null,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.js") },
@@ -513,7 +571,8 @@ mount(Gallery, { target: document.getElementById("root") });
         pluginImport: `import { svelte } from "@sveltejs/vite-plugin-svelte";`,
         pluginUse: "svelte()",
         dedupe: ["svelte"],
-        aliasLines: [],
+        aliasEntries: resolveAliasEntries(args, []),
+        postcssConfigDir: args.postcssConfigDir ?? null,
       }),
     },
     { path: "index.html", content: indexHtml("/src/main.js") },

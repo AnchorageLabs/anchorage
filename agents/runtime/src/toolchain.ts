@@ -370,3 +370,134 @@ export async function resolvePackageDir(
   }
   return null;
 }
+
+// ── App build-config bridging (alias + PostCSS) ───────────────────────────────
+// The harness must resolve the app's imports/styles WITHOUT inheriting the app's
+// config files by accident (those reference deps the isolated harness lacks).
+// These read the app's declarations so the harness can bridge them explicitly,
+// for any framework / alias scheme / PostCSS plugin set.
+
+export interface AliasEntry {
+  /** Import prefix the app uses, e.g. "@" or "@components". */
+  find: string;
+  /** Absolute path it resolves to. */
+  replacement: string;
+}
+
+// Strip // and /* */ comments and trailing commas so a JSONC tsconfig parses.
+function parseJsonc(text: string): unknown {
+  const noComments = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const noTrailingCommas = noComments.replace(/,(\s*[}\]])/g, "$1");
+  try {
+    return JSON.parse(noTrailingCommas);
+  } catch {
+    return null;
+  }
+}
+
+const POSTCSS_CONFIG_FILES = [
+  "postcss.config.js",
+  "postcss.config.cjs",
+  "postcss.config.mjs",
+  "postcss.config.ts",
+  "postcss.config.json",
+  ".postcssrc",
+  ".postcssrc.js",
+  ".postcssrc.cjs",
+  ".postcssrc.json",
+];
+
+/**
+ * The nearest directory (appRoot up to the install root) that holds a PostCSS
+ * config, or one declared via a package.json "postcss" key — the dir to point
+ * Vite's `css.postcss` at so the app's real pipeline runs. Null when none, so
+ * the caller isolates PostCSS instead.
+ */
+export async function findPostcssConfigDir(
+  appRoot: string,
+  workspacePath: string,
+): Promise<string | null> {
+  for (const dir of ancestorsWithin(appRoot, path.resolve(workspacePath))) {
+    for (const name of POSTCSS_CONFIG_FILES) {
+      if (await fileExists(path.join(dir, name))) return dir;
+    }
+    const pkg = await readPackageJson(dir);
+    if (pkg && Object.hasOwn(pkg, "postcss")) return dir;
+  }
+  return null;
+}
+
+/**
+ * Read the app's module aliases from its tsconfig `compilerOptions.paths`
+ * (+ baseUrl), following one `extends` level, and translate them to absolute
+ * Vite aliases. Returns [] when there's no tsconfig or no paths — so the harness
+ * resolves `@/`, `~/`, `@components/`, etc. for ANY app's alias scheme rather
+ * than a single hard-coded `@`. Best-effort: malformed tsconfig → [].
+ */
+export async function readTsconfigAliases(
+  appRoot: string,
+  _workspacePath: string,
+): Promise<AliasEntry[]> {
+  const tsconfigPath = path.join(appRoot, "tsconfig.json");
+  const collected = await loadTsconfigCompilerOptions(tsconfigPath, 0);
+  if (!collected) return [];
+  const { baseUrl, paths } = collected;
+  if (!paths) return [];
+  const base = path.resolve(appRoot, baseUrl ?? ".");
+  const entries: AliasEntry[] = [];
+  for (const [key, targets] of Object.entries(paths)) {
+    if (!Array.isArray(targets) || targets.length === 0) continue;
+    const target = targets[0];
+    if (typeof target !== "string") continue;
+    const find = key.replace(/\/\*$/, "");
+    const rel = target.replace(/\/\*$/, "");
+    if (!find) continue;
+    entries.push({ find, replacement: path.resolve(base, rel) });
+  }
+  return entries;
+}
+
+interface TsCompilerOptions {
+  baseUrl?: string;
+  paths?: Record<string, unknown>;
+}
+
+async function loadTsconfigCompilerOptions(
+  tsconfigPath: string,
+  depth: number,
+): Promise<TsCompilerOptions | null> {
+  if (depth > 3) return null;
+  let raw: string;
+  try {
+    raw = await fs.readFile(tsconfigPath, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = parseJsonc(raw) as Record<string, unknown> | null;
+  if (!parsed) return null;
+  const co = (parsed.compilerOptions as Record<string, unknown> | undefined) ?? {};
+  const baseUrl = typeof co.baseUrl === "string" ? co.baseUrl : undefined;
+  const paths =
+    co.paths && typeof co.paths === "object" ? (co.paths as Record<string, unknown>) : undefined;
+
+  // Follow `extends` (one relative level at a time) for inherited baseUrl/paths.
+  if ((!baseUrl || !paths) && typeof parsed.extends === "string") {
+    const extPath = parsed.extends.startsWith(".")
+      ? path.resolve(path.dirname(tsconfigPath), parsed.extends)
+      : null; // package-name extends are not resolved (best-effort)
+    if (extPath) {
+      const file = extPath.endsWith(".json") ? extPath : `${extPath}.json`;
+      const inherited = await loadTsconfigCompilerOptions(file, depth + 1);
+      if (inherited) {
+        // baseUrl in the EXTENDING file is relative to that file's dir; an
+        // inherited baseUrl stays relative to the base file's dir. We resolve
+        // both against their own dirs by returning the child's when present.
+        return {
+          baseUrl: baseUrl ?? inherited.baseUrl,
+          paths: paths ?? inherited.paths,
+        };
+      }
+    }
+  }
+  return { baseUrl, paths };
+}
