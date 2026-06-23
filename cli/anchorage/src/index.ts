@@ -66,7 +66,7 @@ Commands:
   auth login                 Save server URL (+ secret from env/stdin) to the config file
   auth whoami                Show the credential the server sees
   runs list                  List recent runs
-  runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b]
+  runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b] [--llm-provider p] [--llm-model m]
   runs status <id>           Show a run's status
   runs watch <id>            Stream a run's events until it ends
   runs approve <id>          Approve a paused run
@@ -231,6 +231,8 @@ async function main(): Promise<number> {
         ...(str(flags, "bitbucket-issue") ? { bitbucketIssue: str(flags, "bitbucket-issue") } : {}),
         ...(str(flags, "workflow") ? { pipeline: str(flags, "workflow") } : {}),
         ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
+        ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
+        ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
       });
       out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
       return 0;
