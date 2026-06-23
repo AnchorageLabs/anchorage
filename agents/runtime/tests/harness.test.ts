@@ -48,10 +48,43 @@ describe("buildHarnessFiles (react)", () => {
   it("dedupes react to the app's copy and binds the configured port", () => {
     const cfg = files().find((f) => f.path === "vite.config.js")?.content ?? "";
     expect(cfg).toContain('dedupe: ["react","react-dom"]');
-    expect(cfg).toContain('react: "/repo/node_modules/react"');
-    expect(cfg).toContain('"react-dom": "/repo/node_modules/react-dom"');
+    expect(cfg).toContain('{ find: "react", replacement: "/repo/node_modules/react" }');
+    expect(cfg).toContain('{ find: "react-dom", replacement: "/repo/node_modules/react-dom" }');
     expect(cfg).toContain("port: 3101");
     expect(cfg).toContain('const appRoot = "/repo";');
+  });
+
+  it("falls back to a default @ -> src alias when the app declares none", () => {
+    const cfg = files().find((f) => f.path === "vite.config.js")?.content ?? "";
+    expect(cfg).toContain('{ find: "@", replacement: "/repo/src" }');
+  });
+
+  it("isolates PostCSS by default so the app's config is never auto-loaded", () => {
+    const cfg = files().find((f) => f.path === "vite.config.js")?.content ?? "";
+    expect(cfg).toContain("postcss: { plugins: [] }");
+  });
+
+  it("points PostCSS at the app's config dir when one exists", () => {
+    const cfg =
+      buildHarnessFiles({
+        toolchain,
+        port: 3101,
+        frameworkDir: "/repo/node_modules/react",
+        reactDomDir: "/repo/node_modules/react-dom",
+        postcssConfigDir: "/repo",
+      }).find((f) => f.path === "vite.config.js")?.content ?? "";
+    expect(cfg).toContain('postcss: "/repo"');
+  });
+
+  it("maps the app's declared aliases (any scheme) to absolute paths", () => {
+    const cfg =
+      buildHarnessFiles({
+        toolchain,
+        port: 3101,
+        frameworkDir: null,
+        aliasEntries: [{ find: "~", replacement: "/repo/source" }],
+      }).find((f) => f.path === "vite.config.js")?.content ?? "";
+    expect(cfg).toContain('{ find: "~", replacement: "/repo/source" }');
   });
 
   it("allows Vite to read sources from the app + install roots, not just the harness", () => {

@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { detectFrontendToolchain, resolveFrontendToolchain } from "../src/toolchain.js";
+import {
+  detectFrontendToolchain,
+  findPostcssConfigDir,
+  readTsconfigAliases,
+  resolveFrontendToolchain,
+} from "../src/toolchain.js";
 
 let dir: string;
 
@@ -167,5 +172,64 @@ describe("resolveFrontendToolchain (repo-agnostic)", () => {
   it("returns null when the repo declares no recognized framework", async () => {
     await write("package.json", JSON.stringify({ dependencies: { express: "^4" } }));
     expect(await resolveFrontendToolchain(dir, [path.join(dir, "src/x.tsx")])).toBeNull();
+  });
+});
+
+describe("readTsconfigAliases", () => {
+  it("translates tsconfig paths (any scheme) to absolute aliases", async () => {
+    await write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@/*": ["src/*"], "~components/*": ["src/components/*"] },
+        },
+      }),
+    );
+    const aliases = await readTsconfigAliases(dir, dir);
+    expect(aliases).toContainEqual({ find: "@", replacement: path.join(dir, "src") });
+    expect(aliases).toContainEqual({
+      find: "~components",
+      replacement: path.join(dir, "src/components"),
+    });
+  });
+
+  it("tolerates a JSONC tsconfig (comments + trailing commas)", async () => {
+    await write(
+      "tsconfig.json",
+      '{\n  // app config\n  "compilerOptions": {\n    "baseUrl": ".",\n    "paths": { "@/*": ["app/*"], },\n  },\n}',
+    );
+    const aliases = await readTsconfigAliases(dir, dir);
+    expect(aliases).toContainEqual({ find: "@", replacement: path.join(dir, "app") });
+  });
+
+  it("returns [] when there is no tsconfig or no paths", async () => {
+    expect(await readTsconfigAliases(dir, dir)).toEqual([]);
+    await write("tsconfig.json", JSON.stringify({ compilerOptions: {} }));
+    expect(await readTsconfigAliases(dir, dir)).toEqual([]);
+  });
+});
+
+describe("findPostcssConfigDir", () => {
+  it("finds a postcss config at the app root", async () => {
+    await write("postcss.config.js", "module.exports = {}");
+    expect(await findPostcssConfigDir(dir, dir)).toBe(dir);
+  });
+
+  it("finds a postcss config at a workspace root above the app", async () => {
+    await write("postcss.config.cjs", "module.exports = {}");
+    await write("apps/web/package.json", JSON.stringify({ dependencies: { react: "^18" } }));
+    const appRoot = path.join(dir, "apps/web");
+    expect(await findPostcssConfigDir(appRoot, dir)).toBe(dir);
+  });
+
+  it("detects a postcss key in package.json", async () => {
+    await write("package.json", JSON.stringify({ postcss: { plugins: {} } }));
+    expect(await findPostcssConfigDir(dir, dir)).toBe(dir);
+  });
+
+  it("returns null when there's no postcss config", async () => {
+    await write("package.json", JSON.stringify({ dependencies: {} }));
+    expect(await findPostcssConfigDir(dir, dir)).toBeNull();
   });
 });
