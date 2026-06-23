@@ -31,6 +31,8 @@ export interface LlmHarnessRequest {
   harnessRelDir: string;
   components: ComponentEntry[];
   port: number;
+  /** The framework we already detected, when known — a hint, not a constraint. */
+  frameworkHint?: string;
   /** A previous startup failure to repair, when this is a retry pass. */
   previousError?: string;
   env: Record<string, string>;
@@ -100,10 +102,13 @@ function userPrompt(req: LlmHarnessRequest): string {
   const lines = [
     `Harness directory (write everything here, relative to repo root): ${req.harnessRelDir}`,
     `The dev server must listen on port ${req.port} and bind host 0.0.0.0.`,
-    "",
-    "Changed components to preview in isolation:",
-    components,
   ];
+  if (req.frameworkHint) {
+    lines.push(
+      `Detected framework (a strong hint — verify, but a deterministic ${req.frameworkHint} template already failed to come up, so inspect why): ${req.frameworkHint}.`,
+    );
+  }
+  lines.push("", "Changed components to preview in isolation:", components);
   if (req.previousError) {
     lines.push(
       "",
@@ -114,6 +119,18 @@ function userPrompt(req: LlmHarnessRequest): string {
     );
   }
   return lines.join("\n");
+}
+
+// Wall-clock cap for ONE harness-generation pass. The preview is best-effort; it
+// must never hold the run hostage. Default 4 minutes, overridable.
+const DEFAULT_HARNESS_TIMEOUT_MS = 240_000;
+function runtimeHarnessTimeoutMs(env: Record<string, string>): number {
+  const raw = env.ANCHORAGE_RUNTIME_LLM_TIMEOUT_MS;
+  if (raw && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_HARNESS_TIMEOUT_MS;
 }
 
 /** Resolve the runtime role's LLM config, or null when none is configured. */
@@ -151,6 +168,10 @@ export async function generateHarnessWithLlm(
     capabilities: new Set(req.capabilities),
     env: req.env,
     temperature: 0.1,
+    // Bound the whole harness-generation loop. Combined with the per-request
+    // provider timeout, this guarantees the runtime gate can never hang — it
+    // finishes, fails cleanly, and the run continues. Overridable via env.
+    budget: { maxWallClockMs: runtimeHarnessTimeoutMs(req.env) },
     ...(req.onEvent ? { onEvent: req.onEvent } : {}),
   });
 

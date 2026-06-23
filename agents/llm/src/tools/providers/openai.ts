@@ -16,7 +16,7 @@ import {
   isTemperatureUnsupported,
   wantsMaxCompletionTokens,
 } from "./param-support.js";
-import { sendWithRateLimitRetry } from "./retry.js";
+import { fetchWithTimeout, sendWithRateLimitRetry } from "./retry.js";
 
 export interface OpenAiProviderConfig {
   apiKey: string;
@@ -70,7 +70,7 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         if (includeTemperature && typeof input.temperature === "number") {
           body.temperature = input.temperature;
         }
-        return fetch(`${baseUrl}/chat/completions`, {
+        return fetchWithTimeout(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${config.apiKey}`,

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { detectFrontendToolchain } from "../src/toolchain.js";
+import { detectFrontendToolchain, resolveFrontendToolchain } from "../src/toolchain.js";
 
 let dir: string;
 
@@ -28,12 +28,12 @@ describe("detectFrontendToolchain", () => {
     expect(await detectFrontendToolchain(dir)).toBeNull();
   });
 
-  it("returns null for a non-React project", async () => {
-    await pkg({ dependencies: { vue: "^3.0.0" } });
+  it("returns null for an unrecognized framework", async () => {
+    await pkg({ dependencies: { "@angular/core": "^18.0.0" } });
     expect(await detectFrontendToolchain(dir)).toBeNull();
   });
 
-  it("requires both react and react-dom", async () => {
+  it("requires both react and react-dom for react (but falls through to others)", async () => {
     await pkg({ dependencies: { react: "^18.0.0" } });
     expect(await detectFrontendToolchain(dir)).toBeNull();
   });
@@ -42,6 +42,24 @@ describe("detectFrontendToolchain", () => {
     await pkg({ dependencies: { react: "^18.0.0", "react-dom": "^18.0.0" } });
     const tc = await detectFrontendToolchain(dir);
     expect(tc?.framework).toBe("react");
+  });
+
+  it("detects Vue / Svelte / Solid / Preact", async () => {
+    await pkg({ dependencies: { vue: "^3.0.0" } });
+    expect((await detectFrontendToolchain(dir))?.framework).toBe("vue");
+    await pkg({ dependencies: { svelte: "^5.0.0" } });
+    expect((await detectFrontendToolchain(dir))?.framework).toBe("svelte");
+    await pkg({ dependencies: { "solid-js": "^1.8.0" } });
+    expect((await detectFrontendToolchain(dir))?.framework).toBe("solid");
+    await pkg({ dependencies: { preact: "^10.0.0" } });
+    expect((await detectFrontendToolchain(dir))?.framework).toBe("preact");
+  });
+
+  it("reports appRoot and installRoot at the detected dir", async () => {
+    await pkg({ dependencies: { react: "^18", "react-dom": "^18" } });
+    const tc = await detectFrontendToolchain(dir);
+    expect(tc?.appRoot).toBe(dir);
+    expect(tc?.installRoot).toBe(dir);
   });
 
   it("detects TypeScript via tsconfig.json", async () => {
@@ -91,5 +109,63 @@ describe("detectFrontendToolchain", () => {
     await pkg({ dependencies: { react: "^18", "react-dom": "^18" } });
     await write("tailwind.config.ts", "export default {}");
     expect((await detectFrontendToolchain(dir))?.hasTailwind).toBe(true);
+  });
+});
+
+describe("resolveFrontendToolchain (repo-agnostic)", () => {
+  it("finds a frontend app nested in a monorepo subdirectory", async () => {
+    // Root is NOT a frontend app — it's a workspace root.
+    await write(
+      "package.json",
+      JSON.stringify({ private: true, workspaces: ["apps/*", "packages/*"] }),
+    );
+    await write("pnpm-workspace.yaml", "packages:\n  - apps/*\n");
+    // The actual frontend lives in apps/web.
+    await write(
+      "apps/web/package.json",
+      JSON.stringify({ dependencies: { react: "^18", "react-dom": "^18" } }),
+    );
+    const component = path.join(dir, "apps/web/src/components/Button.tsx");
+    await write("apps/web/src/components/Button.tsx", "export default function Button() {}");
+
+    const tc = await resolveFrontendToolchain(dir, [component]);
+    expect(tc?.framework).toBe("react");
+    expect(tc?.appRoot).toBe(path.join(dir, "apps/web"));
+    // Deps install from the workspace root so hoisted packages resolve.
+    expect(tc?.installRoot).toBe(dir);
+  });
+
+  it("picks the app that owns the most changed components", async () => {
+    await write("package.json", JSON.stringify({ private: true, workspaces: ["apps/*"] }));
+    await write("apps/web/package.json", JSON.stringify({ dependencies: { vue: "^3" } }));
+    await write(
+      "apps/admin/package.json",
+      JSON.stringify({ dependencies: { react: "^18", "react-dom": "^18" } }),
+    );
+    await write("apps/web/src/A.vue", "");
+    await write("apps/web/src/B.vue", "");
+    await write("apps/admin/src/C.tsx", "export default function C() {}");
+
+    const tc = await resolveFrontendToolchain(dir, [
+      path.join(dir, "apps/web/src/A.vue"),
+      path.join(dir, "apps/web/src/B.vue"),
+      path.join(dir, "apps/admin/src/C.tsx"),
+    ]);
+    expect(tc?.framework).toBe("vue");
+    expect(tc?.appRoot).toBe(path.join(dir, "apps/web"));
+  });
+
+  it("scans for an app when no changed component sits under a framework package", async () => {
+    await write("package.json", JSON.stringify({ private: true }));
+    await write("frontend/package.json", JSON.stringify({ dependencies: { svelte: "^5" } }));
+    // Changed file is outside any framework package.
+    const tc = await resolveFrontendToolchain(dir, [path.join(dir, "docs/readme.tsx")]);
+    expect(tc?.framework).toBe("svelte");
+    expect(tc?.appRoot).toBe(path.join(dir, "frontend"));
+  });
+
+  it("returns null when the repo declares no recognized framework", async () => {
+    await write("package.json", JSON.stringify({ dependencies: { express: "^4" } }));
+    expect(await resolveFrontendToolchain(dir, [path.join(dir, "src/x.tsx")])).toBeNull();
   });
 });

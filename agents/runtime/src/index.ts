@@ -6,6 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import type { ToolEvent } from "@anchorage/agent-llm";
 import {
   buildRuntimePreview,
   ExitCode,
@@ -17,7 +18,14 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { classifyChange, skipReason } from "./classify.js";
-import { buildHarnessFiles, STORIES_DIR } from "./harness.js";
+import {
+  buildHarnessFiles,
+  buildStoryFor,
+  componentExtensionsFor,
+  hasTemplate,
+  runtimePackageName,
+  STORIES_DIR,
+} from "./harness.js";
 import { generateHarnessWithLlm, resolveRuntimeLlmConfig } from "./llm-harness.js";
 import {
   PREVIEW_MANIFEST_FILE,
@@ -26,8 +34,12 @@ import {
   serializePreviewManifest,
 } from "./manifest.js";
 import { publicPreviewUrl } from "./preview-url.js";
-import { buildFallbackStory, type ComponentEntry, isRenderableComponent } from "./stories.js";
-import { detectFrontendToolchain } from "./toolchain.js";
+import { type ComponentEntry, isRenderableComponent } from "./stories.js";
+import {
+  type FrontendToolchain,
+  resolveFrontendToolchain,
+  resolvePackageDir,
+} from "./toolchain.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -681,22 +693,36 @@ async function installStartProbe(
   return { ok: true, localUrl };
 }
 
-// Write the deterministic React-template harness (skeleton + no-prop stories).
-async function scaffoldReactTemplate(
-  workspacePath: string,
+// Write the deterministic framework-template harness (skeleton + no-prop
+// stories) for whatever framework the toolchain detected. Renders only the
+// components this framework can preview on its own (by file extension).
+async function scaffoldTemplate(
   harnessDir: string,
-  toolchain: Awaited<ReturnType<typeof detectFrontendToolchain>> & object,
+  toolchain: FrontendToolchain,
   components: ComponentEntry[],
   port: number,
 ): Promise<{ ok: true; count: number } | StartFailure> {
+  const renderable = new Set(componentExtensionsFor(toolchain.framework));
   const stories = components
-    .map(buildFallbackStory)
+    .filter((c) => renderable.has(path.extname(c.absPath).toLowerCase()))
+    .map((c) => buildStoryFor(toolchain.framework, c))
     .filter((story): story is NonNullable<typeof story> => story !== null);
   if (stories.length === 0)
     return { ok: false, error: "no detectable component exports to render" };
+  // Pin the framework runtime to the app's own copy so state works across the
+  // repo/harness module boundary (resolves through hoisted node_modules too).
+  const frameworkDir = await resolvePackageDir(
+    toolchain.appRoot,
+    toolchain.installRoot,
+    runtimePackageName(toolchain.framework),
+  );
+  const reactDomDir =
+    toolchain.framework === "react"
+      ? await resolvePackageDir(toolchain.appRoot, toolchain.installRoot, "react-dom")
+      : null;
   try {
     await fs.rm(harnessDir, { recursive: true, force: true });
-    for (const file of buildHarnessFiles({ toolchain, workspacePath, port })) {
+    for (const file of buildHarnessFiles({ toolchain, port, frameworkDir, reactDomDir })) {
       const dest = path.join(harnessDir, file.path);
       await fs.mkdir(path.dirname(dest), { recursive: true });
       await fs.writeFile(dest, file.content, "utf8");
@@ -748,16 +774,38 @@ async function runIsolatedPreview(
   }
 
   const port = Number(process.env.ANCHORAGE_RUNTIME_PORT) || DEFAULT_NODE_PREVIEW_PORT;
-  const harnessDir = path.join(workspacePath, ANCHORAGE_DIR, "preview");
+
+  // Find the frontend app REGARDLESS of repo layout: walk up from the changed
+  // components to the nearest framework package (handles monorepos with the app
+  // in a subdirectory), falling back to a tree scan. `appRoot` is where the
+  // harness lives and what the LLM inspects; `installRoot` is where deps install
+  // (a workspace/monorepo root when one exists).
+  const toolchain = await resolveFrontendToolchain(
+    workspacePath,
+    components.map((c) => c.absPath),
+  );
+  const appRoot = toolchain?.appRoot ?? workspacePath;
+  const installRoot = toolchain?.installRoot ?? workspacePath;
+  const harnessDir = path.join(appRoot, ANCHORAGE_DIR, "preview");
   const harnessRelDir = path.posix.join(ANCHORAGE_DIR, "preview");
 
+  if (toolchain) {
+    emit(task, "agent.progress", "info", `Detected ${toolchain.framework} app`, {
+      framework: toolchain.framework,
+      appRoot,
+      installRoot,
+      monorepo: appRoot !== workspacePath,
+    });
+  }
+
   // Repo deps must be installed: component imports (and the framework runtime the
-  // harness aliases) resolve against the repo's own node_modules.
-  const pm = await detectPackageManager(workspacePath);
+  // harness aliases) resolve against the app's own node_modules. In a workspace
+  // monorepo this installs from the workspace root so hoisted deps resolve.
+  const pm = toolchain?.packageManager ?? (await detectPackageManager(installRoot));
   const repoInstall = await runToCompletion(
     task,
     installCommand(pm),
-    workspacePath,
+    installRoot,
     INSTALL_TIMEOUT_MS,
   );
   if (!repoInstall.ok) {
@@ -779,13 +827,11 @@ async function runIsolatedPreview(
   // 1) Cache: reuse a previously-working harness, skipping the LLM. The template
   //    generator re-scaffolds deterministically (picks up this change's
   //    components); the LLM generator reuses the files already on disk.
-  const cached = await readManifest(workspacePath);
+  const cached = await readManifest(appRoot);
   if (cached) {
     let ready = false;
     if (cached.generator === "template") {
-      const tc = await detectFrontendToolchain(workspacePath);
-      ready =
-        !!tc && (await scaffoldReactTemplate(workspacePath, harnessDir, tc, components, port)).ok;
+      ready = !!toolchain && (await scaffoldTemplate(harnessDir, toolchain, components, port)).ok;
     } else {
       ready = await fileExists(path.join(harnessDir, "package.json"));
     }
@@ -808,49 +854,58 @@ async function runIsolatedPreview(
     }
   }
 
-  // 2) Fast path: the deterministic React template.
-  const toolchain = await detectFrontendToolchain(workspacePath);
-  if (toolchain) {
-    const scaffold = await scaffoldReactTemplate(
-      workspacePath,
-      harnessDir,
-      toolchain,
-      components,
-      port,
-    );
-    if (!scaffold.ok) return scaffold;
-    emit(
-      task,
-      "agent.progress",
-      "info",
-      `Scaffolded React preview for ${scaffold.count} component(s)`,
-      {
-        harnessDir,
-      },
-    );
-    const harnessInstall = installCommand(toolchain.packageManager);
-    const startCommand = `${toolchain.packageManager} run dev`;
-    const probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
-    if (probe.ok) {
-      const manifest: PreviewManifest = {
-        framework: "react",
-        generator: "template",
-        installCommand: harnessInstall,
-        startCommand,
-        port,
-      };
-      await writeManifest(workspacePath, manifest);
-      return ok(manifest, scaffold.count);
+  // 2) Fast path: the deterministic framework template (React/Preact/Vue/Svelte/
+  //    Solid). If it scaffolds and comes up, we're done — no LLM needed. If it
+  //    fails to build/start, we DON'T give up: we fall through to the LLM path
+  //    below, which can handle framework quirks the template missed.
+  if (toolchain && hasTemplate(toolchain.framework)) {
+    const scaffold = await scaffoldTemplate(harnessDir, toolchain, components, port);
+    if (scaffold.ok) {
+      emit(
+        task,
+        "agent.progress",
+        "info",
+        `Scaffolded ${toolchain.framework} preview for ${scaffold.count} component(s)`,
+        { harnessDir, framework: toolchain.framework },
+      );
+      const harnessInstall = installCommand(toolchain.packageManager);
+      const startCommand = `${toolchain.packageManager} run dev`;
+      const probe = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
+      if (probe.ok) {
+        const manifest: PreviewManifest = {
+          framework: toolchain.framework,
+          generator: "template",
+          installCommand: harnessInstall,
+          startCommand,
+          port,
+        };
+        await writeManifest(appRoot, manifest);
+        return ok(manifest, scaffold.count);
+      }
+      emit(
+        task,
+        "agent.progress",
+        "warn",
+        `${toolchain.framework} template did not come up; falling back to the LLM`,
+        { error: probe.error },
+      );
+    } else {
+      emit(task, "agent.progress", "warn", "Template scaffold skipped; trying the LLM", {
+        reason: scaffold.error,
+      });
     }
-    return { ok: false, error: probe.error };
   }
 
-  // 3) General path: the LLM builds a harness for whatever framework this is.
+  // 3) General path / safety net: the LLM builds a harness for whatever framework
+  //    this is (or repairs what the template couldn't bring up). Scoped to the
+  //    app root, with the detected framework as a hint, and observable via events.
   const config = resolveRuntimeLlmConfig();
   if (!config) {
     return {
       skip: true,
-      reason: "no template fits this repo and no LLM is configured for the runtime role",
+      reason: toolchain
+        ? `the ${toolchain.framework} template did not come up and no LLM is configured for the runtime role`
+        : "no template fits this repo and no LLM is configured for the runtime role",
     };
   }
   let previousError: string | undefined;
@@ -862,20 +917,28 @@ async function runIsolatedPreview(
       `Generating isolated preview with the LLM (attempt ${attempt})`,
       {
         components: components.length,
+        ...(toolchain ? { framework: toolchain.framework } : {}),
       },
     );
     const gen = await generateHarnessWithLlm(config, {
       task,
-      workspacePath,
+      workspacePath: appRoot,
       harnessRelDir,
       components,
       port,
       env: { ...process.env } as Record<string, string>,
       capabilities: new Set(task.capabilities ?? []),
+      // Surface the LLM's tool activity as progress so the run is never a silent
+      // black box (the old behavior that looked "frozen").
+      onEvent: (event) => emitLlmToolEvent(task, event),
+      ...(toolchain ? { frameworkHint: toolchain.framework } : {}),
       ...(previousError ? { previousError } : {}),
     });
     if (!gen.ok) {
       previousError = gen.error;
+      emit(task, "agent.progress", "warn", `LLM harness attempt ${attempt} failed`, {
+        error: gen.error,
+      });
       continue;
     }
     const probe = await installStartProbe(
@@ -893,12 +956,24 @@ async function runIsolatedPreview(
         startCommand: gen.startCommand,
         port,
       };
-      await writeManifest(workspacePath, manifest);
+      await writeManifest(appRoot, manifest);
       return ok(manifest, components.length);
     }
     previousError = probe.error;
   }
   return { ok: false, error: `LLM preview did not come up: ${previousError ?? "unknown error"}` };
+}
+
+// Bridge the LLM tool-loop's structured events into runtime progress events, so
+// the harness-generation phase is visible instead of looking frozen. Kept terse:
+// one progress line per tool call with a bounded payload.
+function emitLlmToolEvent(task: TaskEnvelope, event: ToolEvent): void {
+  if (event.kind === "tool.requested") {
+    emit(task, "agent.progress", "info", `LLM · ${event.tool}`, {
+      tool: event.tool,
+      turn: event.turn,
+    });
+  }
 }
 
 async function startStrategy(
