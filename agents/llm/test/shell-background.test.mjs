@@ -6,7 +6,7 @@
 // the backstop for any long-lived command that slips through.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { backgroundsAProcess } from "../dist/tools/builtin/shell.js";
+import { backgroundsAProcess, startsLongRunningServer } from "../dist/tools/builtin/shell.js";
 
 test("backgroundsAProcess flags background / daemon commands", () => {
   for (const cmd of [
@@ -34,5 +34,51 @@ test("backgroundsAProcess does NOT flag legitimate commands with & in redirects/
     "grep -r 'foo && bar' src",
   ]) {
     assert.equal(backgroundsAProcess(cmd), false, `should NOT flag: ${cmd}`);
+  }
+});
+
+test("startsLongRunningServer flags foreground dev/preview servers (no &)", () => {
+  for (const cmd of [
+    "npm run dev",
+    "yarn dev",
+    "pnpm run start",
+    "pnpm start",
+    "vite",
+    "vite dev",
+    "vite serve",
+    "vite preview",
+    "next dev",
+    "nuxt dev",
+    "astro dev",
+    "ng serve",
+    "react-scripts start",
+    "npx vite",
+    "pnpm dlx serve dist",
+    "vitest",
+    "vitest watch",
+    "cd frontend/.anchorage/preview && npm run dev",
+    "PORT=3101 npm run dev",
+  ]) {
+    assert.equal(startsLongRunningServer(cmd), true, `should flag: ${cmd}`);
+  }
+});
+
+test("startsLongRunningServer does NOT flag finite commands", () => {
+  for (const cmd of [
+    "npm install",
+    "npm install --no-workspaces --include=dev",
+    "npm run build",
+    "vite build",
+    "next build",
+    "astro build",
+    "vite --version",
+    "vitest run",
+    "npx tsc --noEmit",
+    "node --version",
+    "ls -la",
+    "cat package.json",
+    "cd app && npm ci",
+  ]) {
+    assert.equal(startsLongRunningServer(cmd), false, `should NOT flag: ${cmd}`);
   }
 });

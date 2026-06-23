@@ -159,6 +159,80 @@ export function backgroundsAProcess(command: string): boolean {
   return /&/.test(stripped);
 }
 
+// Dev-server / watcher launchers that run in the FOREGROUND and never exit.
+// Unlike a backgrounded job these have no `&`, so they pass backgroundsAProcess —
+// but they still never return, so shell_exec blocks until the timeout fires and
+// the model, seeing no result, retries: minutes of apparent "freeze". A preview
+// server belongs in the runtime/preview step (the caller starts it detached),
+// never in shell_exec. We refuse them up front so the model gets an instant,
+// actionable error instead of a timeout. Finite sibling commands of the same
+// tools (`vite build`, `next build`, `astro build`) are explicitly allowed.
+const DEV_SERVER_SUBCOMMANDS = new Set(["dev", "serve", "preview", "start", "develop", "watch"]);
+const FINITE_BUILD_SUBCOMMANDS = new Set(["build", "generate", "export", "optimize", "check"]);
+// Query flags that make even a dev-server binary finite (`vite --version`).
+const FINITE_QUERY_FLAGS = new Set(["--version", "-v", "--help", "-h", "--info"]);
+// Binaries that ARE a server when run with no/dev subcommand.
+const DEV_SERVER_BINARIES = new Set([
+  "vite",
+  "next",
+  "nuxt",
+  "astro",
+  "remix",
+  "gatsby",
+  "ng", // angular
+  "vue-cli-service",
+  "react-scripts",
+  "webpack-dev-server",
+  "webpack-serve",
+  "serve",
+  "http-server",
+  "live-server",
+  "nodemon",
+  "vitest", // `vitest` w/o `run` is watch mode
+]);
+
+/**
+ * Does the command start a long-running dev/preview server or watcher that won't
+ * exit on its own? Matches `<pm> run dev|start|serve|preview`, `<pm> dev|start`,
+ * `npx <devserver>`, and bare dev-server binaries — while allowing their finite
+ * `build`/`generate`/`run` forms. Conservative: inspects only the LAST simple
+ * command in a `cd x && …` / `… | …` chain (the one that actually runs).
+ */
+export function startsLongRunningServer(command: string): boolean {
+  // The launcher is the last segment of a `cd … && …` / pipe / sequence chain.
+  const segments = command.split(/&&|\|\||[;|]/);
+  const last = segments[segments.length - 1]?.trim() ?? "";
+  // Drop leading VAR=val env assignments, then tokenize.
+  const tokens = last.split(/\s+/).filter((t) => t.length > 0);
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? "")) i += 1;
+  if (i >= tokens.length) return false;
+
+  let bin = path.basename(tokens[i] ?? "");
+
+  // `npx <bin>` / `pnpm dlx <bin>` / `yarn dlx <bin>`: unwrap to the real binary.
+  if (bin === "npx") {
+    i += 1;
+  } else if (NODE_PMS.has(bin) && (tokens[i + 1] === "dlx" || tokens[i + 1] === "exec")) {
+    i += 2;
+  } else if (NODE_PMS.has(bin)) {
+    // `<pm> run <script>` or `<pm> <script>`.
+    let j = i + 1;
+    if (tokens[j] === "run") j += 1;
+    const sub = (tokens[j] ?? "").toLowerCase();
+    if (FINITE_BUILD_SUBCOMMANDS.has(sub)) return false;
+    return DEV_SERVER_SUBCOMMANDS.has(sub);
+  }
+  bin = path.basename(tokens[i] ?? "");
+  if (!DEV_SERVER_BINARIES.has(bin)) return false;
+
+  const sub = (tokens[i + 1] ?? "").toLowerCase();
+  if (FINITE_BUILD_SUBCOMMANDS.has(sub) || FINITE_QUERY_FLAGS.has(sub)) return false;
+  // `vitest run` is finite; bare `vitest` is watch mode.
+  if (bin === "vitest") return sub !== "run";
+  return true;
+}
+
 function buildArgv(
   command: unknown,
 ): { ok: true; argv: string[] } | { ok: false; message: string } {
@@ -175,6 +249,17 @@ function buildArgv(
           "it leaves a long-lived process that never returns a result and freezes the run. " +
           "Run finite commands only; start a dev/preview server through the preview/runtime " +
           "step, not shell_exec.",
+      };
+    }
+    if (startsLongRunningServer(trimmed)) {
+      return {
+        ok: false,
+        message:
+          "shell_exec: refusing to start a long-running dev/preview server (e.g. `npm run dev`, " +
+          "`vite`, `next dev`) — it never exits, so this call would block until timeout and the " +
+          "run appears frozen. You do NOT need to start it: write the harness files and finish by " +
+          "calling submit_preview with the install + start commands; the caller starts the server " +
+          "and reports back. Use shell_exec only for finite checks (install, build, --version).",
       };
     }
     return { ok: true, argv: ["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", trimmed] };
