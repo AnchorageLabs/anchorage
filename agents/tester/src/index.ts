@@ -71,14 +71,29 @@ async function main(): Promise<number> {
   if (!commands.ok && commands.code === "missing_commands") {
     const detected = await detectTestCommands(workspacePath);
     if (detected.length > 0) {
+      // Run only the project(s) the change touched, not the whole repo. The
+      // coder reports its changed files in code.change.result; map them to the
+      // deepest detected project root. Falls back to the full detected set when
+      // the change list is unavailable or maps to nothing.
+      const changedFiles = await readChangedFiles(task.value);
+      const { commands: scopedCommands, scoped } = scopeCommandsToChangedFiles(
+        detected,
+        changedFiles,
+      );
       commandSource = "detected";
-      commands = { ok: true, value: detected };
+      commands = { ok: true, value: scopedCommands };
       emit(
         task.value,
         "agent.output",
         "info",
-        "No test commands provided; detected from project manifests",
-        { detectedCommands: detected.map((c) => ({ name: c.name, command: c.command })) },
+        scoped
+          ? "No test commands provided; detected from project manifests and scoped to the changed project(s)"
+          : "No test commands provided; detected from project manifests",
+        {
+          detectedCommands: scopedCommands.map((c) => ({ name: c.name, command: c.command })),
+          scopedToChangedFiles: scoped,
+          changedFiles: changedFiles.length,
+        },
       );
     } else {
       const strict = /^(true|1|yes|on)$/i.test(
@@ -618,6 +633,62 @@ async function maybePostTestComment(task: TaskEnvelope, report: TestReport): Pro
     });
     // Non-fatal.
   }
+}
+
+/**
+ * Workspace-relative paths the coder reported changing, from the prior
+ * code.change.result artifact. Empty when unavailable — callers then fall back
+ * to the unscoped command set (never run nothing because the list was missing).
+ */
+async function readChangedFiles(task: TaskEnvelope): Promise<string[]> {
+  const artifact = task.context?.priorArtifacts?.find(
+    (a) => a.artifactType === "code.change.result",
+  );
+  if (!artifact?.uri.startsWith("file://")) return [];
+  try {
+    const raw = await fs.readFile(new URL(artifact.uri), "utf8");
+    const parsed = JSON.parse(raw) as { changedFiles?: unknown };
+    if (!Array.isArray(parsed.changedFiles)) return [];
+    return parsed.changedFiles
+      .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      .map((p) => p.replace(/^\.\//, "").replace(/^\/+/, ""));
+  } catch {
+    return [];
+  }
+}
+
+/** True when `cwd` (a project root) is `file`'s directory or an ancestor of it. */
+function dirCovers(cwd: string, file: string): boolean {
+  if (cwd === "." || cwd === "") return true;
+  const prefix = cwd.endsWith("/") ? cwd : `${cwd}/`;
+  return file === cwd || file.startsWith(prefix);
+}
+
+/**
+ * Narrow detected whole-repo commands to only the project(s) the change touched:
+ * for each changed file, keep the command whose root is the DEEPEST ancestor of
+ * it (so a package-level command wins over the monorepo-root aggregate). Returns
+ * the original set unchanged when there are no changed files or none map to a
+ * detected root — never returns an empty set, so the gate can't silently pass by
+ * running nothing.
+ */
+function scopeCommandsToChangedFiles(
+  commands: TestCommand[],
+  changedFiles: string[],
+): { commands: TestCommand[]; scoped: boolean } {
+  if (changedFiles.length === 0) return { commands, scoped: false };
+  const chosen = new Map<string, TestCommand>();
+  for (const file of changedFiles) {
+    let best: TestCommand | undefined;
+    for (const c of commands) {
+      const cwd = c.cwd ?? ".";
+      if (!dirCovers(cwd, file)) continue;
+      if (!best || cwd.length > (best.cwd ?? ".").length) best = c;
+    }
+    if (best) chosen.set(`${best.cwd ?? "."}|${best.command}`, best);
+  }
+  if (chosen.size === 0) return { commands, scoped: false };
+  return { commands: [...chosen.values()], scoped: true };
 }
 
 async function resolveIssueNumber(task: TaskEnvelope): Promise<null | number> {
