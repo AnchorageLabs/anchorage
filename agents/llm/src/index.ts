@@ -23,6 +23,7 @@ export {
 } from "./policy.js";
 export type { AgentRole } from "./role-defaults.js";
 export { ROLE_DEFAULTS } from "./role-defaults.js";
+export { webToolsEnabled } from "./tools/budget.js";
 export {
   contextRepoPromptBlock,
   contextReposFromEnvelope,
