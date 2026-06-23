@@ -67,11 +67,44 @@ async function main(): Promise<number> {
   const baseResult = await syncBaseBranch(task.value, input.value.workspacePath, baseBranch);
   if (!baseResult.ok) return fail(task.value, baseResult);
 
+  // Resolve the working branch. A feedback-correction run carries the original
+  // run's head in reuseBranch: when that head still exists on the remote, commit
+  // onto it (preserveExisting checks it out from origin) so the SAME PR updates.
+  // When it is gone (e.g. the original PR was merged and the branch deleted),
+  // fall back to the run-scoped branch the plan already carries — a fresh PR.
+  let preserveExisting = input.value.revisionRequest !== null;
+  if (input.value.reuseBranch) {
+    if (await remoteBranchExists(input.value.workspacePath, input.value.reuseBranch)) {
+      input.value.plan.branchName = input.value.reuseBranch;
+      preserveExisting = true;
+      emit(
+        task.value,
+        "agent.progress",
+        "info",
+        `Reusing branch ${input.value.reuseBranch} from the run being corrected`,
+        {
+          branchName: input.value.reuseBranch,
+        },
+      );
+    } else {
+      emit(
+        task.value,
+        "agent.progress",
+        "warn",
+        `Branch ${input.value.reuseBranch} no longer exists on the remote; opening a fresh branch and PR`,
+        {
+          branchName: input.value.reuseBranch,
+          fallbackBranch: input.value.plan.branchName,
+        },
+      );
+    }
+  }
+
   const branchResult = await ensureBranch(
     task.value,
     input.value.workspacePath,
     input.value.plan.branchName,
-    { preserveExisting: input.value.revisionRequest !== null },
+    { preserveExisting },
   );
   if (!branchResult.ok) return fail(task.value, branchResult);
 
@@ -237,6 +270,11 @@ async function resolveCoderInput(
     ? withPreviousChangeBranch(plan.value, previousCodeChange)
     : plan.value;
 
+  const reuseBranch =
+    typeof task.input.reuseBranch === "string" && task.input.reuseBranch.trim().length > 0
+      ? task.input.reuseBranch.trim()
+      : null;
+
   return {
     ok: true,
     value: {
@@ -246,6 +284,7 @@ async function resolveCoderInput(
       triageResult,
       revisionRequest,
       previousCodeChange,
+      reuseBranch,
     },
   };
 }
@@ -1148,6 +1187,16 @@ function authenticatedPushUrl(origin: string, token: string | undefined): null |
  * `origin` remote when there's no token or the remote isn't a GitHub URL (so SSH
  * and token-less local setups keep working unchanged).
  */
+/** Whether `branch` exists on the remote — decides reuse-vs-fresh for a
+ *  feedback correction. ls-remote prints one ref line when the head is present;
+ *  any failure (no remote/token, network) is treated as "gone" so the run still
+ *  proceeds on a fresh branch rather than failing. */
+async function remoteBranchExists(workspacePath: string, branch: string): Promise<boolean> {
+  const { remote } = await authenticatedFetchRemote(workspacePath);
+  const result = await runGit(workspacePath, ["ls-remote", "--heads", remote, branch]);
+  return result.exitCode === 0 && result.stdout.trim().length > 0;
+}
+
 async function authenticatedFetchRemote(
   workspacePath: string,
 ): Promise<{ remote: string; token: string | undefined }> {
@@ -1301,6 +1350,11 @@ interface CoderInput {
   triageResult: JsonObject | null;
   revisionRequest: JsonObject | null;
   previousCodeChange: JsonObject | null;
+  // A feedback-correction run carries the original run's HEAD branch: commit onto
+  // it (so its PR updates in place) instead of minting a new run-scoped branch.
+  // Empty/absent on a normal run. The coder falls back to the run-scoped branch
+  // when this head no longer exists on the remote (e.g. the PR was merged).
+  reuseBranch: string | null;
 }
 
 interface CommandResult {
