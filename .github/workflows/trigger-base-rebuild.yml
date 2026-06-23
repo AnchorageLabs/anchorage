@@ -1,0 +1,38 @@
+name: trigger-base-rebuild
+
+# When anchorage main changes, rebuild the orchestrator's base image so the
+# baked agent code (coder, runtime, tester, …) tracks anchorage main. The
+# orchestrator pins ANCHORAGE_REF=main (no SHA), so this dispatch is all that's
+# needed — build-base re-pulls main's current tip, and on its completion the
+# orchestrator's build-and-deploy redeploys ECS from the fresh base.
+on:
+  push:
+    branches: ["main"]
+    # Docs-only changes don't affect what the orchestrator bakes — skip the
+    # (slow) base rebuild + redeploy for them.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+
+# One rebuild trigger at a time; the newest main wins.
+concurrency:
+  group: trigger-orchestrator-base
+  cancel-in-progress: true
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch orchestrator build-base
+        env:
+          # PAT / fine-grained token with `actions: write` on
+          # AnchorageLabs/anchorage-orchestrator. The default GITHUB_TOKEN cannot
+          # dispatch workflows in another repository.
+          GH_TOKEN: ${{ secrets.ORCHESTRATOR_DISPATCH_PAT }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-base.yml \
+            --repo AnchorageLabs/anchorage-orchestrator \
+            --ref main
+          echo "Dispatched orchestrator build-base (anchorage @ ${GITHUB_SHA})" >>"$GITHUB_STEP_SUMMARY"
