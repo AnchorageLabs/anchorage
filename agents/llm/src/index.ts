@@ -235,6 +235,7 @@ export function providerFromLlmConfig(config: LlmConfig): LlmResult<ProviderAdap
           apiKey: config.apiKey,
           model: config.model,
           baseUrl: config.baseUrl,
+          promptCache: process.env.ANCHORAGE_LLM_PROMPT_CACHE !== "false",
         }),
       };
     case "aws-bedrock":
