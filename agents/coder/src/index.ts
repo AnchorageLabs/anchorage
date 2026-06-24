@@ -1160,16 +1160,82 @@ async function pushBranch(
 }
 
 function commitMessage(plan: ImplementationPlan): string {
-  const subject = truncate(
+  const rawSubject =
     (plan.goal || plan.summary || "Apply agent code changes").split("\n")[0]?.trim() ||
-      "Apply agent code changes",
-    72,
-  );
+    "Apply agent code changes";
+  const subject = conventionalSubject(rawSubject, plan);
   const body = plan.summary?.trim();
   const parts = [subject];
   if (body && body !== subject) parts.push("", body);
   parts.push("", `Plan: ${plan.planId}`);
   return parts.join("\n");
+}
+
+// Conventional Commits types accepted by repos that enforce a commit-msg policy
+// (e.g. teramot-aleph's validate-commits CI job rejects any subject that isn't
+// `<type>(<scope>)?!?: <subject>`). Keep this list in sync with that validator.
+const CONVENTIONAL_TYPES = [
+  "feat",
+  "fix",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+  "chore",
+  "revert",
+] as const;
+
+const CONVENTIONAL_SUBJECT_RE = new RegExp(
+  `^(${CONVENTIONAL_TYPES.join("|")})(\\([^)]+\\))?!?: .+`,
+);
+
+// Pick a Conventional Commits type for the message. The planner already encodes
+// one in the branch prefix (buildBranchName: feat/ fix/ chore/ …), so prefer that
+// for consistency with the branch; otherwise infer from the goal/summary text and
+// fall back to "fix" (the planner's own default).
+function inferCommitType(plan: ImplementationPlan): string {
+  const branchPrefix = new RegExp(`^(${CONVENTIONAL_TYPES.join("|")})/`).exec(
+    plan.branchName ?? "",
+  )?.[1];
+  if (branchPrefix) return branchPrefix;
+  const text = `${plan.goal ?? ""} ${plan.summary ?? ""}`.toLowerCase();
+  if (/\b(add|introduce|implement|support|create)\b/.test(text)) return "feat";
+  if (/\b(readme|docs?|documentation|comment)\b/.test(text)) return "docs";
+  if (/\b(refactor|rename|restructure|extract|move)\b/.test(text)) return "refactor";
+  if (/\b(test|spec|coverage)\b/.test(text)) return "test";
+  if (/\b(perf|performance|optimi[sz]e|speed)\b/.test(text)) return "perf";
+  if (/\b(bump|upgrade|dependenc|chore)\b/.test(text)) return "chore";
+  return "fix";
+}
+
+// Force the subject into Conventional Commits shape. The commit is created here
+// in the agent, so the message must comply BEFORE it reaches a repo whose
+// commit-msg hook validates it — otherwise the push fails CI (the failure that
+// motivated this: free-prose subjects like "Fix two incorrect placeholder
+// values…" never carry a lowercase `<type>:` prefix). An already-compliant
+// subject is returned untouched.
+function conventionalSubject(rawSubject: string, plan: ImplementationPlan): string {
+  const trimmed = rawSubject.trim();
+  if (CONVENTIONAL_SUBJECT_RE.test(trimmed)) return truncate(trimmed, 72);
+  const type = inferCommitType(plan);
+  // Drop a leading verb that merely restates the type ("Fix …" under `fix:`).
+  const description =
+    trimmed
+      .replace(
+        /^(add|added|adds|fix|fixed|fixes|update|updated|updates|implement|implemented|refactor|refactored|remove|removed|removes|change|changed|changes)\b[:\s]*/i,
+        "",
+      )
+      .trim() || trimmed;
+  // Lowercase the first letter for the canonical style, but leave acronyms
+  // (CSV, README, API, SQL…) intact — a second uppercase letter signals one.
+  const subject = /^[A-Z][A-Z]/.test(description)
+    ? description
+    : description.charAt(0).toLowerCase() + description.slice(1);
+  // The 72-char budget includes the "<type>: " prefix.
+  return truncate(`${type}: ${subject}`, 72);
 }
 
 function authenticatedPushUrl(origin: string, token: string | undefined): null | string {
