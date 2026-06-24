@@ -72,7 +72,15 @@ async function main(): Promise<number> {
   // onto it (preserveExisting checks it out from origin) so the SAME PR updates.
   // When it is gone (e.g. the original PR was merged and the branch deleted),
   // fall back to the run-scoped branch the plan already carries — a fresh PR.
-  let preserveExisting = input.value.revisionRequest !== null;
+  //
+  // A revision request means "preserve the existing branch" ONLY when that branch
+  // actually exists on the remote (an in-loop retry that already pushed once). A
+  // revision request on a FRESH branch — e.g. the review-pr flow, where the
+  // reviewer's findings drive the very first coding pass — must CREATE the branch,
+  // not check out a pathspec that does not exist yet.
+  let preserveExisting =
+    input.value.revisionRequest !== null &&
+    (await remoteBranchExists(input.value.workspacePath, input.value.plan.branchName));
   if (input.value.reuseBranch) {
     if (await remoteBranchExists(input.value.workspacePath, input.value.reuseBranch)) {
       input.value.plan.branchName = input.value.reuseBranch;
