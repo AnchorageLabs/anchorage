@@ -67,6 +67,7 @@ Commands:
   auth whoami                Show the credential the server sees
   runs list                  List recent runs
   runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b] [--llm-provider p] [--llm-model m]
+  runs review <pr> --repo <o/r>  Review a PR by number: post a review + open a stacked fix-PR with the must-fix changes
   runs status <id>           Show a run's status
   runs watch <id>            Stream a run's events until it ends
   runs approve <id>          Approve a paused run
@@ -231,6 +232,25 @@ async function main(): Promise<number> {
         ...(str(flags, "bitbucket-issue") ? { bitbucketIssue: str(flags, "bitbucket-issue") } : {}),
         ...(str(flags, "workflow") ? { pipeline: str(flags, "workflow") } : {}),
         ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
+        ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
+        ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
+      });
+      out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
+      return 0;
+    }
+    case "runs review": {
+      const repo = str(flags, "repo");
+      const [owner, name] = repo?.split("/") ?? [];
+      if (!owner || !name) return usageErr("runs review <pr-number> --repo <owner/name>");
+      const prNumber = Number(rest[0]);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        return usageErr("runs review <pr-number> --repo <owner/name>");
+      }
+      const run = await client.triggerRun({
+        owner,
+        repo: name,
+        prNumber,
+        pipeline: "review-pr",
         ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
         ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
       });

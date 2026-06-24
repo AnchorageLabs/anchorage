@@ -80,6 +80,7 @@ export interface TriggerParams {
   branch?: string;
   issue?: number;
   instruction?: string;
+  prNumber?: number;
   notionPage?: string;
   jiraIssue?: string;
   linearIssue?: string;
