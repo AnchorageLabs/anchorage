@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-24 — OpenAI-compatible providers get prompt-caching parity with Anthropic/Bedrock.
+
+**Intent:** The OpenAI provider was never wired for prompt caching — `providerFromLlmConfig` passed the `promptCache` flag to the Anthropic and Bedrock providers but not to OpenAI, and the provider ignored it. So a run on an OpenAI-compatible model (OpenAI, DeepSeek, Kimi/Moonshot) re-billed its full, stable system+tools prefix every turn, which is how a non-Anthropic run burned millions of input tokens across a handful of calls. The provider now (1) sends a `prompt_cache_key` derived from the run's stable prefix (system prompt + tool catalog) so every turn routes to one cache — the OpenAI-compatible analogue of the Anthropic `cache_control` breakpoint — honouring the `ANCHORAGE_LLM_PROMPT_CACHE` opt-out, and (2) reads cache-hit tokens from both the OpenAI (`prompt_tokens_details.cached_tokens`) and DeepSeek (`prompt_cache_hit_tokens`) usage shapes, so a DeepSeek run no longer looks 100% uncached.
+
+**Files touched:**
+- agents/llm/src/tools/providers/openai.ts
+- agents/llm/src/index.ts
+- agents/llm/test/openai-prompt-cache.test.mjs
+
+**Reason:** Historical-runs RDS audit, 2026-06-24 — non-Anthropic models showed multi-million-token input with no cache reporting, a context-inflation symptom of missing prompt caching.
+
+**Author:** Sol Soletti
+
 ### 2026-06-23 — CI coverage step has the required `@vitest/coverage-v8` dependency.
 
 **Intent:** The `Run tests with coverage` CI step was failing on every PR with `Cannot find dependency '@vitest/coverage-v8'`, blocking merges. The dependency is now declared in `sdk/typescript` at the same version as the repo's Vitest (`4.1.7`) so coverage runs succeed.
