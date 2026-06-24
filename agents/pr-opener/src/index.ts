@@ -104,7 +104,11 @@ async function main(): Promise<number> {
     return ExitCode.Success;
   }
 
-  const prContent = await generatePrContent(task.value, input.value);
+  // Resolve who triggered the run for the PR's "Requested by" line + assignee.
+  // Probing the name as a GitHub login decides BOTH: a real login is @-mentioned
+  // and assigned; anything else is recorded as plain text with no assignee.
+  const requester = await resolveRequester(octokit, input.value.requestedBy);
+  const prContent = await generatePrContent(task.value, input.value, requester?.display ?? null);
 
   const existingBeforeCreate = await findOpenPrForBranch(octokit, owner, repoName, branchName);
   if (existingBeforeCreate) {
@@ -186,6 +190,40 @@ async function main(): Promise<number> {
     output: { prNumber, prUrl, branchName, baseBranch, reused },
   });
 
+  // Assign the requester (best-effort): the "Requested by" line in the body is
+  // the durable record, but seeding the assignee is convenient. Non-fatal — a
+  // requester without repo access just won't be assigned, and the PR stands.
+  if (requester?.assignee) {
+    try {
+      await octokit.issues.addAssignees({
+        owner,
+        repo: repoName,
+        issue_number: prNumber,
+        assignees: [requester.assignee],
+      });
+      emit(
+        task.value,
+        "tool.result",
+        "info",
+        `Assigned @${requester.assignee} to PR #${prNumber}`,
+        {
+          tool: "github.issues.addAssignees",
+          success: true,
+          output: { prNumber, assignee: requester.assignee },
+        },
+      );
+    } catch (error) {
+      emit(task.value, "tool.result", "warn", "Could not set PR assignee (non-fatal)", {
+        tool: "github.issues.addAssignees",
+        success: false,
+        output: {
+          assignee: requester.assignee,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
   const output: PrOpenedResult = {
     prNumber,
     prUrl,
@@ -207,11 +245,38 @@ async function main(): Promise<number> {
   return ExitCode.Success;
 }
 
+// ── Requester attribution ─────────────────────────────────────────────────────
+
+/**
+ * Resolve how to credit the run's requester. Probes the name against the GitHub
+ * users API: a real login is @-mentioned in the body and returned as an
+ * assignee; anything else (a tenant display name that isn't a GitHub handle) is
+ * recorded as plain text with no assignee. Returns null when there's no human to
+ * credit. Best-effort — a probe error degrades to plain text, never throws.
+ */
+async function resolveRequester(
+  octokit: Octokit,
+  requestedBy: string | null,
+): Promise<{ display: string; assignee: string | null } | null> {
+  if (!requestedBy) return null;
+  try {
+    await octokit.users.getByUsername({ username: requestedBy });
+    return { display: `@${requestedBy}`, assignee: requestedBy };
+  } catch {
+    // Not a resolvable GitHub login (404) or the API was unreachable: keep the
+    // durable text record, skip the @-mention and the assignee.
+    return { display: requestedBy, assignee: null };
+  }
+}
+
 // ── PR content generation via LLM ────────────────────────────────────────────
 
 async function generatePrContent(
   task: TaskEnvelope,
   input: PrOpenerInput,
+  // How to credit the requester in the body ("@handle" if a real GitHub login,
+  // else the plain name); null to omit the line entirely.
+  requestedByDisplay: string | null,
 ): Promise<{ title: string; body: string }> {
   // Use the shared LLM adapter so the title/body respect the configured provider
   // (ANCHORAGE_LLM_PROVIDER: anthropic/openai/bedrock/...). The previous
@@ -220,7 +285,7 @@ async function generatePrContent(
   const config = resolveLlmConfig(ROLE_DEFAULTS["pr-opener"]);
   if (!config.ok) {
     // No LLM configured at all — deterministic fallback title/body.
-    return fallbackPrContent(input);
+    return fallbackPrContent(input, requestedByDisplay);
   }
 
   emit(task, "tool.requested", "info", "Generating PR title and body via LLM", {
@@ -239,11 +304,11 @@ async function generatePrContent(
       success: false,
       output: { error: response.message, fallback: true },
     });
-    return fallbackPrContent(input);
+    return fallbackPrContent(input, requestedByDisplay);
   }
 
   const parsed = parsePrContentJson(response.value.text);
-  if (!parsed) return fallbackPrContent(input);
+  if (!parsed) return fallbackPrContent(input, requestedByDisplay);
 
   emit(task, "tool.result", "info", "LLM PR content generated", {
     tool: config.value.tool,
@@ -251,7 +316,7 @@ async function generatePrContent(
     output: { ...llmEventInput(config.value), titleLength: parsed.title.length },
   });
 
-  return assemblePrContent(parsed, input.codeChangeResult);
+  return assemblePrContent(parsed, input.codeChangeResult, requestedByDisplay);
 }
 
 function prContentSystemPrompt(): string {
@@ -319,6 +384,7 @@ function parsePrContentJson(text: string): PrContentRaw | null {
 function assemblePrContent(
   content: PrContentRaw,
   codeChange: CodeChangeInput,
+  requestedByDisplay: string | null,
 ): { title: string; body: string } {
   const lines: string[] = [];
 
@@ -355,12 +421,16 @@ function assemblePrContent(
   }
 
   lines.push("---");
+  if (requestedByDisplay) lines.push(`Requested by: ${requestedByDisplay}`);
   lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
 
   return { title: content.title.trim(), body: lines.join("\n") };
 }
 
-function fallbackPrContent(input: PrOpenerInput): { title: string; body: string } {
+function fallbackPrContent(
+  input: PrOpenerInput,
+  requestedByDisplay: string | null,
+): { title: string; body: string } {
   const { codeChangeResult } = input;
   const title = buildFallbackTitle(codeChangeResult);
   const lines: string[] = [];
@@ -381,6 +451,7 @@ function fallbackPrContent(input: PrOpenerInput): { title: string; body: string 
   }
 
   lines.push("---");
+  if (requestedByDisplay) lines.push(`Requested by: ${requestedByDisplay}`);
   lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
 
   return { title, body: lines.join("\n") };
@@ -498,8 +569,18 @@ async function resolvePrOpenerInput(
       baseBranch: task.repository.defaultBranch ?? "main",
       codeChangeResult: codeChangeResult.value,
       plan,
+      requestedBy: humanRequester(task.actor?.requestedBy),
     },
   };
+}
+
+// The "Requested by" line credits a HUMAN/tenant. Automation sentinels
+// ("server", the temporal-trigger default) are not people, so they're dropped —
+// the PR simply omits the line rather than crediting a robot.
+function humanRequester(requestedBy: string | undefined): string | null {
+  const v = requestedBy?.trim();
+  if (!v || v === "server" || v === "temporal-trigger") return null;
+  return v;
 }
 
 function resolveWorkspacePath(value: JsonValue | undefined): null | string {
@@ -817,6 +898,9 @@ interface PrOpenerInput {
   baseBranch: string;
   codeChangeResult: CodeChangeInput;
   plan: JsonObject | null;
+  /** Who triggered the run (the orchestrator client's name), for the PR's
+   * "Requested by" line. null for admin/automation-started runs. */
+  requestedBy: string | null;
 }
 
 interface CodeChangeInput {
