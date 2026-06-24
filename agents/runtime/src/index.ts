@@ -120,6 +120,45 @@ async function main(): Promise<number> {
       return finishNotApplicable(task.value, skipReason(kind, changedFiles));
     }
 
+    // Static, no-build site: serve the REAL page (faithful, instant, secretless)
+    // instead of synthesizing an isolated harness. Only when there's no JS build
+    // toolchain — real framework apps still take the isolated path below. If the
+    // serve can't start here (e.g. python3 missing), fall through rather than
+    // strand the change with no preview at all.
+    if (!(await hasJsBuildToolchain(workspacePath, changedFiles))) {
+      const site = await detectStaticSiteFor(workspacePath, changedFiles);
+      if (site) {
+        const port = Number(process.env.ANCHORAGE_RUNTIME_PORT) || 8080;
+        const strategy: RuntimeStrategy = {
+          kind: "static",
+          startCommand: `python3 -m http.server ${port}`,
+          port,
+          url: `http://localhost:${port}/${site.openPath}`,
+        };
+        const started = await startStrategy(task.value, strategy, site.serveDir);
+        if (started.ok) {
+          const preview = buildRuntimePreview({
+            status: "running",
+            summary: `Serving the static site at ${started.previewUrl} — the real page (with the changed file) is rendered for inspection before merge.`,
+            previewUrl: started.previewUrl,
+            strategy,
+          });
+          await emitPreview(task.value, preview, "info");
+          emit(task.value, "agent.completed", "info", "runtime started a static-site preview", {
+            previewUrl: started.previewUrl,
+          });
+          return ExitCode.Success;
+        }
+        emit(
+          task.value,
+          "agent.progress",
+          "warn",
+          "Static-site preview could not start here; falling back",
+          { error: started.error },
+        );
+      }
+    }
+
     // Visual change: render the changed components in isolation (a throwaway
     // harness with mock data) so a real product never has to boot with secrets it
     // doesn't have here. We NEVER boot the real app for a visual change — on any
@@ -164,9 +203,12 @@ async function main(): Promise<number> {
         return ExitCode.Success;
       }
       const reason = "skip" in isolated ? isolated.reason : isolated.error;
-      return finishNotApplicable(
+      // A VISUAL change that no path could preview is a real coverage gap — not a
+      // bland "nothing to see here". Surface it as a warning so it isn't silently
+      // mistaken for a clean pass; the PR still opens, but UNVERIFIED by preview.
+      return finishVisualUnverified(
         task.value,
-        `Could not render this change in isolation (${reason}). Skipping the visual gate — the PR still opens.`,
+        `This visual change could not be previewed (${reason}). The PR opens, but the change is UNVERIFIED by preview.`,
       );
     }
   }
@@ -256,6 +298,21 @@ async function finishNotApplicable(task: TaskEnvelope, summary: string): Promise
   const preview = buildRuntimePreview({ status: "not_applicable", summary });
   await emitPreview(task, preview, "info");
   emit(task, "agent.completed", "info", "runtime not applicable; continuing", { summary });
+  return ExitCode.Success;
+}
+
+/**
+ * Like {@link finishNotApplicable}, but for a VISUAL change that genuinely should
+ * have been previewable and wasn't. Reported at `warn` so the coverage gap is
+ * visible in the event stream / PR rather than blending in with "nothing to run".
+ * Still non-blocking: the pipeline continues and the PR opens.
+ */
+async function finishVisualUnverified(task: TaskEnvelope, summary: string): Promise<number> {
+  const preview = buildRuntimePreview({ status: "not_applicable", summary });
+  await emitPreview(task, preview, "warn");
+  emit(task, "agent.completed", "warn", "visual change UNVERIFIED by preview; continuing", {
+    summary,
+  });
   return ExitCode.Success;
 }
 
@@ -631,6 +688,64 @@ async function detectStatic(workspacePath: string): Promise<RuntimeStrategy | nu
     port,
     url: `http://localhost:${port}`,
   };
+}
+
+// ── Static-site visual preview ────────────────────────────────────────────────
+// For a visual change in a repo with NO JavaScript build step (plain HTML/CSS,
+// or .jsx transpiled in-browser via a CDN Babel — e.g. a marketing-site
+// monorepo), the REAL page IS the faithful preview: it serves in <1s with no
+// secrets, no install, no build. Synthesizing an isolated component harness for
+// such a site is both wrong (it can't render a plain .html change at all) and
+// wasteful (it burns the LLM-harness budget trying to mock globals the page
+// supplies itself). So we serve the real site directly and skip the harness.
+
+/**
+ * True when the repo has a JS build toolchain we should drive instead of serving
+ * raw files: a runnable package.json (dev/start/serve) OR a resolvable frontend
+ * framework near the changed files. When false, the change is best previewed by
+ * serving the static site as-is.
+ */
+async function hasJsBuildToolchain(
+  workspacePath: string,
+  changedFiles: string[],
+): Promise<boolean> {
+  if (await detectNode(workspacePath)) return true;
+  const toolchain = await resolveFrontendToolchain(
+    workspacePath,
+    changedFiles.map((rel) => path.join(workspacePath, rel)),
+  );
+  return !!toolchain;
+}
+
+/**
+ * Pick the static site to serve for a visual change. Walks up from each changed
+ * file to the nearest `index.html` so a `sites/<name>/` monorepo serves the
+ * right folder (and not the whole repo root, which has no page). `serveDir` is
+ * the directory to run the static server in; `openPath` is the page to open —
+ * the changed file itself when it's an HTML page, else the folder's index.
+ */
+export async function detectStaticSiteFor(
+  workspacePath: string,
+  changedFiles: string[],
+): Promise<{ serveDir: string; openPath: string } | null> {
+  const root = path.resolve(workspacePath);
+  for (const rel of changedFiles) {
+    let dir = path.dirname(path.resolve(workspacePath, rel));
+    // Stay within the workspace; never escape above the repo root.
+    while (dir.startsWith(root)) {
+      if (await fileExists(path.join(dir, "index.html"))) {
+        const openPath = /\.html?$/i.test(rel)
+          ? path.relative(dir, path.resolve(workspacePath, rel)) || "index.html"
+          : "index.html";
+        return { serveDir: dir, openPath };
+      }
+      if (dir === root) break;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
 }
 
 // ── Start + readiness ─────────────────────────────────────────────────────────
@@ -1015,9 +1130,15 @@ async function runIsolatedPreview(
         // cards. The LLM cache has no probe, so trust it as before.
         if (cached.generator === "template" && unrendered.length > 0 && llmConfigured) {
           templateRenderFailures = unrendered;
-          emit(task, "agent.progress", "info", "Cached template can't render some cards; regenerating", {
-            unrendered: unrendered.map((u) => u.name),
-          });
+          emit(
+            task,
+            "agent.progress",
+            "info",
+            "Cached template can't render some cards; regenerating",
+            {
+              unrendered: unrendered.map((u) => u.name),
+            },
+          );
         } else {
           return ok(cached, components.length, unrendered);
         }
@@ -1070,7 +1191,13 @@ async function runIsolatedPreview(
         );
         const isolated = await scaffoldTemplate(harnessDir, toolchain, components, port, false);
         if (isolated.ok) {
-          const retry = await installStartProbe(task, harnessDir, harnessInstall, startCommand, port);
+          const retry = await installStartProbe(
+            task,
+            harnessDir,
+            harnessInstall,
+            startCommand,
+            port,
+          );
           if (retry.ok) {
             probe = retry;
             count = isolated.count;
