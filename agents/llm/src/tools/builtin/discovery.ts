@@ -2,6 +2,32 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { JsonObject, ToolContext, ToolDefinition, ToolHandlerResult } from "../types.js";
 
+// Discovery results are deterministic for a given tree, but the model re-calls
+// detect_project / read_repo_manifest once per pipeline step (planner → coder →
+// reviewer …), each costing a tool turn for identical output. We can't stop the
+// model from asking, but we can make a repeat ask free: memoize per workspace,
+// invalidated when a manifest's mtime changes (e.g. the coder edits package.json
+// mid-run). The worker runs a pipeline's steps in one process, so the cache
+// spans steps. Keyed on the manifests each tool actually reads — cheap stats,
+// no false reuse across edits. Fails open: a stat error skips the cache.
+interface MemoEntry<T> {
+  sig: string;
+  value: T;
+}
+const detectProjectMemo = new Map<string, MemoEntry<ToolHandlerResult>>();
+const repoManifestMemo = new Map<string, MemoEntry<ToolHandlerResult>>();
+
+/** Concatenated mtimes of the given files (missing → "0"); a tree-state signature. */
+async function mtimeSignature(workspacePath: string, files: string[]): Promise<string> {
+  const parts = await Promise.all(
+    files.map(async (f) => {
+      const s = await stat(path.join(workspacePath, f)).catch(() => null);
+      return s ? String(s.mtimeMs) : "0";
+    }),
+  );
+  return parts.join("|");
+}
+
 interface ManifestProbe {
   filename: string;
   language: string;
@@ -87,6 +113,21 @@ const MANIFEST_DOC_CANDIDATES = [
 // ── detect_project ──────────────────────────────────────────────────────────
 
 async function detectProjectHandler(
+  input: JsonObject,
+  ctx: ToolContext,
+): Promise<ToolHandlerResult> {
+  const sig = await mtimeSignature(
+    ctx.workspacePath,
+    MANIFEST_PROBES.map((p) => p.filename),
+  );
+  const hit = detectProjectMemo.get(ctx.workspacePath);
+  if (hit && hit.sig === sig) return hit.value;
+  const value = await detectProjectUncached(input, ctx);
+  detectProjectMemo.set(ctx.workspacePath, { sig, value });
+  return value;
+}
+
+async function detectProjectUncached(
   _input: JsonObject,
   ctx: ToolContext,
 ): Promise<ToolHandlerResult> {
@@ -227,7 +268,9 @@ export const detectProjectTool: ToolDefinition = {
   description:
     "Inspect the workspace root for known manifest files (package.json, go.mod, Cargo.toml, " +
     "pyproject.toml, pom.xml, Gemfile, etc.) and infer language, package manager, and " +
-    "test/build/lint commands. Always safe to call once at the start of a run.",
+    "test/build/lint commands. If a 'REPO CONTEXT' block is already in your system prompt, " +
+    "the stack and commands are there — do NOT call this; only use it when that block is " +
+    "absent or you need to confirm a manifest the block did not cover.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -240,6 +283,18 @@ export const detectProjectTool: ToolDefinition = {
 // ── read_repo_manifest ──────────────────────────────────────────────────────
 
 async function readRepoManifestHandler(
+  input: JsonObject,
+  ctx: ToolContext,
+): Promise<ToolHandlerResult> {
+  const sig = await mtimeSignature(ctx.workspacePath, MANIFEST_DOC_CANDIDATES);
+  const hit = repoManifestMemo.get(ctx.workspacePath);
+  if (hit && hit.sig === sig) return hit.value;
+  const value = await readRepoManifestUncached(input, ctx);
+  repoManifestMemo.set(ctx.workspacePath, { sig, value });
+  return value;
+}
+
+async function readRepoManifestUncached(
   _input: JsonObject,
   ctx: ToolContext,
 ): Promise<ToolHandlerResult> {
@@ -277,8 +332,9 @@ export const readRepoManifestTool: ToolDefinition = {
   name: "read_repo_manifest",
   description:
     "Opportunistically read AGENTS.md / CLAUDE.md / .anchorage/context.md if the target repo " +
-    "ships one. Returns a note when none exists — never fails. Use this once at the start to " +
-    "pick up project-specific conventions when present.",
+    "ships one. Returns a note when none exists — never fails. If a 'REPO CONTEXT' block is " +
+    "already in your system prompt it already folds in these conventions — do NOT call this; " +
+    "use it only when that block is absent.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
