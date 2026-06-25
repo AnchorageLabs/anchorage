@@ -23,22 +23,35 @@ const CLI_VERSION = "0.1.1";
 interface Args {
   positional: string[];
   flags: Record<string, string | boolean>;
+  // Values of flags that may be passed more than once (e.g. --agent-model),
+  // collected in order. Kept separate from `flags` so `str()` and every other
+  // single-value call site are unchanged.
+  multi: Record<string, string[]>;
 }
 
 // Flags that take no value — so they never swallow the following positional
 // (e.g. `--json connectors status` must not read "connectors" as --json's value).
 const BOOLEAN_FLAGS = new Set(["json", "help", "version"]);
 
+// Flags that may repeat; each occurrence is appended to args.multi[key].
+const REPEATABLE_FLAGS = new Set(["agent-model"]);
+
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  const multi: Record<string, string[]> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === undefined) continue;
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (!BOOLEAN_FLAGS.has(key) && next !== undefined && !next.startsWith("--")) {
+      const hasValue = !BOOLEAN_FLAGS.has(key) && next !== undefined && !next.startsWith("--");
+      if (hasValue && REPEATABLE_FLAGS.has(key)) {
+        if (!multi[key]) multi[key] = [];
+        multi[key].push(next);
+        i++;
+      } else if (hasValue) {
         flags[key] = next;
         i++;
       } else {
@@ -48,7 +61,37 @@ function parseArgs(argv: string[]): Args {
       positional.push(a);
     }
   }
-  return { positional, flags };
+  return { positional, flags, multi };
+}
+
+/**
+ * Parse repeated `--agent-model <agent>=<provider>:<model>` (or `<agent>=<model>`
+ * to keep the global provider) into the agentModels map the API accepts. Lets a
+ * CLI run mix models per agent — e.g. `--agent-model coder=anthropic:claude-opus-4-8
+ * --agent-model reviewer=opencode:kimi-k2.7-code`.
+ */
+function parseAgentModels(
+  entries: string[] | undefined,
+): Record<string, { provider?: string; model?: string }> | undefined {
+  if (!entries?.length) return undefined;
+  const out: Record<string, { provider?: string; model?: string }> = {};
+  for (const raw of entries) {
+    const eq = raw.indexOf("=");
+    if (eq <= 0) continue;
+    const agent = raw.slice(0, eq).trim();
+    const spec = raw.slice(eq + 1).trim();
+    if (!agent || !spec) continue;
+    const colon = spec.indexOf(":");
+    if (colon >= 0) {
+      const provider = spec.slice(0, colon).trim();
+      const model = spec.slice(colon + 1).trim();
+      out[agent] = { ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+    } else {
+      // No provider given → a model on the global provider (--llm-provider).
+      out[agent] = { model: spec };
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function str(flags: Args["flags"], key: string): string | undefined {
@@ -68,8 +111,11 @@ Commands:
   auth token                 Rotate (issue) your own API token — shown once, invalidates the previous
   runs list                  List recent runs
   runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b] [--llm-provider p] [--llm-model m]
+                             Per-agent models (repeatable): --agent-model <agent>=<provider>:<model> (or =<model> to keep --llm-provider)
+                             e.g. --agent-model coder=anthropic:claude-opus-4-8 --agent-model reviewer=opencode:kimi-k2.7-code
   runs review <pr> --repo <o/r>  Review a PR by number: post a review + open a stacked fix-PR with the must-fix changes
   runs status <id>           Show a run's status
+  runs model-usage <id>      Show per-agent models: what each agent was asked to use vs actually used
   runs watch <id>            Stream a run's events until it ends
   runs approve <id>          Approve a paused run
   runs reject <id>           Reject a paused run
@@ -176,7 +222,7 @@ function modelArgs(flags: Args["flags"], rest: string[]): { provider?: string; m
 // ── command dispatch ─────────────────────────────────────────────────────────
 
 async function main(): Promise<number> {
-  const { positional, flags } = parseArgs(process.argv.slice(2));
+  const { positional, flags, multi } = parseArgs(process.argv.slice(2));
   const json = flags.json === true;
   const [command, sub, ...rest] = positional;
 
@@ -229,6 +275,7 @@ async function main(): Promise<number> {
       }
       const issue = str(flags, "issue");
       const instruction = str(flags, "instruction");
+      const agentModels = parseAgentModels(multi["agent-model"]);
       const run = await client.triggerRun({
         owner,
         repo: name,
@@ -243,6 +290,7 @@ async function main(): Promise<number> {
         ...(str(flags, "branch") ? { branch: str(flags, "branch") } : {}),
         ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
         ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
+        ...(agentModels ? { agentModels } : {}),
       });
       out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
       return 0;
@@ -271,6 +319,27 @@ async function main(): Promise<number> {
       if (!id) return usageErr("runs status <id>");
       const run = await client.getRun(id);
       out(run, json, () => runLine(run));
+      return 0;
+    }
+    case "runs model-usage": {
+      const id = rest[0];
+      if (!id) return usageErr("runs model-usage <id>");
+      const usage = await client.getModelUsage(id);
+      out(usage, json, () => {
+        const sel = (s: { provider: string; model?: string } | null) =>
+          s ? (s.model ? `${s.provider}:${s.model}` : s.provider) : "house default";
+        const lines = usage.agents.map((a) => {
+          const used =
+            a.actual.length > 0
+              ? [...new Set(a.actual.map((x) => x.model))].join(", ")
+              : "(no LLM calls)";
+          const tok = a.actual.reduce((s, x) => s + x.inputTokens + x.outputTokens, 0);
+          const cost = a.actual.reduce((s, x) => s + x.costUsd, 0);
+          const meter = tok > 0 ? `  [${tok} tok, $${cost.toFixed(4)}]` : "";
+          return `  ${a.agent.padEnd(14)} asked ${sel(a.selected).padEnd(28)} used ${used}${meter}`;
+        });
+        return `Models for ${usage.runId} (global: ${sel(usage.global)})\n${lines.join("\n")}`;
+      });
       return 0;
     }
     case "runs watch": {

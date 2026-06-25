@@ -89,6 +89,33 @@ export interface TriggerParams {
   pipeline?: string;
   llmProvider?: string;
   llmModel?: string;
+  // Per-agent model overrides keyed by agent name. An agent listed here uses its
+  // own model; agents absent fall back to llmProvider/llmModel (the global pick).
+  agentModels?: Record<string, { provider?: string; model?: string }>;
+}
+
+export interface ModelSelectionRef {
+  provider: string;
+  model?: string;
+}
+
+export interface RunModelUsage {
+  runId: string;
+  global: ModelSelectionRef | null;
+  overrides: Record<string, ModelSelectionRef>;
+  agents: Array<{
+    agent: string;
+    step: string | null;
+    selected: ModelSelectionRef | null;
+    actual: Array<{
+      provider: string;
+      model: string;
+      calls: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+    }>;
+  }>;
 }
 
 export interface ProtocolEvent {
@@ -164,6 +191,10 @@ export class OrchestratorClient {
 
   getRun(runId: string): Promise<RunSummary> {
     return this.get(`/runs/${encodeURIComponent(runId)}`);
+  }
+
+  getModelUsage(runId: string): Promise<RunModelUsage> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/model-usage`);
   }
 
   listWorkflows(): Promise<WorkflowInfo[]> {
