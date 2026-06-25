@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AssistantMessage,
   ContentBlock,
@@ -11,7 +12,6 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from "../types.js";
-import { createHash } from "node:crypto";
 import {
   isMaxCompletionTokensUnsupported,
   isTemperatureUnsupported,
@@ -69,9 +69,7 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
       // turn, but the prefix the cache keys on does not, so the bulk of the
       // prompt bills at the cached rate after turn 1 — the OpenAI-compatible
       // analogue of the Anthropic cache_control breakpoint.
-      const promptCacheKey = promptCache
-        ? cachePrefixKey(input.system, toolDefs)
-        : undefined;
+      const promptCacheKey = promptCache ? cachePrefixKey(input.system, toolDefs) : undefined;
 
       // Reasoning models want `max_completion_tokens` and reject `temperature`;
       // older models take `max_tokens`. Start with the modern shape, then flex

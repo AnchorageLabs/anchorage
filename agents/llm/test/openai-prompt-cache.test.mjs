@@ -49,7 +49,11 @@ test("omits prompt_cache_key when caching is disabled", async () => {
 });
 
 test("reads cache hits from the OpenAI usage shape", async () => {
-  mockFetch({ prompt_tokens: 50, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 40 } });
+  mockFetch({
+    prompt_tokens: 50,
+    completion_tokens: 5,
+    prompt_tokens_details: { cached_tokens: 40 },
+  });
   const provider = createOpenAiProvider({ apiKey: "k", model: "gpt-4.1" });
   const result = await provider.requestTurn(turnInput);
   assert.equal(result.ok, true);
