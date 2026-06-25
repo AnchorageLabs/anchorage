@@ -247,8 +247,11 @@ async function resolveIssueSummary(
 function parseIssueSummary(value: unknown): { ok: true; value: IssueSummary } | { ok: false } {
   if (!isObject(value)) return { ok: false };
 
+  // issueNumber 0 is allowed: the plan-only flow (instruction-to-plan) plans from
+  // an instruction BEFORE any issue exists, so it synthesizes a summary with no
+  // real number. Negatives are still rejected.
   const issueNumber = Number(value.issueNumber);
-  if (!Number.isInteger(issueNumber) || issueNumber <= 0) return { ok: false };
+  if (!Number.isInteger(issueNumber) || issueNumber < 0) return { ok: false };
   if (typeof value.title !== "string") return { ok: false };
   if (typeof value.repository !== "string") return { ok: false };
   if (typeof value.state !== "string") return { ok: false };
