@@ -382,6 +382,27 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
   };
 }
 
+/**
+ * OpenRouter requires Anthropic model IDs with the `anthropic/` prefix (e.g.
+ * `anthropic/claude-opus-4-8`). When a bare Claude model ID arrives from an
+ * `ANCHORAGE_*_MODEL` env var or per-run selection, prepend the prefix.
+ * Already-prefixed IDs (containing `/`) and non-Claude models pass through.
+ */
+function normalizeOpenRouterModel(
+  preset: OpenAiPreset | undefined,
+  model: string,
+): string {
+  if (!model || preset?.name !== "openrouter") return model;
+  // Strip the Bedrock us.anthropic. prefix if present before re-prefixing.
+  if (model.startsWith("us.anthropic.")) model = model.slice("us.anthropic.".length);
+  else if (model.startsWith("anthropic.")) model = model.slice("anthropic.".length);
+  // Already has a provider prefix (e.g. deepseek/deepseek-v4-flash).
+  if (model.includes("/")) return model;
+  // Bare Anthropic model id → prepend the OpenRouter provider prefix.
+  if (model.startsWith("claude-")) return `anthropic/${model}`;
+  return model;
+}
+
 function resolveOpenAiConfig(
   defaults: LlmRoleDefaults,
   preset?: OpenAiPreset,
@@ -407,7 +428,7 @@ function resolveOpenAiConfig(
   // omit the generic fallback so the guard below surfaces a clear error.
   const presetDefault = preset && preset.defaultModel.length > 0 ? preset.defaultModel : undefined;
   const fallbackModel = presetDefault || defaults.openaiModel || (!preset ? "gpt-4.1" : "");
-  const model = resolveModel(defaults, fallbackModel);
+  const model = normalizeOpenRouterModel(preset, resolveModel(defaults, fallbackModel));
   if (!model) {
     const envName = roleModelEnvName(defaults.role);
     // This branch is only reachable with a preset (presetless paths fall back to
