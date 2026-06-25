@@ -108,10 +108,12 @@ Version: anchorage --version
 Commands:
   auth login                 Save server URL (+ secret from env/stdin) to the config file
   auth whoami                Show the credential the server sees
+  auth token                 Rotate (issue) your own API token — shown once, invalidates the previous
   runs list                  List recent runs
   runs start --repo <o/r>    Start a run (--issue N | --instruction "...") [--workflow W] [--branch b] [--llm-provider p] [--llm-model m]
                              Per-agent models (repeatable): --agent-model <agent>=<provider>:<model> (or =<model> to keep --llm-provider)
                              e.g. --agent-model coder=anthropic:claude-opus-4-8 --agent-model reviewer=opencode:kimi-k2.7-code
+  runs review <pr> --repo <o/r>  Review a PR by number: post a review + open a stacked fix-PR with the must-fix changes
   runs status <id>           Show a run's status
   runs model-usage <id>      Show per-agent models: what each agent was asked to use vs actually used
   runs watch <id>            Stream a run's events until it ends
@@ -120,6 +122,9 @@ Commands:
   runs cancel <id>           Cancel a running run
   runs resume <id>           Resume a failed run from its salvage branch [--instruction "..."]
   runs diff <id>             Print a run's unified diff
+  runs artifacts <id>        Print a run's step artifacts (JSON)
+  runs manifest <id>         Print a run's flight-recorder manifest (JSON)
+  runs outcome <id> <ok|not_ok|clear>  Record your verdict on a finished run [--message "..."]
   workflows list             List available workflows
   repos list                 List targetable repositories
   issues list <owner/repo>   List a repo's open issues
@@ -251,6 +256,11 @@ async function main(): Promise<number> {
       );
       return 0;
     }
+    case "auth token": {
+      const { token } = await client.rotateToken();
+      out({ token }, json, () => `New API token (shown once, previous invalidated):\n${token}`);
+      return 0;
+    }
     case "runs list": {
       const runs = await client.listRuns();
       out(runs, json, () => (runs.length ? runs.map(runLine).join("\n") : "No runs."));
@@ -281,6 +291,25 @@ async function main(): Promise<number> {
         ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
         ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
         ...(agentModels ? { agentModels } : {}),
+      });
+      out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
+      return 0;
+    }
+    case "runs review": {
+      const repo = str(flags, "repo");
+      const [owner, name] = repo?.split("/") ?? [];
+      if (!owner || !name) return usageErr("runs review <pr-number> --repo <owner/name>");
+      const prNumber = Number(rest[0]);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        return usageErr("runs review <pr-number> --repo <owner/name>");
+      }
+      const run = await client.triggerRun({
+        owner,
+        repo: name,
+        prNumber,
+        pipeline: "review-pr",
+        ...(str(flags, "llm-provider") ? { llmProvider: str(flags, "llm-provider") } : {}),
+        ...(str(flags, "llm-model") ? { llmModel: str(flags, "llm-model") } : {}),
       });
       out(run, json, () => `Started ${run.id}\n${runLine(run)}`);
       return 0;
@@ -355,6 +384,30 @@ async function main(): Promise<number> {
       if (!id) return usageErr("runs diff <id>");
       const d = await client.getRunDiff(id);
       out(d, json, () => d.diff ?? "(no diff)");
+      return 0;
+    }
+    case "runs artifacts": {
+      const id = rest[0];
+      if (!id) return usageErr("runs artifacts <id>");
+      const a = await client.getRunArtifacts(id);
+      out(a, json, () => JSON.stringify(a, null, 2));
+      return 0;
+    }
+    case "runs manifest": {
+      const id = rest[0];
+      if (!id) return usageErr("runs manifest <id>");
+      const m = await client.getRunManifest(id);
+      out(m, json, () => JSON.stringify(m, null, 2));
+      return 0;
+    }
+    case "runs outcome": {
+      const id = rest[0];
+      const outcome = rest[1] ?? "";
+      if (!id || !["ok", "not_ok", "clear"].includes(outcome)) {
+        return usageErr('runs outcome <id> <ok|not_ok|clear> [--message "..."]');
+      }
+      const r = await client.setOutcome(id, outcome, str(flags, "message"));
+      out(r, json, () => `Recorded outcome '${outcome}' on ${id}`);
       return 0;
     }
     case "workflows list": {

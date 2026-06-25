@@ -566,7 +566,12 @@ async function resolvePrOpenerInput(
       workspacePath,
       owner: task.repository.owner,
       name: task.repository.name,
-      baseBranch: task.repository.defaultBranch ?? "main",
+      // An explicit input.baseBranch (e.g. review-pr's stacked fix-PR targeting
+      // the reviewed PR's head) wins; otherwise the repo default.
+      baseBranch:
+        (typeof task.input.baseBranch === "string" && task.input.baseBranch.trim()) ||
+        task.repository.defaultBranch ||
+        "main",
       codeChangeResult: codeChangeResult.value,
       plan,
       requestedBy: humanRequester(task.actor?.requestedBy),

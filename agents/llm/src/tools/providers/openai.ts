@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AssistantMessage,
   ContentBlock,
@@ -22,6 +23,16 @@ export interface OpenAiProviderConfig {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  /**
+   * Opt into prompt caching parity with the Anthropic/Bedrock providers
+   * (default on). OpenAI-compatible APIs cache automatically once the prompt
+   * prefix is stable, but route by `prompt_cache_key` — without one, an agent's
+   * long, stable system+tools prefix is re-billed in full every turn, which is
+   * how a non-Anthropic run burned millions of input tokens across a handful of
+   * calls. We send a key derived from that prefix so every turn of a run lands
+   * on the same cache.
+   */
+  promptCache?: boolean;
 }
 
 /**
@@ -42,6 +53,7 @@ export interface OpenAiProviderConfig {
  */
 export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdapter {
   const baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+  const promptCache = config.promptCache ?? true;
 
   return {
     name: "openai",
@@ -52,6 +64,12 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         messages.push(...toOpenAiMessages(message));
       }
       const toolDefs = input.tools.map(toOpenAiTool);
+      // Route every turn that shares this run's stable prefix (system prompt +
+      // tool catalog) to the same prompt cache. The conversation grows each
+      // turn, but the prefix the cache keys on does not, so the bulk of the
+      // prompt bills at the cached rate after turn 1 — the OpenAI-compatible
+      // analogue of the Anthropic cache_control breakpoint.
+      const promptCacheKey = promptCache ? cachePrefixKey(input.system, toolDefs) : undefined;
 
       // Reasoning models want `max_completion_tokens` and reject `temperature`;
       // older models take `max_tokens`. Start with the modern shape, then flex
@@ -67,6 +85,7 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
           tools: toolDefs,
           tool_choice: "auto",
         };
+        if (promptCacheKey) body.prompt_cache_key = promptCacheKey;
         if (includeTemperature && typeof input.temperature === "number") {
           body.temperature = input.temperature;
         }
@@ -185,24 +204,42 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         stopReason: typeof first.finish_reason === "string" ? first.finish_reason : null,
         inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
         outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
-        // OpenAI reports cache hits under prompt_tokens_details.cached_tokens and
-        // (unlike Anthropic) counts them INSIDE prompt_tokens, so cacheRead here
-        // is informational, not additive. There is no explicit cache-write count.
+        // OpenAI-compatible APIs report cache hits but count them INSIDE
+        // prompt_tokens, so cacheRead here is informational, not additive. There
+        // is no explicit cache-write count.
         cacheReadInputTokens: readCachedTokens(usage),
       };
     },
   };
 }
 
-// usage.prompt_tokens_details.cached_tokens — the cached portion of the prompt
-// (already included in prompt_tokens). 0 when absent.
+// Cached prompt tokens (already included in prompt_tokens). Providers disagree on
+// where they report it: OpenAI uses prompt_tokens_details.cached_tokens, DeepSeek
+// uses a top-level prompt_cache_hit_tokens. Read both so a cache hit is captured
+// regardless of which OpenAI-compatible backend served the call — otherwise a
+// DeepSeek run looks 100% uncached and its spend reads far higher than it was.
 function readCachedTokens(usage: JsonObject): number {
   const details = usage.prompt_tokens_details;
   if (details && typeof details === "object" && !Array.isArray(details)) {
     const cached = (details as JsonObject).cached_tokens;
     if (typeof cached === "number") return cached;
   }
+  if (typeof usage.prompt_cache_hit_tokens === "number") return usage.prompt_cache_hit_tokens;
   return 0;
+}
+
+// A stable cache key for a run's prompt prefix: a short hash of the system prompt
+// and the tool catalog (names + parameter schemas). Both are fixed for the whole
+// run, so every turn produces the same key and OpenAI routes them to one cache;
+// a different agent (different system/tools) gets a different key.
+function cachePrefixKey(system: string, tools: JsonObject[]): string {
+  const toolSig = tools
+    .map((t) => {
+      const fn = (t.function ?? {}) as JsonObject;
+      return `${typeof fn.name === "string" ? fn.name : ""}:${JSON.stringify(fn.parameters ?? {})}`;
+    })
+    .join("\n");
+  return `anchorage-${createHash("sha256").update(`${system}\n${toolSig}`).digest("hex").slice(0, 32)}`;
 }
 
 function toOpenAiTool(tool: ToolDefinition): JsonObject {

@@ -80,6 +80,7 @@ export interface TriggerParams {
   branch?: string;
   issue?: number;
   instruction?: string;
+  prNumber?: number;
   notionPage?: string;
   jiraIssue?: string;
   linearIssue?: string;
@@ -238,6 +239,29 @@ export class OrchestratorClient {
 
   getRunDiff(runId: string): Promise<RunDiff> {
     return this.get(`/runs/${encodeURIComponent(runId)}/diff`);
+  }
+
+  getRunArtifacts(runId: string): Promise<unknown> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/artifacts`);
+  }
+
+  getRunManifest(runId: string): Promise<unknown> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/manifest`);
+  }
+
+  /** Record the human verdict on a finished run: 👍 ("ok"), 👎 ("not_ok",
+   *  optionally with a message that can start a correction run), or "clear". */
+  setOutcome(runId: string, outcome: string, message?: string): Promise<unknown> {
+    return this.send("POST", `/runs/${encodeURIComponent(runId)}/outcome`, {
+      outcome,
+      ...(message ? { message } : {}),
+    });
+  }
+
+  /** Rotate (issue) the caller's own API token. Returned once; invalidates the
+   *  previous token. */
+  rotateToken(): Promise<{ token: string }> {
+    return this.send("POST", "/me/token");
   }
 
   getConnectors(): Promise<Record<string, ConnectorStatus>> {
