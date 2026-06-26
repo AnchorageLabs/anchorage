@@ -9,9 +9,9 @@
 // agent orients itself with the regular discovery tools.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { cartographerCommand } from "./cartographer.js";
 
 // Warm scans are a fingerprint check (milliseconds); the timeout covers a cold
@@ -81,7 +81,44 @@ function strList(value: Json | undefined, cap = MAX_LIST_ITEMS): string[] {
   return items.length > cap ? [...items.slice(0, cap), `+${items.length - cap} more`] : items;
 }
 
-function formatDigest(context: { [key: string]: Json }): string {
+/**
+ * Directories (root + up to two levels) that already have a `node_modules`,
+ * relative to the workspace (root → "."). The orchestrator's preinstall/artifact
+ * cache populates these OFF the agent loop, before the agent starts — so the
+ * agent has no other way to know deps are ready, and would otherwise burn turns
+ * running (and, on a missing git-hook binary, RETRYING) `yarn install`. We
+ * surface this so the prompt can tell it not to. Mirrors the preinstall target
+ * walk (depth ≤2, skip node_modules/.git/dotdirs). Best-effort/sync: any error
+ * yields [] and the agent just installs as before.
+ */
+export function installedDepDirs(workspacePath: string, maxDepth = 2): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (existsSync(join(dir, "node_modules"))) {
+      out.push(relative(workspacePath, dir) || ".");
+    }
+    if (depth >= maxDepth) return;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (e.name === "node_modules" || e.name === ".git" || e.name.startsWith(".")) continue;
+      walk(join(dir, e.name), depth + 1);
+    }
+  };
+  try {
+    walk(workspacePath, 0);
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+function formatDigest(context: { [key: string]: Json }, depsInstalledDirs: string[] = []): string {
   const lines: string[] = [];
 
   const repo = isObject(context.repo) ? context.repo : {};
@@ -111,11 +148,21 @@ function formatDigest(context: { [key: string]: Json }): string {
       .filter((k): k is string => k !== undefined),
   );
   const commands = isObject(context.commands) ? context.commands : {};
+  const depsInstalled = depsInstalledDirs.length > 0;
   const commandLines: string[] = [];
   let hasGaps = false;
   for (const key of ["install", "build", "typecheck", "lint", "format", "test", "check"]) {
     const value = commands[key];
-    if (typeof value === "string") commandLines.push(`  ${key}: ${value}`);
+    if (key === "install" && depsInstalled) {
+      // Deps are ALREADY installed (orchestrator preinstall / artifact cache, off
+      // the agent loop). Re-running install is redundant and, on this image, can
+      // wedge — so neutralize the one line the agent keys off, whether or not a
+      // command was detected.
+      const cmd = typeof value === "string" ? `${value} ` : "";
+      commandLines.push(
+        `  install: ${cmd}— ALREADY DONE; node_modules present in ${depsInstalledDirs.join(", ")}. Do NOT run install.`,
+      );
+    } else if (typeof value === "string") commandLines.push(`  ${key}: ${value}`);
     else if (gapKeys.has(key)) {
       commandLines.push(`  ${key}: UNKNOWN — detection gap; find and run it yourself`);
       hasGaps = true;
@@ -203,9 +250,11 @@ export async function repoContextPromptBlock(
   }
   if (!isObject(parsed)) return "";
 
+  const depsInstalledDirs = installedDepDirs(workspacePath);
+
   let digest: string;
   try {
-    digest = formatDigest(parsed);
+    digest = formatDigest(parsed, depsInstalledDirs);
   } catch {
     return "";
   }
@@ -213,6 +262,19 @@ export async function repoContextPromptBlock(
   if (digest.length > MAX_BLOCK_CHARS) {
     digest = `${digest.slice(0, MAX_BLOCK_CHARS)}\n  …(truncated)`;
   }
+
+  // When deps are already installed (orchestrator preinstall / artifact cache,
+  // off the agent loop), state it up front and unambiguously — the agent can't
+  // observe that work otherwise and would waste turns (and, on a missing
+  // hook binary, RETRY) running install.
+  const depsLine =
+    depsInstalledDirs.length > 0
+      ? [
+          "",
+          `DEPENDENCIES ALREADY INSTALLED — node_modules is present and ready in: ${depsInstalledDirs.join(", ")}.`,
+          "Do NOT run install (yarn/npm/pnpm/bun install) for these; it is redundant. Build/test/lint directly.",
+        ]
+      : [];
 
   return [
     "",
@@ -223,5 +285,6 @@ export async function repoContextPromptBlock(
     "'UNKNOWN' or any scanner warning means detection could not see that area: treat it as",
     "unverified, discover it yourself, and NEVER skip a build/test step because it is",
     "UNKNOWN here. For anything not listed, inspect the repo as usual.",
+    ...depsLine,
   ].join("\n");
 }

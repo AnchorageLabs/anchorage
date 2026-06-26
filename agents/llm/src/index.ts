@@ -32,7 +32,7 @@ export { discoveryTools } from "./tools/builtin/discovery.js";
 export { getArtifactTool } from "./tools/builtin/get-artifact.js";
 export { notionReadTools, notionWriteTools } from "./tools/builtin/notion.js";
 export { repoReadTools, repoWriteTools } from "./tools/builtin/repo.js";
-export { repoContextPromptBlock } from "./tools/builtin/repo-context.js";
+export { installedDepDirs, repoContextPromptBlock } from "./tools/builtin/repo-context.js";
 export { shellTools } from "./tools/builtin/shell.js";
 export { symbolTools } from "./tools/builtin/symbols.js";
 export { webTools } from "./tools/builtin/web.js";
@@ -388,10 +388,7 @@ function resolveBedrockConfig(defaults: LlmRoleDefaults): LlmResult<LlmConfig> {
  * `ANCHORAGE_*_MODEL` env var or per-run selection, prepend the prefix.
  * Already-prefixed IDs (containing `/`) and non-Claude models pass through.
  */
-function normalizeOpenRouterModel(
-  preset: OpenAiPreset | undefined,
-  model: string,
-): string {
+function normalizeOpenRouterModel(preset: OpenAiPreset | undefined, model: string): string {
   if (!model || preset?.name !== "openrouter") return model;
   // Strip the Bedrock us.anthropic. prefix if present before re-prefixing.
   if (model.startsWith("us.anthropic.")) model = model.slice("us.anthropic.".length);
