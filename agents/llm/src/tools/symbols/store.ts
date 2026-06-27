@@ -163,16 +163,19 @@ export interface ImpactResult {
 }
 
 /**
- * The read surface the in-loop tools consume (`repo_map`, `find_references`,
- * `impact`, `locate_change`, `relevant_tests`, `symbol_outline`). Both the local
- * JSON {@link IndexStore} and the canonical cartographer-backed adapter satisfy
- * it, so `getIndexStore` can return either without the tools changing
+ * The read surface every `getIndexStore` consumer uses — the in-loop tools
+ * (`repo_map`, `find_references`, `impact`, `locate_change`, `relevant_tests`,
+ * `symbol_outline`) AND the policy-check agent (import-graph constraints). Both
+ * the local JSON {@link IndexStore} and the canonical cartographer-backed adapter
+ * satisfy it, so `getIndexStore` can return either without consumers changing
  * (ADR-0032).
  */
 export interface SymbolIndex {
   readonly fileCount: number;
   definitionsOf(name: string): DefSite[];
   filesReferencing(name: string): string[];
+  /** Files that DIRECTLY import `targetFile` (one hop) — policy-check's import-graph checks. */
+  directImportersOf(targetFile: string): string[];
   inDegreeRanking(): { file: string; lang: string; inDegree: number }[];
   outline(relPath: string): SymbolDef[] | null;
   impact(symbol: string): ImpactResult;
