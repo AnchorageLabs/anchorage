@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Every repo-reading agent gets the same "use the index, not grep" hard rule.
+
+**Intent:** The coder, planner, and reviewer prompts enforce a hard rule — orient with the symbol/import graph (repo_map → locate_change/impact/find_references) before any broad grep/read_file sweep. But `issue-opener` and `issue-triage` import the SAME `repoReadTools` (which carries those index tools, on by default) yet their prompts still told the model to "use list_dir, read_file, and grep" — so they navigated repos by grep while the others used the graph. The rule is now a single shared `GRAPH_FIRST_RULE` constant exported from `@anchorage/agent-llm` and pasted into the issue-opener and triage system prompts, so every agent that can navigate a repo is instructed identically. Analysis of a teramot-aleph planner step (44 grep + 47 read_file for a 2-file change) motivated unifying this; the deeper lever — pre-injecting the graph pack so an agent starts oriented — lands in the orchestrator (see anchorage-orchestrator #273).
+
+**Files touched:**
+- agents/llm/src/prompts.ts
+- agents/llm/src/index.ts
+- agents/issue-opener/src/index.ts
+- agents/issue-triage/src/index.ts
+
+**Reason:** Direct maintainer request (Sol, 2026-06-27): every agent, not just the coder, must be guided by the graph before any other navigation tool. Audit found issue-opener and triage had the index tools but not the rule.
+
+**Author:** Sol Soletti
+
 ### 2026-06-24 — OpenAI-compatible providers get prompt-caching parity with Anthropic/Bedrock.
 
 **Intent:** The OpenAI provider was never wired for prompt caching — `providerFromLlmConfig` passed the `promptCache` flag to the Anthropic and Bedrock providers but not to OpenAI, and the provider ignored it. So a run on an OpenAI-compatible model (OpenAI, DeepSeek, Kimi/Moonshot) re-billed its full, stable system+tools prefix every turn, which is how a non-Anthropic run burned millions of input tokens across a handful of calls. The provider now (1) sends a `prompt_cache_key` derived from the run's stable prefix (system prompt + tool catalog) so every turn routes to one cache — the OpenAI-compatible analogue of the Anthropic `cache_control` breakpoint — honouring the `ANCHORAGE_LLM_PROMPT_CACHE` opt-out, and (2) reads cache-hit tokens from both the OpenAI (`prompt_tokens_details.cached_tokens`) and DeepSeek (`prompt_cache_hit_tokens`) usage shapes, so a DeepSeek run no longer looks 100% uncached.

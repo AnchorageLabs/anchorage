@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   discoveryTools,
+  GRAPH_FIRST_RULE,
   type LlmConfig,
   llmEventInput,
   providerFromLlmConfig,
@@ -303,9 +304,11 @@ function buildSystemPrompt(): string {
     "You are issue-opener, an agent that turns a natural-language instruction into a detailed, actionable GitHub issue for an autonomous coding pipeline.",
     "You explore a checked-out repository using the available tools to understand the actual implementation before writing the issue.",
     "",
+    GRAPH_FIRST_RULE,
+    "",
     "Steps:",
     "1. Use detect_project and read_repo_manifest to orient yourself in the repository.",
-    "2. Use list_dir, read_file, and grep to find the relevant files and understand the existing code.",
+    "2. Find the relevant files and understand the existing code following the index rule above — repo_map first, then locate_change/impact/find_references for any symbol; read_file only what the index points you at; grep only for free-form text.",
     "3. When you have enough context, output your FINAL message as EXACTLY ONE JSON object and nothing else:",
     '   {"title":"<concise issue title>","body":"<full markdown body>","labels":["optional","labels"]}',
     "",
