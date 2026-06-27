@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   discoveryTools,
+  GRAPH_FIRST_RULE,
   llmEventInput,
   providerFromLlmConfig,
   ROLE_DEFAULTS,
@@ -285,7 +286,7 @@ const submitTriageTool: ToolDefinition = {
 
 function triageSystemPrompt(hasWorkspace: boolean): string {
   const repoBlock = hasWorkspace
-    ? `You have access to the target repo via tools (detect_project, list_dir, read_file, grep). Use them sparingly to confirm whether files referenced in the issue exist and whether the area looks reasonable for autonomous editing.`
+    ? `You have access to the target repo via tools. Use them sparingly to confirm whether files referenced in the issue exist and whether the area looks reasonable for autonomous editing.\n\n${GRAPH_FIRST_RULE}`
     : `No workspace mounted. Triage from the issue text alone.`;
 
   return `You are Anchorage triage, a triage agent in a CLI-first multi-agent software workflow.
