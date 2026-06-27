@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { openCanonicalIndex } from "./canonical.js";
 import { analyzeFile, grammarForPath, type SymbolDef } from "./engine.js";
 
 const INDEX_DIR = ".anchorage/index";
@@ -161,7 +162,24 @@ export interface ImpactResult {
   tests: string[];
 }
 
-export class IndexStore {
+/**
+ * The read surface the in-loop tools consume (`repo_map`, `find_references`,
+ * `impact`, `locate_change`, `relevant_tests`, `symbol_outline`). Both the local
+ * JSON {@link IndexStore} and the canonical cartographer-backed adapter satisfy
+ * it, so `getIndexStore` can return either without the tools changing
+ * (ADR-0032).
+ */
+export interface SymbolIndex {
+  readonly fileCount: number;
+  definitionsOf(name: string): DefSite[];
+  filesReferencing(name: string): string[];
+  inDegreeRanking(): { file: string; lang: string; inDegree: number }[];
+  outline(relPath: string): SymbolDef[] | null;
+  impact(symbol: string): ImpactResult;
+  testsFor(sourceFile: string): string[];
+}
+
+export class IndexStore implements SymbolIndex {
   readonly root: string;
   private files: Map<string, FileEntry>;
 
@@ -432,15 +450,48 @@ export class IndexStore {
 // B4 mutates the same instance the read tools query).
 const stores = new Map<string, Promise<IndexStore | null>>();
 
-/** Get (or build) the index for a workspace root. Cached per process. */
-export function getIndexStore(root: string): Promise<IndexStore | null> {
-  const key = path.resolve(root);
+// Which backend each resolved root uses. Prefer the canonical cartographer
+// engine (ADR-0032); fall back to the local JSON store when cartographer isn't
+// resolvable (local dev without the baked package) or its index is empty. The
+// DECISION is cached per root (decided on first call); the index itself is NOT
+// cached here — each call re-opens so the canonical path picks up the coder's
+// mid-run edits (getOrBuildIndex re-runs an incremental, content-hash refresh),
+// matching the JSON store's per-edit refreshFile behavior.
+type Backend = "canonical" | "json";
+const backendChoice = new Map<string, Backend>();
+
+/** Get (or build) the local JSON index for a workspace root. Cached per process. */
+function openJsonStore(key: string): Promise<IndexStore | null> {
   let existing = stores.get(key);
   if (!existing) {
     existing = IndexStore.open(key);
     stores.set(key, existing);
   }
   return existing;
+}
+
+export async function getIndexStore(root: string): Promise<SymbolIndex | null> {
+  const key = path.resolve(root);
+  const decided = backendChoice.get(key);
+
+  if (decided === "json") return openJsonStore(key);
+  if (decided === "canonical") {
+    const canonical = await openCanonicalIndex(key);
+    // A transient miss after we'd chosen canonical: serve this call from JSON
+    // rather than returning nothing, but keep the canonical decision.
+    return canonical ?? openJsonStore(key);
+  }
+
+  // Undecided: try canonical first, then commit to whichever answered.
+  const canonical = await openCanonicalIndex(key);
+  if (canonical) {
+    backendChoice.set(key, "canonical");
+    console.error("[symbol-index] using canonical engine (cartographer)");
+    return canonical;
+  }
+  backendChoice.set(key, "json");
+  console.error("[symbol-index] using local JSON store (canonical engine unavailable)");
+  return openJsonStore(key);
 }
 
 /**
@@ -453,7 +504,9 @@ export function peekIndexStore(root: string): Promise<IndexStore | null> | null 
   return stores.get(path.resolve(root)) ?? null;
 }
 
-/** Drop the cached store for a root (tests / explicit invalidation). */
+/** Drop the cached store + backend choice for a root (tests / invalidation). */
 export function clearIndexStore(root: string): void {
-  stores.delete(path.resolve(root));
+  const key = path.resolve(root);
+  stores.delete(key);
+  backendChoice.delete(key);
 }

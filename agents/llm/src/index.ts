@@ -43,7 +43,7 @@ export { runWithTools } from "./tools/loop.js";
 export { createAnthropicProvider } from "./tools/providers/anthropic.js";
 export { createBedrockProvider } from "./tools/providers/bedrock.js";
 export { createOpenAiProvider } from "./tools/providers/openai.js";
-export { getIndexStore, type IndexStore } from "./tools/symbols/store.js";
+export { getIndexStore, type IndexStore, type SymbolIndex } from "./tools/symbols/store.js";
 export type {
   AssistantMessage,
   BudgetConfig,

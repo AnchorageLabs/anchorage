@@ -29,6 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Agent symbol tools resolve to the canonical cartographer engine (ADR-0032), with the JSON store as fallback.
+
+**Intent:** The in-loop tools (`repo_map`, `find_references`, `impact`, `locate_change`, `relevant_tests`, `symbol_outline`) read through `getIndexStore`, which built this package's own JSON index — whose import resolution is basename-matching, so the resolved Go/TS import edges we fixed in cartographer (the engine the orchestrator already uses) never reached the coder. `getIndexStore` now prefers the **canonical cartographer engine** (`@anchorage/cartographer-index`) and falls back to the local JSON store. A new `SymbolIndex` interface is the shared read surface both backends implement, so the tool files are unchanged. Consumption mirrors the orchestrator: a runtime dynamic `import(...)` via a non-literal specifier (no compile-time cross-repo dependency), resolved from the baked package in the worker image; when it's not resolvable (local dev without the bake) or its index is empty, the fallback to the JSON store is taken and logged to stderr (explicit, not swallowed). The backend is decided once per workspace root; the canonical path re-opens per call so the coder's mid-run edits are picked up via cartographer's incremental refresh, matching the JSON store's per-edit `refreshFile`.
+
+**Activation & safety:** worst case = today's behavior (JSON store), so this is safe to land. The canonical path activates wherever `@anchorage/cartographer-index` is resolvable from the agent — the worker image must bake it into the agent's `node_modules` (orchestrator Dockerfile, follow-up). Per ADR-0032, the JSON store + engine are deleted only after a side-by-side dogfood week confirms parity.
+
+**Files touched:**
+- agents/llm/src/tools/symbols/canonical.ts (new — cartographer-backed `SymbolIndex` adapter)
+- agents/llm/src/tools/symbols/store.ts (`SymbolIndex` interface; `getIndexStore` prefers canonical + falls back)
+- agents/llm/src/index.ts (export `SymbolIndex`)
+
+**Reason:** ADR-0032 (one canonical symbol index) — the duplicate JSON index is why fixing cartographer's Go/TS import resolution (2 → 3039 teramot-aleph edges) didn't reach the coder's live tools.
+
+**Author:** Sol Soletti
+
 ### 2026-06-27 — Every repo-reading agent gets the same "use the index, not grep" hard rule.
 
 **Intent:** The coder, planner, and reviewer prompts enforce a hard rule — orient with the symbol/import graph (repo_map → locate_change/impact/find_references) before any broad grep/read_file sweep. But `issue-opener` and `issue-triage` import the SAME `repoReadTools` (which carries those index tools, on by default) yet their prompts still told the model to "use list_dir, read_file, and grep" — so they navigated repos by grep while the others used the graph. The rule is now a single shared `GRAPH_FIRST_RULE` constant exported from `@anchorage/agent-llm` and pasted into the issue-opener and triage system prompts, so every agent that can navigate a repo is instructed identically. Analysis of a teramot-aleph planner step (44 grep + 47 read_file for a 2-file change) motivated unifying this; the deeper lever — pre-injecting the graph pack so an agent starts oriented — lands in the orchestrator (see anchorage-orchestrator #273).
