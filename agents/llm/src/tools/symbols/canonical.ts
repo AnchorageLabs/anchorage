@@ -27,6 +27,7 @@ interface CartoSymbolRow {
 interface CartoStore {
   definitionsOf(name: string): CartoSymbolRow[];
   filesReferencing(name: string): string[];
+  importersOf(relPath: string): string[];
   inDegreeRanking(): { file: string; lang: string; inDegree: number }[];
   symbolsInFile(file: string): CartoSymbolRow[];
   stats(): { files: number };
@@ -83,6 +84,11 @@ class CartographerIndex implements SymbolIndex {
 
   filesReferencing(name: string): string[] {
     return this.store.filesReferencing(name);
+  }
+
+  directImportersOf(targetFile: string): string[] {
+    // cartographer's importersOf is exactly the one-hop direct importers.
+    return this.store.importersOf(targetFile);
   }
 
   inDegreeRanking(): { file: string; lang: string; inDegree: number }[] {

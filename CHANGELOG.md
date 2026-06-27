@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Fix: add `directImportersOf` to the `SymbolIndex` interface (build break).
+
+**Intent:** The canonical-index cutover (#195) introduced the `SymbolIndex` interface as `getIndexStore`'s return type, but missed that the **policy-check** agent (not just the `builtin/` tools) consumes `getIndexStore` and calls `store.directImportersOf(...)`. That method was absent from `SymbolIndex`, so `pnpm -r build` failed (`TS2339`), breaking the base-image build. Adds `directImportersOf` to `SymbolIndex` and implements it in the cartographer adapter (maps to `importersOf`).
+
+**Files touched:**
+- agents/llm/src/tools/symbols/store.ts
+- agents/llm/src/tools/symbols/canonical.ts
+
+**Reason:** build-base failure on the #195 merge — `SymbolIndex` surface was derived from the `builtin/` tools only and missed policy-check's `directImportersOf`.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-27 — Agent symbol tools resolve to the canonical cartographer engine (ADR-0032), with the JSON store as fallback.
 
 **Intent:** The in-loop tools (`repo_map`, `find_references`, `impact`, `locate_change`, `relevant_tests`, `symbol_outline`) read through `getIndexStore`, which built this package's own JSON index — whose import resolution is basename-matching, so the resolved Go/TS import edges we fixed in cartographer (the engine the orchestrator already uses) never reached the coder. `getIndexStore` now prefers the **canonical cartographer engine** (`@anchorage/cartographer-index`) and falls back to the local JSON store. A new `SymbolIndex` interface is the shared read surface both backends implement, so the tool files are unchanged. Consumption mirrors the orchestrator: a runtime dynamic `import(...)` via a non-literal specifier (no compile-time cross-repo dependency), resolved from the baked package in the worker image; when it's not resolvable (local dev without the bake) or its index is empty, the fallback to the JSON store is taken and logged to stderr (explicit, not swallowed). The backend is decided once per workspace root; the canonical path re-opens per call so the coder's mid-run edits are picked up via cartographer's incremental refresh, matching the JSON store's per-edit `refreshFile`.
