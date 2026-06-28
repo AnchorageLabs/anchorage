@@ -55,6 +55,12 @@ export async function runWithTools(
   const dedupEnabled = !/^(false|0|no|off)$/i.test((env.ANCHORAGE_TOOL_DEDUP ?? "").trim());
   const seenOutputs = new Map<string, string>();
 
+  // Emergency context compaction: drop the oldest large tool outputs only when
+  // the context nears the model's window (see compactToolResults). Resolved once;
+  // applied at the top of each turn. Null = disabled.
+  const compactOpts = resolveCompactOpts(env);
+  let compactedTotal = 0;
+
   // Context-miss guard: turn the diagnostic signals (repeatedSymbolGrep,
   // grepReadChurn, filesReadCapHit) into in-loop action instead of end-of-run
   // instrumentation. SAFE TIER (default on): the first time a signal fires,
@@ -74,6 +80,20 @@ export async function runWithTools(
   let prevToolName: string | null = null;
 
   while (true) {
+    // Before asking the model: if the conversation is nearing the context
+    // window, drop the oldest large tool outputs so the request doesn't 400 on
+    // "maximum context length". No-op on normal-sized contexts.
+    if (compactOpts) {
+      const dropped = compactToolResults(messages, compactOpts);
+      if (dropped > 0) {
+        compactedTotal += dropped;
+        // Observable (stderr keeps stdout's NDJSON protocol clean), not swallowed.
+        console.error(
+          `[context-compaction] dropped ${dropped} old tool output(s) to fit the context window (${compactedTotal} total this run)`,
+        );
+      }
+    }
+
     const turnCheck = checkTurnBudget(budget);
     if (!turnCheck.ok) {
       return {
@@ -338,6 +358,91 @@ export async function runWithTools(
 // Minimum output size worth deduping. Below this the back-reference notice
 // would be comparable to (or larger than) the content it replaces.
 const DEDUP_MIN_BYTES = 500;
+
+// ── Context compaction (emergency, opt-out) ──────────────────────────────────
+// In a LONG run the accumulated tool outputs (build logs, file reads, test
+// output) can approach the model's context window — the failure mode that 400'd
+// a real run at 262 144 tokens ("maximum context length ... however you
+// requested ..."). When the estimated context crosses COMPACT_AT tokens, the
+// CONTENT of the OLDEST tool results is dropped (the most recent COMPACT_KEEP are
+// kept intact) down to COMPACT_TARGET, each replaced with a short placeholder.
+// This trades cache-prefix stability for survival, deliberately:
+//   - It only fires on LARGE contexts, so normal runs are untouched and their
+//     cache prefix keeps hitting (the common case pays nothing).
+//   - It over-trims to TARGET in one pass, so it does not re-truncate a little
+//     every turn (which would move the prefix each turn and thrash the cache).
+//   - The dropped output is reproducible: the model can re-run the tool.
+// Tunable via ANCHORAGE_CONTEXT_COMPACT_AT / _TARGET / _KEEP; off via
+// ANCHORAGE_CONTEXT_COMPACT=false.
+const COMPACT_MIN_BYTES = 800; // only sizeable outputs are worth dropping
+const COMPACT_PLACEHOLDER =
+  "[older tool output dropped to fit the context window — re-run the tool if you need this result again]";
+
+function estimateContextTokens(messages: LoopMessage[]): number {
+  let bytes = 0;
+  for (const m of messages) {
+    if (typeof m.content === "string") {
+      bytes += m.content.length;
+      continue;
+    }
+    for (const b of m.content) {
+      if (b.type === "text") bytes += b.text.length;
+      else if (b.type === "tool_result")
+        bytes += typeof b.content === "string" ? b.content.length : JSON.stringify(b.content).length;
+      else bytes += JSON.stringify(b).length;
+    }
+  }
+  return Math.ceil(bytes / 4); // ~4 bytes per token — a deliberate over-estimate
+}
+
+interface CompactOpts {
+  compactAt: number;
+  target: number;
+  keepRecent: number;
+}
+
+/**
+ * Drop the oldest large tool-result CONTENT when the context is near the window.
+ * Mutates `messages` in place; returns the number of results dropped (0 = no-op).
+ * Keeps the newest `keepRecent` tool results, the assistant turns, and small
+ * results untouched.
+ */
+function compactToolResults(messages: LoopMessage[], opts: CompactOpts): number {
+  if (estimateContextTokens(messages) < opts.compactAt) return 0;
+
+  // Every tool_result block in order, so we can keep the newest and drop oldest.
+  const blocks: ToolResultBlock[] = [];
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.content === "string") continue;
+    for (const b of m.content) if (b.type === "tool_result") blocks.push(b);
+  }
+  const droppableEnd = Math.max(0, blocks.length - opts.keepRecent);
+  let dropped = 0;
+  for (let i = 0; i < droppableEnd; i++) {
+    if (estimateContextTokens(messages) <= opts.target) break;
+    const b = blocks[i];
+    if (!b || typeof b.content !== "string" || b.content.length < COMPACT_MIN_BYTES) continue;
+    if (b.content === COMPACT_PLACEHOLDER) continue; // already dropped
+    b.content = COMPACT_PLACEHOLDER;
+    dropped++;
+  }
+  return dropped;
+}
+
+function resolveCompactOpts(env: Record<string, string | undefined>): CompactOpts | null {
+  if (/^(false|0|no|off)$/i.test((env.ANCHORAGE_CONTEXT_COMPACT ?? "").trim())) return null;
+  const num = (v: string | undefined, d: number): number => {
+    const n = Number.parseInt((v ?? "").trim(), 10);
+    return Number.isFinite(n) && n > 0 ? n : d;
+  };
+  // Default 160k fires below a 200k window (Claude) with margin, and well below
+  // 256k (kimi) — the model that actually hit the wall. Target 96k = 60%.
+  return {
+    compactAt: num(env.ANCHORAGE_CONTEXT_COMPACT_AT, 160_000),
+    target: num(env.ANCHORAGE_CONTEXT_COMPACT_TARGET, 96_000),
+    keepRecent: num(env.ANCHORAGE_CONTEXT_COMPACT_KEEP, 8),
+  };
+}
 
 function dedupNotice(priorTool: string): string {
   return (
