@@ -53,9 +53,7 @@ let modulePromise: Promise<CartoModule | null> | undefined;
 function loadCartographer(): Promise<CartoModule | null> {
   if (!modulePromise) {
     const specifier = "@anchorage/cartographer-index";
-    modulePromise = import(specifier)
-      .then((m) => m as unknown as CartoModule)
-      .catch(() => null);
+    modulePromise = import(specifier).then((m) => m as unknown as CartoModule).catch(() => null);
   }
   return modulePromise;
 }

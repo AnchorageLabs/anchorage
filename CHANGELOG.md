@@ -29,6 +29,18 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-28 — Fix biome formatting that broke main CI lint.
+
+**Intent:** Restore green CI on main. The lint step rejected two source files for non-canonical formatting (a wrapped ternary and a chained import-then-then-catch). Re-formatted to biome's layout; no behavior change.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/symbols/canonical.ts
+
+**Reason:** CI lint failure on main (Actions run 28309398846, commit 09822f2).
+
+**Author:** Sol Soletti
+
 ### 2026-06-27 — Emergency context compaction + read only verified paths (token/latency + survival).
 
 **Intent:** Two findings from the 1119/1275/public-data analysis. (1) A long run accumulates every tool output in the conversation (~4M tokens/run; 87-97% cache-read so cheap in $, but it grows inference latency AND is the failure mode that 400'd public-data at the model's 262 144-token limit). The agent loop (runWithTools, shared by all agents) now drops the CONTENT of the OLDEST large tool outputs when the estimated context crosses a threshold (default 160k, target 96k), keeping the newest 8 results, the assistant turns, and the plan intact, each replaced with a short 'dropped — re-run if needed' placeholder. It only fires on large contexts (normal runs untouched, cache prefix intact), over-trims in one pass (so it doesn't thrash the cache by re-truncating every turn), and the dropped output is reproducible. Tunable via ANCHORAGE_CONTEXT_COMPACT_AT/_TARGET/_KEEP; off via ANCHORAGE_CONTEXT_COMPACT=false. (2) ~10% of read_file calls hit non-existent paths (not_a_file = wasted turns); the coder is now told to read only paths CONFIRMED to exist (from the index, list_dir, or grep), never inferred from the issue or an import line.

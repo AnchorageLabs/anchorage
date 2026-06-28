@@ -388,7 +388,8 @@ function estimateContextTokens(messages: LoopMessage[]): number {
     for (const b of m.content) {
       if (b.type === "text") bytes += b.text.length;
       else if (b.type === "tool_result")
-        bytes += typeof b.content === "string" ? b.content.length : JSON.stringify(b.content).length;
+        bytes +=
+          typeof b.content === "string" ? b.content.length : JSON.stringify(b.content).length;
       else bytes += JSON.stringify(b).length;
     }
   }
