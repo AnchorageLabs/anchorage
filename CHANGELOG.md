@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Scope the coder's tests to the covering cases (runner selector), not the whole package.
+
+**Intent:** Follow-up to the build-scope fix. With builds scoped to the changed package, the next-largest shell sink became running ALL of a package's tests — a verified teramot-aleph run did 'go test ./pkg/... -v -count=1' (every test in a big package, 229s) instead of just the covering cases. The coder (and planner verificationCommands) now narrow the TEST command to the specific covering tests/files relevant_tests identified, via the runner's own selector — language-agnostic, not Go-specific: Go 'go test ./pkg/ -run "TestA|TestB"', vitest/jest the specific files or '-t <name>', pytest 'path::test_func' or '-k <expr>', Rust 'cargo test -p <crate> <name>'. A whole-package run is the fallback only when the covering cases can't be identified.
+
+**Files touched:**
+- agents/coder/src/index.ts
+- agents/planner/src/index.ts
+
+**Reason:** Comparison of runs 1275 (no fix) vs 1119 (build-scope fix) — build-scope cut shell time ~47%, but the slowest remaining shell was a whole-package verbose test run; scoping tests to the covering cases closes that gap.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-27 — Scope the coder's build/typecheck to the changed package/module, not the whole repo.
 
 **Intent:** A teramot-aleph run took 31 min; `shell_exec` (Go build/test) was 13.3 min of it — the coder ran multiple full `go build`/`go test` cycles over the whole module while the graph tools cost ~20s total. The coder prompt told it to "run the project's typecheck/build... whole-project and cheap" — true for incremental tsc, FALSE for Go/Rust/Java where a full-module build is minutes and is re-run on every fix→re-verify cycle. The coder now scopes typecheck/build to the package/module it changed (Go `go build ./changed/pkg/`, TS `tsc --noEmit -p <that tsconfig>`, Python `mypy path/to/pkg`, Rust `cargo check -p <crate>`), never `./...`/whole-repo — language-agnostic, falling back to whole-project only when the toolchain can't scope. The planner's `verificationCommands` guidance is updated to emit change-scoped commands too (the coder runs what the plan suggests). The tester already scopes (`scopeCommandsToChangedFiles`).
