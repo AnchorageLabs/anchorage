@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Emergency context compaction + read only verified paths (token/latency + survival).
+
+**Intent:** Two findings from the 1119/1275/public-data analysis. (1) A long run accumulates every tool output in the conversation (~4M tokens/run; 87-97% cache-read so cheap in $, but it grows inference latency AND is the failure mode that 400'd public-data at the model's 262 144-token limit). The agent loop (runWithTools, shared by all agents) now drops the CONTENT of the OLDEST large tool outputs when the estimated context crosses a threshold (default 160k, target 96k), keeping the newest 8 results, the assistant turns, and the plan intact, each replaced with a short 'dropped — re-run if needed' placeholder. It only fires on large contexts (normal runs untouched, cache prefix intact), over-trims in one pass (so it doesn't thrash the cache by re-truncating every turn), and the dropped output is reproducible. Tunable via ANCHORAGE_CONTEXT_COMPACT_AT/_TARGET/_KEEP; off via ANCHORAGE_CONTEXT_COMPACT=false. (2) ~10% of read_file calls hit non-existent paths (not_a_file = wasted turns); the coder is now told to read only paths CONFIRMED to exist (from the index, list_dir, or grep), never inferred from the issue or an import line.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts (context compaction in the shared tool loop)
+- agents/coder/src/index.ts (read only verified paths)
+
+**Reason:** Run analysis 2026-06-27 — context accumulation drove latency and 400'd a run at the context limit; read_file wasted ~10% of calls on non-existent paths.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-27 — Scope the coder's tests to the covering cases (runner selector), not the whole package.
 
 **Intent:** Follow-up to the build-scope fix. With builds scoped to the changed package, the next-largest shell sink became running ALL of a package's tests — a verified teramot-aleph run did 'go test ./pkg/... -v -count=1' (every test in a big package, 229s) instead of just the covering cases. The coder (and planner verificationCommands) now narrow the TEST command to the specific covering tests/files relevant_tests identified, via the runner's own selector — language-agnostic, not Go-specific: Go 'go test ./pkg/ -run "TestA|TestB"', vitest/jest the specific files or '-t <name>', pytest 'path::test_func' or '-k <expr>', Rust 'cargo test -p <crate> <name>'. A whole-package run is the fallback only when the covering cases can't be identified.
