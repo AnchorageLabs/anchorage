@@ -571,7 +571,7 @@ When you have enough context, your FINAL message MUST be a single JSON object an
 Design the smallest product-oriented plan that resolves the issue.
 
 acceptanceCriteria MUST include, for any code change:
-- "The repo's existing test suite and typecheck/build pass" — and verificationCommands MUST list the repo's REAL commands for both (from detect_project / package.json scripts), e.g. the test runner and the type-check/build command.
+- "The changed package/module's tests and typecheck/build pass" — and verificationCommands MUST list the repo's REAL commands for both (from detect_project / package.json scripts), but SCOPED TO THE CHANGED package/module, never the whole repo. A whole-repo build/test is the coder's biggest wall-clock sink (it recompiles untouched code on every fix→re-verify cycle), so scope it: Go 'go build ./changed/pkg/' + 'go test ./changed/pkg/' (NEVER './...'), TypeScript 'tsc --noEmit -p <that package's tsconfig>', Python 'mypy path/to/pkg' + 'pytest path/to/pkg', Rust 'cargo check -p <crate>'. Use the likelyFiles paths to pick the scope. Only emit a whole-repo command when the toolchain genuinely cannot scope it.
 - At least one test that exercises the new code against the REAL existing types/contracts it integrates with (an integration test), not only hand-built fixtures that restate the implementation's own assumptions. If the new code consumes an upstream module's type, a test MUST feed that real type through it.
 verificationCommands must be runnable as-is by the coder via shell_exec.`;
 }

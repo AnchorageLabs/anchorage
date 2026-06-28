@@ -29,6 +29,19 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-06-27 — Scope the coder's build/typecheck to the changed package/module, not the whole repo.
+
+**Intent:** A teramot-aleph run took 31 min; `shell_exec` (Go build/test) was 13.3 min of it — the coder ran multiple full `go build`/`go test` cycles over the whole module while the graph tools cost ~20s total. The coder prompt told it to "run the project's typecheck/build... whole-project and cheap" — true for incremental tsc, FALSE for Go/Rust/Java where a full-module build is minutes and is re-run on every fix→re-verify cycle. The coder now scopes typecheck/build to the package/module it changed (Go `go build ./changed/pkg/`, TS `tsc --noEmit -p <that tsconfig>`, Python `mypy path/to/pkg`, Rust `cargo check -p <crate>`), never `./...`/whole-repo — language-agnostic, falling back to whole-project only when the toolchain can't scope. The planner's `verificationCommands` guidance is updated to emit change-scoped commands too (the coder runs what the plan suggests). The tester already scopes (`scopeCommandsToChangedFiles`).
+
+**Files touched:**
+- agents/coder/src/index.ts
+- agents/planner/src/index.ts
+
+**Reason:** Post-run analysis of teramot-aleph issue 1275 — 13.3 min of 31 went to repeated whole-module Go builds; the symbol graph was never the bottleneck, the whole-repo build assumption was.
+
+**Author:** Sol Soletti
+
+
 ### 2026-06-27 — Fix: add `directImportersOf` to the `SymbolIndex` interface (build break).
 
 **Intent:** The canonical-index cutover (#195) introduced the `SymbolIndex` interface as `getIndexStore`'s return type, but missed that the **policy-check** agent (not just the `builtin/` tools) consumes `getIndexStore` and calls `store.directImportersOf(...)`. That method was absent from `SymbolIndex`, so `pnpm -r build` failed (`TS2339`), breaking the base-image build. Adds `directImportersOf` to `SymbolIndex` and implements it in the cartographer adapter (maps to `importersOf`).
