@@ -1,9 +1,12 @@
 {
+  "_comment": "Dogfood our own Cartographer MCP (not a third-party code-graph). Run it from the anchorage-cartographer repo: ./scripts/serve-mcp-local.sh, then set CARTOGRAPHER_MCP_TOKEN. HTTP+OAuth transport. See anchorage-cartographer/docs/integrations/CONNECT.md.",
   "mcpServers": {
-    "codegraph": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@colbymchenry/codegraph", "serve", "--mcp"]
+    "cartographer": {
+      "type": "http",
+      "url": "http://localhost:3100/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CARTOGRAPHER_MCP_TOKEN}"
+      }
     }
   }
 }
