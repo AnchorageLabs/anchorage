@@ -29,6 +29,17 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-07-06 — issue-opener drafts straight from an accepted clarify brief, skipping repository exploration.
+
+**Intent:** When the instruction is a brief the user already reviewed and accepted in the clarify chat (a repo-grounded issue with desired outcome, acceptance criteria, and an "Assumptions" section), issue-opener no longer runs its repository-exploration tool loop to re-derive the issue. A new `input.briefReady` flag (set by the orchestrator when the run carries a clarify transcript) makes it format the accepted brief into the GitHub issue in a single faithful-formatting call (`draftFromBrief`), falling back to the deterministic draft if that call can't produce valid JSON. Re-exploring was redundant with the clarification pass and slow on large repos (observed ~5 min for the open-issue step on teramot-aleph, ~91% LLM time). Raw instructions with no clarify pass leave `briefReady` unset and keep the full exploration behavior.
+
+**Files touched:**
+- agents/issue-opener/src/index.ts
+
+**Reason:** Live run analysis 2026-07-06 — the open-issue step re-explored the repo despite clarify already producing an accepted, repo-grounded brief.
+
+**Author:** Sol Soletti
+
 ### 2026-06-28 — Fix biome formatting that broke main CI lint.
 
 **Intent:** Restore green CI on main. The lint step rejected two source files for non-canonical formatting (a wrapped ternary and a chained import-then-then-catch). Re-formatted to biome's layout; no behavior change.

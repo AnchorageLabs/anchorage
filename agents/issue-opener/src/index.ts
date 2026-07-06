@@ -169,6 +169,24 @@ async function exploreAndDraft(
     return { ok: true, value: fallbackDraft(input.instruction) };
   }
 
+  // The instruction is an accepted clarify brief — already grounded in the repo
+  // during clarification. Skip the exploration tool loop entirely and format the
+  // brief into the issue in a single call; re-exploring here just repeats work
+  // clarify already did (and is slow on large repos). Falls back to the
+  // deterministic draft if that one call can't produce a valid issue.
+  if (input.briefReady) {
+    emit(
+      task,
+      "agent.progress",
+      "info",
+      "Using the accepted brief — skipping repository exploration",
+      {
+        ...llmEventInput(config.value),
+      },
+    );
+    return { ok: true, value: await draftFromBrief(task, config.value, input.instruction) };
+  }
+
   emit(task, "agent.progress", "info", "Exploring repository to draft the issue", {
     ...llmEventInput(config.value),
     instruction: input.instruction,
@@ -271,6 +289,43 @@ async function oneShotDraft(
 }
 
 /**
+ * Format an already-accepted clarify brief into the GitHub issue in a single
+ * call — no repository exploration. The brief was written against the repo
+ * during clarification (desired outcome, acceptance criteria, and an
+ * "Assumptions" section), so the job here is faithful formatting, NOT re-scoping:
+ * preserve its intent and sections verbatim, only shaping them into a clean issue
+ * title + body. Falls back to the deterministic draft if the call fails.
+ */
+async function draftFromBrief(
+  task: TaskEnvelope,
+  config: LlmConfig,
+  brief: string,
+): Promise<IssueDraft> {
+  const system = [
+    "The following is a brief the user has already reviewed and ACCEPTED. Format it faithfully as a single GitHub issue for an autonomous coding pipeline.",
+    'Respond with EXACTLY ONE JSON object and nothing else: {"title":"...","body":"...","labels":["optional","labels"]}',
+    "Rules: preserve the brief's intent, acceptance criteria, and any \"Assumptions\" section verbatim in the body — do NOT add new scope, requirements, or assumptions the brief doesn't state. Derive a concise title from the brief. Keep the body as markdown.",
+  ].join("\n");
+  const completion = await requestLlmCompletion(config, {
+    system,
+    user: brief,
+    maxTokens: LLM_MAX_TOKENS,
+  });
+  if (completion.ok) {
+    const draft = parseIssueDraft(completion.value.text);
+    if (draft) {
+      emit(task, "agent.progress", "info", "Issue draft finalized from accepted brief", {
+        title: draft.title,
+        labels: draft.labels,
+      });
+      return draft;
+    }
+  }
+  emit(task, "agent.progress", "warn", "Drafting the issue directly from the accepted brief", {});
+  return fallbackDraft(brief);
+}
+
+/**
  * A faithful, deterministic issue built straight from the user's instruction.
  * Used only when the model cannot produce a valid draft — guarantees the
  * instruction is always captured as an actionable issue.
@@ -359,6 +414,10 @@ interface ResolvedInput {
   workspacePath: string;
   owner: string;
   name: string;
+  // The instruction is a brief the user already reviewed and accepted in the
+  // clarify chat (already grounded in the repo). When true, draft the issue
+  // straight from it and skip the repository-exploration tool loop.
+  briefReady: boolean;
 }
 
 function resolveInput(task: TaskEnvelope): { ok: true; value: ResolvedInput } | AgentFailureDetail {
@@ -389,7 +448,13 @@ function resolveInput(task: TaskEnvelope): { ok: true; value: ResolvedInput } | 
   }
   return {
     ok: true,
-    value: { instruction, workspacePath, owner: task.repository.owner, name: task.repository.name },
+    value: {
+      instruction,
+      workspacePath,
+      owner: task.repository.owner,
+      name: task.repository.name,
+      briefReady: task.input.briefReady === true,
+    },
   };
 }
 
