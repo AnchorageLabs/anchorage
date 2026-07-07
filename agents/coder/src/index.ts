@@ -117,6 +117,12 @@ async function main(): Promise<number> {
   if (!branchResult.ok) return fail(task.value, branchResult);
 
   const beforeStatus = await gitStatus(input.value.workspacePath);
+  // The branch tip BEFORE the LLM loop. The model can commit its own work via
+  // shell_exec git during the loop, leaving a CLEAN tree — comparing HEAD to
+  // this tip is the only way that delivered work is counted (see the
+  // no_changes_needed misclassification: real changes committed in-loop read
+  // as an empty diff and the run stopped without pushing or opening a PR).
+  const startHead = (await runGit(input.value.workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
 
   emit(task.value, "tool.requested", "info", "Requesting code changes from LLM", {
     tool: auth.value.tool,
@@ -139,9 +145,19 @@ async function main(): Promise<number> {
   }
 
   // The coder writes files directly via write_file during the tool loop.
-  // The afterStatus diff is the source of truth for what changed.
+  // What changed = dirty worktree files PLUS files in any commits the model
+  // made itself during the loop (a clean tree does NOT mean no work).
   const afterStatus = await gitStatus(input.value.workspacePath);
-  const changedFiles = changedFilesFromStatus(afterStatus.stdout);
+  const worktreeFiles = changedFilesFromStatus(afterStatus.stdout);
+  const loopHead = (await runGit(input.value.workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
+  const loopCommitted =
+    startHead && loopHead && loopHead !== startHead
+      ? (await runGit(input.value.workspacePath, ["diff", "--name-only", startHead, "HEAD"])).stdout
+          .split("\n")
+          .map((f) => f.trim())
+          .filter(Boolean)
+      : [];
+  const changedFiles = [...new Set([...worktreeFiles, ...loopCommitted])];
 
   emit(task.value, "tool.result", "info", "LLM code changes applied", {
     tool: auth.value.tool,
@@ -172,7 +188,8 @@ async function main(): Promise<number> {
     task.value,
     input.value.workspacePath,
     input.value.plan,
-    changedFiles.length > 0,
+    worktreeFiles.length > 0,
+    startHead,
   );
 
   const output: CodeChangeResult = {
@@ -910,7 +927,8 @@ interface DeliveryResult {
   commitSha: string | null;
   pushed: boolean;
   pushSkippedReason?: string;
-  // Unified diff of the staged change, captured in the agent's own workspace.
+  // Unified diff of everything this run delivered (loop-start tip → HEAD),
+  // captured in the agent's own workspace.
   diff: string;
 }
 
@@ -918,38 +936,49 @@ async function commitAndPush(
   task: TaskEnvelope,
   workspacePath: string,
   plan: ImplementationPlan,
-  hasChanges: boolean,
+  hasWorktreeChanges: boolean,
+  startHead: string,
 ): Promise<DeliveryResult> {
-  if (!hasChanges) {
+  // Commit dirty worktree edits (write_file output). Commits the model already
+  // made itself via shell_exec git during the loop are ALSO deliverable work —
+  // they leave a clean tree, so they are detected below by comparing HEAD to
+  // the loop-start tip, never by worktree status.
+  let commitFailure: { reason: string; diff: string } | null = null;
+  if (hasWorktreeChanges) {
+    const commit = await commitChanges(task, workspacePath, plan);
+    if (!commit.ok) {
+      // Non-fatal: the edits are on disk; we just couldn't record them as a
+      // commit. The staged diff was still captured, so the change stays
+      // reviewable.
+      commitFailure = { reason: commit.reason, diff: commit.diff };
+    }
+  }
+
+  const head = (await runGit(workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
+  const hasCommits = startHead.length > 0 && head.length > 0 && head !== startHead;
+
+  if (!hasCommits) {
     return {
       committed: false,
       commitSha: null,
       pushed: false,
-      pushSkippedReason: "no_changes",
-      diff: "",
+      pushSkippedReason: commitFailure ? commitFailure.reason : "no_changes",
+      diff: commitFailure?.diff ?? "",
     };
   }
 
-  const commit = await commitChanges(task, workspacePath, plan);
-  if (!commit.ok) {
-    // Non-fatal: the edits are on disk; we just couldn't record them as a commit.
-    // The staged diff was still captured, so the change stays reviewable.
-    return {
-      committed: false,
-      commitSha: null,
-      pushed: false,
-      pushSkippedReason: commit.reason,
-      diff: commit.diff,
-    };
-  }
+  // Authoritative diff for THIS run: everything between the loop-start tip and
+  // the current tip — our commit plus any the model made itself.
+  const range = await runGit(workspacePath, ["diff", "--no-color", startHead, "HEAD"]);
+  const diff = range.exitCode === 0 ? range.stdout : (commitFailure?.diff ?? "");
 
   const push = await pushBranch(task, workspacePath, plan.branchName);
   return {
     committed: true,
-    commitSha: commit.sha,
+    commitSha: head,
     pushed: push.pushed,
     ...(push.pushed ? {} : { pushSkippedReason: push.reason }),
-    diff: commit.diff,
+    diff,
   };
 }
 
