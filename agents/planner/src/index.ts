@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  BATCH_TOOL_CALLS_RULE,
   type ContextSnapshot,
   contextRepoPromptBlock,
   contextReposFromEnvelope,
@@ -534,6 +535,8 @@ function plannerSystemPrompt(hasWorkspace: boolean, opts: PlannerPromptOptions =
 
 Use these tools BEFORE producing the plan. A plan grounded in real files (correct paths in likelyFiles, real verification commands) is far more useful than a guess. Read 3–8 files minimum on non-trivial issues. likelyFiles MUST be paths you have verified exist — locate_change is the fastest way to populate them for a symbol the issue names.
 
+${BATCH_TOOL_CALLS_RULE}
+
 REUSE EXISTING CONTRACTS. Before introducing any new type, interface, or config for a concept, use impact/find_references (not grep) to locate an existing one and reuse or extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). If the new code must consume data from an existing module, name that module's real type WITH its real field names in likelyFiles/implementationSteps and require the coder to import it directly — never a look-alike. A field-name mismatch against an existing type (e.g. hash vs sha) is a planning failure.`
     : `No workspace is mounted for this run. Plan based on the issue alone and let the coder do file inspection.`;
 
@@ -571,7 +574,7 @@ When you have enough context, your FINAL message MUST be a single JSON object an
 Design the smallest product-oriented plan that resolves the issue.
 
 acceptanceCriteria MUST include, for any code change:
-- "The changed package/module's tests and typecheck/build pass" — and verificationCommands MUST list the repo's REAL commands for both (from detect_project / package.json scripts), but SCOPED TO THE CHANGED package/module, never the whole repo. A whole-repo build/test is the coder's biggest wall-clock sink (it recompiles untouched code on every fix→re-verify cycle), so scope it — and scope the TEST command to the covering cases via the runner's selector, not the whole package: Go 'go build ./changed/pkg/' + 'go test ./changed/pkg/ -run \"TestA|TestB\"' (NEVER './...' and NEVER a bare verbose run of the whole package), TypeScript 'tsc --noEmit -p <that package's tsconfig>' + the specific test files (or vitest '-t <name>'), Python 'mypy path/to/pkg' + 'pytest path/to/test_x.py::test_func' (or '-k <expr>'), Rust 'cargo check -p <crate>' + 'cargo test -p <crate> <testname>'. Use the likelyFiles paths to pick the scope and name the covering tests. Only emit a whole-repo or whole-package command when the toolchain genuinely cannot scope it.
+- "The changed package/module's tests and typecheck/build pass" — and verificationCommands MUST list the repo's REAL commands for both (from detect_project / package.json scripts), but SCOPED TO THE CHANGED package/module, never the whole repo. A whole-repo build/test is the coder's biggest wall-clock sink (it recompiles untouched code on every fix→re-verify cycle), so scope it — and scope the TEST command to the covering cases via the runner's selector, not the whole package: Go 'go build ./changed/pkg/' + 'go test ./changed/pkg/ -run "TestA|TestB"' (NEVER './...' and NEVER a bare verbose run of the whole package), TypeScript 'tsc --noEmit -p <that package's tsconfig>' + the specific test files (or vitest '-t <name>'), Python 'mypy path/to/pkg' + 'pytest path/to/test_x.py::test_func' (or '-k <expr>'), Rust 'cargo check -p <crate>' + 'cargo test -p <crate> <testname>'. Use the likelyFiles paths to pick the scope and name the covering tests. Only emit a whole-repo or whole-package command when the toolchain genuinely cannot scope it.
 - At least one test that exercises the new code against the REAL existing types/contracts it integrates with (an integration test), not only hand-built fixtures that restate the implementation's own assumptions. If the new code consumes an upstream module's type, a test MUST feed that real type through it.
 verificationCommands must be runnable as-is by the coder via shell_exec.`;
 }

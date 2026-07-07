@@ -21,7 +21,7 @@ export {
   type PolicyViolation,
   parseConstraints,
 } from "./policy.js";
-export { GRAPH_FIRST_RULE } from "./prompts.js";
+export { BATCH_TOOL_CALLS_RULE, GRAPH_FIRST_RULE } from "./prompts.js";
 export type { AgentRole } from "./role-defaults.js";
 export { ROLE_DEFAULTS } from "./role-defaults.js";
 export { webToolsEnabled } from "./tools/budget.js";

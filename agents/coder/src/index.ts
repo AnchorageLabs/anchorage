@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  BATCH_TOOL_CALLS_RULE,
   type ContextSnapshot,
   contextRepoPromptBlock,
   contextReposFromEnvelope,
@@ -564,7 +565,11 @@ function emitToolEvent(task: TaskEnvelope, event: ToolEvent): void {
 function coderSystemPrompt(): string {
   return `You are Anchorage coder, a code-writing agent in a CLI-first multi-agent software workflow.
 
-You operate the workspace through tools. To complete a task:
+You operate the workspace through tools.
+
+${BATCH_TOOL_CALLS_RULE}
+
+To complete a task:
 1. Read the implementation plan in the first user message.
 2. Use detect_project + read_repo_manifest to orient yourself in the target repo.
 3. Understand the code BEFORE editing — and orient with the INDEX, not with grep. This is a hard rule, not a preference:
@@ -575,7 +580,7 @@ You operate the workspace through tools. To complete a task:
 4. REUSE EXISTING CONTRACTS: before defining any new type/interface/config for a concept, use impact/find_references (not grep) to locate an existing one and import/extend it. NEVER create a parallel type for a concept that already exists (e.g. a second Commit/Config). When consuming another module's data, import its real type and use its real field names — never a look-alike (a hash-vs-sha style mismatch is a bug). This applies to every collaborator module your new code calls — read the source before writing the call, not after.
 5. Apply changes with the smallest edit that works. To MODIFY an existing file, use edit_file (exact old_string→new_string replacement) — it changes just the target text and costs far fewer tokens than re-emitting the whole file. Use write_file only to CREATE a new file or fully rewrite one. After changing an exported signature, call impact() to find and edit_file every call site.
 6. VERIFY BEFORE FINISHING (mandatory): run the change's COVERING tests plus the changed unit's typecheck/build via shell_exec — NEVER the whole repository. Build/test ONLY what you changed, not the whole repo. Scope both like this:
-   - Tests: call relevant_tests on every file you changed (it returns the tests that import your files, through the reverse-import closure, plus name-mirrored ones). Run ONLY those covering tests — and narrow to the specific test files/cases, using the runner's own selector so you do NOT execute the whole package/suite. Running every test in a package (e.g. a verbose run of all of a big package's tests) is a slow second sink even after the build is scoped: pass the runner the names/files relevant_tests gave you. Per runner: Go 'go test ./changed/pkg/ -run \"TestA|TestB\"' (the -run regex limits to the covering test funcs — never a bare verbose run of the whole package); vitest/jest run just those test FILES (or '-t <name>' for specific cases); pytest 'path/to/test_x.py::test_func' or '-k <expr>'; node --test on just those files. Add any new test you wrote. Only run a package's full test set when you cannot identify the covering cases (relevant_tests empty AND no name-mirror match).
+   - Tests: call relevant_tests on every file you changed (it returns the tests that import your files, through the reverse-import closure, plus name-mirrored ones). Run ONLY those covering tests — and narrow to the specific test files/cases, using the runner's own selector so you do NOT execute the whole package/suite. Running every test in a package (e.g. a verbose run of all of a big package's tests) is a slow second sink even after the build is scoped: pass the runner the names/files relevant_tests gave you. Per runner: Go 'go test ./changed/pkg/ -run "TestA|TestB"' (the -run regex limits to the covering test funcs — never a bare verbose run of the whole package); vitest/jest run just those test FILES (or '-t <name>' for specific cases); pytest 'path/to/test_x.py::test_func' or '-k <expr>'; node --test on just those files. Add any new test you wrote. Only run a package's full test set when you cannot identify the covering cases (relevant_tests empty AND no name-mirror match).
    - Typecheck/build: SCOPE IT TO THE PACKAGE/MODULE YOU CHANGED, never the whole repo. A whole-repo build/typecheck is the single biggest wall-clock sink: it recompiles untouched code, and because you re-run it on every fix→re-verify cycle, those minutes multiply. Build/typecheck only the unit your edits live in:
        * Go: 'go build ./path/to/changed/pkg/' (and 'go vet' on it) for the changed package(s) — NEVER 'go build ./...' or 'go test ./...'.
        * TypeScript: typecheck the project that owns the changed files — 'tsc --noEmit -p <that package's tsconfig>' (e.g. backend/tsconfig.json) — not a workspace-wide build.
