@@ -331,9 +331,7 @@ async function createPlan(
     capabilities: new Set(task.capabilities ?? []),
     // Enable the graph-first grep guard only when a workspace (and thus the index
     // tools) is mounted; with no workspace there is nothing to redirect grep to.
-    env: workspacePath
-      ? { ...scrubbedEnv(), ANCHORAGE_GRAPH_FIRST_GUARD: "1" }
-      : scrubbedEnv(),
+    env: workspacePath ? { ...scrubbedEnv(), ANCHORAGE_GRAPH_FIRST_GUARD: "1" } : scrubbedEnv(),
     // Larger cap so a verbose Opus plan isn't clipped mid-JSON (the truncation
     // was a common cause of "did not contain a JSON object").
     maxTokensPerTurn: 8192,
