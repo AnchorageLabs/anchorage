@@ -75,15 +75,17 @@ export async function runWithTools(
     (env.ANCHORAGE_TOOL_CONTEXT_ENFORCE ?? "").trim(),
   );
   const seenGrepPatterns = new Set<string>();
-  // Shell-thrash backstop (always on — a runaway-cost guard, not an opt-in tier):
-  // a shell_exec command that keeps returning the SAME output is a stuck probe
-  // loop (observed: `ls node_modules/@types/node` run 230× when a dep was missing
-  // and the coder couldn't typecheck). Track the last output per command and how
-  // many times in a row it repeated UNCHANGED; refuse once it exceeds the limit.
-  // Keyed on identical output so a productive fix→build→fix loop (same command,
-  // shrinking error list) resets and never trips.
-  const shellLastOutput = new Map<string, string>();
-  const shellUnproductiveRuns = new Map<string, number>();
+  // Repeat backstop (always on — a runaway-cost guard, not an opt-in tier):
+  // ANY tool call that keeps returning the SAME output for the SAME input is a
+  // stuck loop. Observed twice on the same task: a coder ran `ls node_modules/…`
+  // 230× (a dep was missing so it couldn't typecheck), and later re-read one file
+  // 333× until the conversation blew past the model's 262K context window and the
+  // request 400'd. Track, per (tool + input), the last output and how many times
+  // in a row it repeated UNCHANGED; refuse once it exceeds the limit. Keyed on
+  // identical output, so a productive loop whose result changes (a build whose
+  // error list shrinks, a file re-read after an edit) resets and never trips.
+  const repeatLastOutput = new Map<string, string>();
+  const repeatUnproductiveRuns = new Map<string, number>();
   const nudgesFired = new Set<string>();
   let grepReadChurn = 0;
   let prevToolName: string | null = null;
@@ -250,29 +252,28 @@ export async function runWithTools(
         use.name === "grep" && typeof use.input.pattern === "string" ? use.input.pattern : null;
       const duplicateGrep = grepPattern !== null && seenGrepPatterns.has(grepPattern);
 
-      const shellCommand =
-        use.name === "shell_exec" && typeof use.input.command === "string"
-          ? use.input.command.trim()
-          : null;
-      const thrashingShell =
-        shellCommand !== null &&
-        (shellUnproductiveRuns.get(shellCommand) ?? 0) >= SHELL_UNPRODUCTIVE_LIMIT;
+      // Repeat-backstop key: same tool + same input. Bounded so a large
+      // write_file body can't make an unbounded Map key (a prefix collision only
+      // ever means two near-identical calls share a counter — harmless).
+      const repeatKey = `${use.name} ${JSON.stringify(use.input ?? {}).slice(0, 2000)}`;
+      const repeatingUnchanged =
+        (repeatUnproductiveRuns.get(repeatKey) ?? 0) >= REPEAT_BACKSTOP_LIMIT;
 
       const startedAt = Date.now();
       let outcome: ToolHandlerResult;
-      if (thrashingShell && shellCommand !== null) {
-        // Runaway backstop: the same command has already returned the same result
-        // several times this run. Refuse rather than let a probe loop burn the
-        // whole tool budget (and wall-clock) on a check that will not change.
+      if (repeatingUnchanged) {
+        // Runaway backstop: this exact call has already returned the same result
+        // several times this run. Refuse rather than let a stuck loop burn the
+        // tool budget AND the context window — a re-read that never changes still
+        // reinflates the conversation and can 400 the model on max context length.
         outcome = {
           ok: false,
-          code: "shell_repeat_backstop",
+          code: "repeat_backstop",
           message:
-            `This command has already returned the same result ${SHELL_UNPRODUCTIVE_LIMIT} times ` +
-            `this run — re-running it will not change anything:\n  ${shellCommand.slice(0, 200)}\n` +
-            `Stop repeating it. Dependencies are pre-installed — do not probe node_modules or loop on ` +
-            `the same check. Make your edit, or if a command/dependency is genuinely missing from the ` +
-            `environment, record that in 'risks' and finish.`,
+            `This ${use.name} call has already returned the same result ${REPEAT_BACKSTOP_LIMIT} ` +
+            `times this run — repeating it changes nothing and only grows the context. Use the result ` +
+            `already shown above. If you are blocked (a missing dependency, an unrunnable command, a ` +
+            `file that does not have what you expect), record it in 'risks' and finish instead of retrying.`,
         };
       } else if (enforceEnabled && duplicateGrep) {
         // Aggressive tier (opt-in): refuse a grep that repeats a pattern already
@@ -341,19 +342,23 @@ export async function runWithTools(
         turn: turnNumber,
       });
 
-      // Track consecutive identical-output runs of a shell command for the
-      // thrash backstop above. Uses the raw outcome (before any nudge/dedup
-      // rewrite of `content` below). Skipped when we just refused the command.
-      if (shellCommand !== null && !thrashingShell) {
+      // Repeat-backstop bookkeeping: count consecutive identical-output runs of
+      // this exact (tool, input). Uses the raw outcome (before the nudge/dedup
+      // rewrite of `content` below) and the FULL output — not a short preview —
+      // so an edit deep in a large file still reads as "changed" and resets the
+      // counter. Skipped when we just refused the call.
+      if (!repeatingUnchanged) {
         const outStr = outcome.ok
-          ? previewOf(outcome.output)
+          ? typeof outcome.output === "string"
+            ? outcome.output
+            : extractText(outcome.output)
           : `${outcome.code}: ${outcome.message}`;
-        const repeatedUnchanged = shellLastOutput.get(shellCommand) === outStr;
-        shellUnproductiveRuns.set(
-          shellCommand,
-          repeatedUnchanged ? (shellUnproductiveRuns.get(shellCommand) ?? 0) + 1 : 0,
+        const repeatedUnchanged = repeatLastOutput.get(repeatKey) === outStr;
+        repeatUnproductiveRuns.set(
+          repeatKey,
+          repeatedUnchanged ? (repeatUnproductiveRuns.get(repeatKey) ?? 0) + 1 : 0,
         );
-        shellLastOutput.set(shellCommand, outStr);
+        repeatLastOutput.set(repeatKey, outStr);
       }
 
       let content: string | ContentBlock[] = outcome.ok
@@ -502,12 +507,13 @@ function dedupNotice(priorTool: string): string {
 // After this many grep→read_file adjacencies, nudge once toward symbol tools.
 const CONTEXT_CHURN_NUDGE_AT = 3;
 
-// A shell_exec command that returns identical output this many times in a row is
-// treated as a stuck probe loop and refused on the next repeat. Generous enough
-// that a normal fix→build→fix cycle (whose output changes as errors resolve, so
-// its counter keeps resetting) never trips it; low enough to kill a 200+ run
-// probe spiral early.
-const SHELL_UNPRODUCTIVE_LIMIT = 3;
+// Any tool call (shell_exec, read_file, grep, …) that returns identical output
+// for identical input this many times in a row is treated as a stuck loop and
+// refused on the next repeat. Generous enough that a normal fix→verify cycle
+// (whose output changes as the code changes, so its counter keeps resetting)
+// never trips it; low enough to kill a 200+ repeat spiral early — including the
+// re-read loop that blew past the model's context window.
+const REPEAT_BACKSTOP_LIMIT = 3;
 
 // One-time guidance appended to a tool result when a context-miss signal fires.
 // Purely additive — it suggests cheaper tools, never withholds anything.
