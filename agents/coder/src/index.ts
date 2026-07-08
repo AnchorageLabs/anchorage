@@ -301,6 +301,12 @@ async function resolveCoderInput(
       ? task.input.reuseBranch.trim()
       : null;
 
+  const symbolContextText =
+    typeof task.input.symbolContextText === "string" &&
+    task.input.symbolContextText.trim().length > 0
+      ? task.input.symbolContextText
+      : null;
+
   return {
     ok: true,
     value: {
@@ -311,6 +317,7 @@ async function resolveCoderInput(
       revisionRequest,
       previousCodeChange,
       reuseBranch,
+      symbolContextText,
     },
   };
 }
@@ -496,6 +503,7 @@ async function driveCoderLoop(
           input.triageResult,
           input.revisionRequest,
           input.previousCodeChange,
+          input.symbolContextText,
         ),
       },
     ],
@@ -509,8 +517,15 @@ async function driveCoderLoop(
     // Coder-scoped shell policy: shell_exec refuses dependency installs/adds,
     // node_modules deletion, and test runs when this flag is set. The coder makes
     // the change; the tester step runs the change's covering tests (scoped to
-    // touched files). Only the coder sets this — other agents are unaffected.
-    env: { ...process.env, ANCHORAGE_CODER_SHELL_GUARD: "1" } as Record<string, string>,
+    // touched files). ANCHORAGE_GRAPH_FIRST_GUARD makes grep refuse a bare-symbol
+    // pattern and redirect to the index tools (locate_change/find_references/impact),
+    // enforcing the graph-first rule the prompt already states. Only the coder and
+    // planner set these — other agents are unaffected.
+    env: {
+      ...process.env,
+      ANCHORAGE_CODER_SHELL_GUARD: "1",
+      ANCHORAGE_GRAPH_FIRST_GUARD: "1",
+    } as Record<string, string>,
     maxTokensPerTurn,
     temperature: 0.1,
     onEvent: (event) => emitToolEvent(task, event),
@@ -577,7 +592,9 @@ To complete a task:
 1. Read the implementation plan in the first user message.
 2. Use detect_project + read_repo_manifest to orient yourself in the target repo.
 3. Understand the code BEFORE editing — and orient with the INDEX, not with grep. This is a hard rule, not a preference:
+   - If the first user message has a repositoryContext block, START THERE: it is the graph's pre-computed answer (relevant files, symbols, and failure/feedback warnings) for this task. Open those files first instead of re-discovering the layout yourself.
    - Call repo_map ONCE at the very start to find the core files. Do not open the run with a flurry of list_dir/grep/read_file probes.
+   - grep is guarded for this run: a grep whose pattern is a bare identifier (a symbol name) is REFUSED and points you to locate_change/find_references/impact. grep stays available for free-form text (string literals, TODOs, regex). This enforces the rule below, it does not replace your judgement.
    - For ANY named symbol (function, class, type, interface, constant, method), you MUST use locate_change (where to edit it) and/or impact (its full blast radius — callers + transitive dependents) and find_references (exact sites). Do these BEFORE reading files: they tell you which files to open, so you read only what matters.
    - Do NOT grep for a named symbol. grep is ONLY for free-form text/patterns (a string literal, a TODO, a regex) — never to find where a symbol is defined or used. If you catch yourself about to grep an identifier, call locate_change/impact instead.
    - Then read_file only paths you have CONFIRMED exist — a path returned by the index (locate_change/find_references/impact/repo_map), list_dir, or grep. Do NOT read a path you inferred from the issue, an import line, or a guess about repo layout: a read_file on a non-existent path is a wasted turn (it returns not_a_file). If you only have a guess, list_dir the directory or grep the name first, then read the real path. Do not edit a file you have not read. Before writing any call to an imported module, read that module's source first to verify its exact export names, parameter types, and return shape — never infer signatures from filenames or issue context.
@@ -620,6 +637,7 @@ function coderUserPrompt(
   triageResult: JsonObject | null,
   revisionRequest: JsonObject | null,
   previousCodeChange: JsonObject | null,
+  symbolContextText: string | null,
 ): string {
   const context: JsonObject = {};
   if (issueSummary) {
@@ -662,6 +680,11 @@ function coderUserPrompt(
       task: isRevision
         ? "A previous attempt at this plan is already committed on this branch. Do NOT restart the implementation. Inspect priorCodeChange first, preserve the existing work, and make the smallest corrective edit for revisionFeedback."
         : "Apply this implementation plan by editing the workspace via the available tools.",
+      // Graph-derived orientation the orchestrator pre-computed from the symbol/
+      // import/co-change index. Start from these files and symbols instead of
+      // re-discovering the layout by grep/read_file — that is exactly the wasteful
+      // navigation the graph is meant to replace.
+      ...(symbolContextText ? { repositoryContext: symbolContextText } : {}),
       ...(Object.keys(context).length > 0 ? { context } : {}),
       plan,
       ...(priorChange ? { priorCodeChange: priorChange } : {}),
@@ -1471,6 +1494,12 @@ interface CoderInput {
   // Empty/absent on a normal run. The coder falls back to the run-scoped branch
   // when this head no longer exists on the remote (e.g. the PR was merged).
   reuseBranch: string | null;
+  // Graph-derived "start here" context the orchestrator pre-computed for this run
+  // (relevant files/symbols from the symbol index + import/co-change graph, plus
+  // failure/feedback warnings), rendered as text. The orchestrator already ships
+  // it on the envelope; injecting it into the first user message is what turns the
+  // graph from "available" into "used". Null when the orchestrator sent none.
+  symbolContextText: string | null;
 }
 
 interface CommandResult {

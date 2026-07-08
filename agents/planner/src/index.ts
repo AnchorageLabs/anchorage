@@ -289,6 +289,7 @@ async function createPlan(
   }
 
   const workspacePath = pickWorkspacePath(task);
+  const symbolContextText = pickSymbolContext(task);
   const tools = collectPlannerTools(task, workspacePath);
   const contextMounts = contextReposFromEnvelope(task.contextRepos);
   const webEnabled = webToolsEnabled();
@@ -322,13 +323,17 @@ async function createPlan(
       plannerSystemPrompt(workspacePath !== null, { webEnabled, timedOutBefore }) +
       contextRepoPromptBlock(contextMounts) +
       repoFacts,
-    messages: [{ role: "user", content: plannerUserPrompt(issue) }],
+    messages: [{ role: "user", content: plannerUserPrompt(issue, symbolContextText) }],
     tools,
     budget: { maxTurns: plannerMaxTurns },
     workspacePath: workspacePath ?? process.cwd(),
     contextRepos: contextMounts,
     capabilities: new Set(task.capabilities ?? []),
-    env: scrubbedEnv(),
+    // Enable the graph-first grep guard only when a workspace (and thus the index
+    // tools) is mounted; with no workspace there is nothing to redirect grep to.
+    env: workspacePath
+      ? { ...scrubbedEnv(), ANCHORAGE_GRAPH_FIRST_GUARD: "1" }
+      : scrubbedEnv(),
     // Larger cap so a verbose Opus plan isn't clipped mid-JSON (the truncation
     // was a common cause of "did not contain a JSON object").
     maxTokensPerTurn: 8192,
@@ -449,6 +454,16 @@ function pickWorkspacePath(task: TaskEnvelope): string | null {
   return null;
 }
 
+// Graph-derived "start here" context (relevant files/symbols + failure/feedback
+// warnings) the orchestrator pre-computed and shipped on the envelope. It already
+// arrives; injecting it into the plan request is what makes the planner ground
+// likelyFiles in the graph instead of re-discovering by grep. Null when absent.
+function pickSymbolContext(task: TaskEnvelope): string | null {
+  const fromInput = task.input?.symbolContextText;
+  if (typeof fromInput === "string" && fromInput.trim().length > 0) return fromInput;
+  return null;
+}
+
 function collectPlannerTools(_task: TaskEnvelope, workspacePath: string | null): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
   if (workspacePath) {
@@ -530,8 +545,10 @@ function plannerSystemPrompt(hasWorkspace: boolean, opts: PlannerPromptOptions =
 - impact / locate_change: for a named symbol, where it is defined and what references/depends on it. You MUST use these (not grep) to find likelyFiles and size a change's blast radius — they cross barrel re-exports and package boundaries a substring grep misses.
 - find_references / symbol_outline: exact reference sites for a symbol, and a file's structural table of contents.
 - list_dir, read_file: inspect the files the index pointed you at.
-- grep: ONLY for free-form text/patterns (a string literal, a TODO). NEVER grep a named symbol — use impact/locate_change/find_references for that.
+- grep: ONLY for free-form text/patterns (a string literal, a TODO). NEVER grep a named symbol — use impact/locate_change/find_references for that. This is enforced this run: a grep whose pattern is a bare identifier is REFUSED and redirected to the index tools.
 - git_log, git_show, git_diff: see how the area has evolved.
+
+If the user message includes a repositoryContext block, START THERE — it is the graph's pre-computed set of relevant files and symbols for this task; verify and expand it rather than re-discovering the layout from scratch.
 
 Use these tools BEFORE producing the plan. A plan grounded in real files (correct paths in likelyFiles, real verification commands) is far more useful than a guess. Read 3–8 files minimum on non-trivial issues. likelyFiles MUST be paths you have verified exist — locate_change is the fastest way to populate them for a symbol the issue names.
 
@@ -579,10 +596,14 @@ acceptanceCriteria MUST include, for any code change:
 verificationCommands must be runnable as-is by the coder via shell_exec.`;
 }
 
-function plannerUserPrompt(issue: IssueSummary): string {
+function plannerUserPrompt(issue: IssueSummary, symbolContextText: string | null): string {
   return JSON.stringify(
     {
       task: "Create an implementation plan for the coder agent.",
+      // Graph-derived orientation pre-computed from the symbol/import/co-change
+      // index. Ground likelyFiles in these paths and start inspection here rather
+      // than re-discovering the layout by grep.
+      ...(symbolContextText ? { repositoryContext: symbolContextText } : {}),
       issue: {
         number: issue.issueNumber,
         title: issue.title,
