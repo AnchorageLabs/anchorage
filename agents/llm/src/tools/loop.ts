@@ -75,6 +75,15 @@ export async function runWithTools(
     (env.ANCHORAGE_TOOL_CONTEXT_ENFORCE ?? "").trim(),
   );
   const seenGrepPatterns = new Set<string>();
+  // Shell-thrash backstop (always on — a runaway-cost guard, not an opt-in tier):
+  // a shell_exec command that keeps returning the SAME output is a stuck probe
+  // loop (observed: `ls node_modules/@types/node` run 230× when a dep was missing
+  // and the coder couldn't typecheck). Track the last output per command and how
+  // many times in a row it repeated UNCHANGED; refuse once it exceeds the limit.
+  // Keyed on identical output so a productive fix→build→fix loop (same command,
+  // shrinking error list) resets and never trips.
+  const shellLastOutput = new Map<string, string>();
+  const shellUnproductiveRuns = new Map<string, number>();
   const nudgesFired = new Set<string>();
   let grepReadChurn = 0;
   let prevToolName: string | null = null;
@@ -241,9 +250,31 @@ export async function runWithTools(
         use.name === "grep" && typeof use.input.pattern === "string" ? use.input.pattern : null;
       const duplicateGrep = grepPattern !== null && seenGrepPatterns.has(grepPattern);
 
+      const shellCommand =
+        use.name === "shell_exec" && typeof use.input.command === "string"
+          ? use.input.command.trim()
+          : null;
+      const thrashingShell =
+        shellCommand !== null &&
+        (shellUnproductiveRuns.get(shellCommand) ?? 0) >= SHELL_UNPRODUCTIVE_LIMIT;
+
       const startedAt = Date.now();
       let outcome: ToolHandlerResult;
-      if (enforceEnabled && duplicateGrep) {
+      if (thrashingShell && shellCommand !== null) {
+        // Runaway backstop: the same command has already returned the same result
+        // several times this run. Refuse rather than let a probe loop burn the
+        // whole tool budget (and wall-clock) on a check that will not change.
+        outcome = {
+          ok: false,
+          code: "shell_repeat_backstop",
+          message:
+            `This command has already returned the same result ${SHELL_UNPRODUCTIVE_LIMIT} times ` +
+            `this run — re-running it will not change anything:\n  ${shellCommand.slice(0, 200)}\n` +
+            `Stop repeating it. Dependencies are pre-installed — do not probe node_modules or loop on ` +
+            `the same check. Make your edit, or if a command/dependency is genuinely missing from the ` +
+            `environment, record that in 'risks' and finish.`,
+        };
+      } else if (enforceEnabled && duplicateGrep) {
         // Aggressive tier (opt-in): refuse a grep that repeats a pattern already
         // searched this run — it would return the same matches.
         outcome = {
@@ -309,6 +340,21 @@ export async function runWithTools(
         durationMs,
         turn: turnNumber,
       });
+
+      // Track consecutive identical-output runs of a shell command for the
+      // thrash backstop above. Uses the raw outcome (before any nudge/dedup
+      // rewrite of `content` below). Skipped when we just refused the command.
+      if (shellCommand !== null && !thrashingShell) {
+        const outStr = outcome.ok
+          ? previewOf(outcome.output)
+          : `${outcome.code}: ${outcome.message}`;
+        const repeatedUnchanged = shellLastOutput.get(shellCommand) === outStr;
+        shellUnproductiveRuns.set(
+          shellCommand,
+          repeatedUnchanged ? (shellUnproductiveRuns.get(shellCommand) ?? 0) + 1 : 0,
+        );
+        shellLastOutput.set(shellCommand, outStr);
+      }
 
       let content: string | ContentBlock[] = outcome.ok
         ? outcome.output
@@ -455,6 +501,13 @@ function dedupNotice(priorTool: string): string {
 
 // After this many grep→read_file adjacencies, nudge once toward symbol tools.
 const CONTEXT_CHURN_NUDGE_AT = 3;
+
+// A shell_exec command that returns identical output this many times in a row is
+// treated as a stuck probe loop and refused on the next repeat. Generous enough
+// that a normal fix→build→fix cycle (whose output changes as errors resolve, so
+// its counter keeps resetting) never trips it; low enough to kill a 200+ run
+// probe spiral early.
+const SHELL_UNPRODUCTIVE_LIMIT = 3;
 
 // One-time guidance appended to a tool result when a context-miss signal fires.
 // Purely additive — it suggests cheaper tools, never withholds anything.
