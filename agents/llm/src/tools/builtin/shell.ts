@@ -83,6 +83,97 @@ function packageManagerGuard(
   );
 }
 
+// Test-runner launchers the coder must never invoke: the coder's job is to make
+// the change; the downstream tester step runs the change's COVERING tests
+// (scoped to the touched files). Letting the coder run tests drives it to
+// bootstrap a missing test framework (yarn add vitest …) and thrash.
+const TEST_RUNNER_BINARIES = new Set([
+  "vitest",
+  "jest",
+  "mocha",
+  "pytest",
+  "py.test",
+  "ava",
+  "tap",
+  "tape",
+  "jasmine",
+  "karma",
+]);
+
+/**
+ * Coder-scoped policy: refuse the two command classes that make the coder
+ * thrash for tens of minutes — installing/adding dependencies (incl.
+ * bootstrapping a test framework the repo lacks) and deleting node_modules — and
+ * running the test suite (the tester step owns that). Gated on
+ * ANCHORAGE_CODER_SHELL_GUARD=1, which only the coder sets, so the tester and
+ * other agents that legitimately install/test are unaffected. Scoped typecheck /
+ * build commands (tsc, go build, …) are deliberately still allowed.
+ */
+function coderShellPolicyGuard(commandText: string, env: Record<string, string>): string | null {
+  if (env.ANCHORAGE_CODER_SHELL_GUARD !== "1") return null;
+
+  // Deleting node_modules — the coder nuking the preinstalled tree to force a
+  // clean reinstall. The single worst loop trigger.
+  if (/\brm\b[^\n]*\bnode_modules\b/.test(commandText)) {
+    return (
+      "shell_exec: refusing to delete node_modules — dependencies are preinstalled before the coder " +
+      "runs. Do NOT reinstall; make your code change and finish. The tester step verifies."
+    );
+  }
+
+  // Node package-manager install/add/upgrade, or a `<pm> test` / `<pm> run test`.
+  const pm = commandText.match(/(?:^|&&|\||;|\()\s*(npm|yarn|pnpm|bun)\s+([a-z-]+)/i);
+  if (pm) {
+    const sub = (pm[2] ?? "").toLowerCase();
+    if (PM_MUTATING_SUBCOMMANDS.has(sub)) {
+      return (
+        "shell_exec: refusing to install/add dependencies — deps are already installed before you " +
+        "start, and adding packages (e.g. bootstrapping a test framework the repo lacks) is not the " +
+        "coder's job. Edit the code (and package.json if the task needs a new dep) and finish; the " +
+        "tester step runs the change's covering tests."
+      );
+    }
+    if (sub === "test" || /\brun\s+test\b/.test(commandText)) {
+      return (
+        "shell_exec: the coder does not run the test suite — the downstream tester step runs the " +
+        "change's covering tests, scoped to the files you touched. Make your change and finish."
+      );
+    }
+  }
+
+  // pip install.
+  if (/\bpip3?\s+install\b/.test(commandText)) {
+    return (
+      "shell_exec: refusing pip install — dependencies are preinstalled and installing is not the " +
+      "coder's job. Make your change and finish; the tester verifies."
+    );
+  }
+
+  // Direct / npx test-runner binaries, and `go test` / `cargo test` / `node --test`.
+  const segments = commandText.split(/&&|\|\||[;|]/);
+  const last = (segments[segments.length - 1] ?? "").trim();
+  const tokens = last.split(/\s+/).filter((t) => t.length > 0);
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? "")) i += 1;
+  let bin = path.basename(tokens[i] ?? "");
+  if (bin === "npx") {
+    i += 1;
+    bin = path.basename(tokens[i] ?? "");
+  }
+  const testRunner =
+    TEST_RUNNER_BINARIES.has(bin) ||
+    (bin === "go" && (tokens[i + 1] ?? "").toLowerCase() === "test") ||
+    (bin === "cargo" && (tokens[i + 1] ?? "").toLowerCase() === "test") ||
+    (bin === "node" && tokens.includes("--test"));
+  if (testRunner) {
+    return (
+      "shell_exec: the coder does not run tests — the tester step runs the change's covering tests. " +
+      "Make your change and finish (a scoped typecheck/build like `tsc --noEmit -p …` or `go build` is fine)."
+    );
+  }
+  return null;
+}
+
 // Env names that must never reach the spawned shell. Adding to this list is
 // always safe; removing is a security decision and warrants review.
 const SECRET_ENV_NAMES = new Set([
@@ -328,6 +419,13 @@ async function shellExecHandler(input: JsonObject, ctx: ToolContext): Promise<To
   const pmMismatch = packageManagerGuard(commandText, cwd, ctx.workspacePath);
   if (pmMismatch) {
     return { ok: false, code: "package_manager_mismatch", message: pmMismatch };
+  }
+
+  // Coder-scoped: refuse dependency installs, node_modules deletion, and test
+  // runs (the tester owns tests). No-op for every other agent.
+  const coderBlock = coderShellPolicyGuard(commandText, ctx.env);
+  if (coderBlock) {
+    return { ok: false, code: "coder_policy", message: coderBlock };
   }
 
   const timeoutMs =
