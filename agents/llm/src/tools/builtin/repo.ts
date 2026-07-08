@@ -300,6 +300,10 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
   if (!pattern) {
     return { ok: false, code: "invalid_input", message: "grep requires a 'pattern' string." };
   }
+  const graphFirstBlock = symbolGrepGuard(pattern, ctx.env);
+  if (graphFirstBlock) {
+    return { ok: false, code: "graph_first_policy", message: graphFirstBlock };
+  }
   const requestedPath = typeof input.path === "string" ? input.path : "";
   const repoRes = resolveRepoRoot(input, ctx);
   if (!repoRes.ok) return { ok: false, code: "unknown_repo", message: repoRes.message };
@@ -358,6 +362,51 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
     bytesOut: body.length,
     meta: { pattern, matches: lines.length, truncated },
   };
+}
+
+// Does this grep pattern look like a bare code identifier — the graph-first
+// anti-pattern of locating a symbol by substring instead of via the index?
+// We block only HIGH-CONFIDENCE identifiers so free-form text still greps freely:
+//   blocked:  coderShellPolicyGuard, run_context_pack, Foo.bar, a::b, _private
+//   allowed:  TODO, error, deprecated, "not found", foo.*, ^import , foo|bar
+// Rules: after stripping surrounding ^/$ anchors — reject if it has whitespace
+// (a phrase), any structural regex metachar (\ | ( ) [ ] { } * + ?), or is
+// outside a sane length. A qualified name (dot/`::` separated) is blocked when
+// every segment is an identifier. A single token is blocked only when it has
+// internal code structure (a camelCase hump, an underscore, or a leading _/$
+// sigil) — a plain lower/UPPER word is ambiguous and left alone.
+export function looksLikeSymbolPattern(pattern: string): boolean {
+  const core = pattern.trim().replace(/^\^/, "").replace(/\$$/, "");
+  if (core.length < 3 || core.length > 80) return false;
+  if (/\s/.test(core)) return false;
+  if (/[\\|()[\]{}*+?]/.test(core)) return false;
+
+  const segments = core.split(/\.|::/);
+  if (segments.length > 1) {
+    return segments.every((s) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s));
+  }
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(core)) return false;
+  const hasUnderscore = core.includes("_");
+  const hasCamelHump = /[a-z][A-Z]/.test(core) || /[A-Z][a-z][A-Za-z]*[A-Z]/.test(core);
+  const hasSigil = /^[_$]/.test(core);
+  return hasUnderscore || hasCamelHump || hasSigil;
+}
+
+// Graph-first policy (gated on ANCHORAGE_GRAPH_FIRST_GUARD=1, set only by the
+// coder and planner): refuse a grep whose pattern is a bare symbol and redirect
+// to the index tools, which are symbol-aware and cross re-exports a substring
+// grep misses. Mirrors coderShellPolicyGuard in shell.ts. Returns a refusal
+// message, or null to allow. Free-form text search is unaffected.
+export function symbolGrepGuard(pattern: string, env: Record<string, string>): string | null {
+  if (env.ANCHORAGE_GRAPH_FIRST_GUARD !== "1") return null;
+  if (!looksLikeSymbolPattern(pattern)) return null;
+  return (
+    `grep: refusing to search for the bare symbol \`${pattern}\`. To locate where a named ` +
+    `symbol is defined or used, the index tools are exact and cheaper: find_references (definition + ` +
+    `call sites), locate_change (where to edit it), impact (its blast radius). Use grep only for ` +
+    `free-form text (a string literal, a TODO, a regex). If you truly need a substring search, add a ` +
+    `regex metacharacter or scope it with 'path'.`
+  );
 }
 
 export const grepTool: ToolDefinition = {
