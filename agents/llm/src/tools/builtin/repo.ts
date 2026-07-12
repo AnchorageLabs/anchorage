@@ -8,7 +8,7 @@ import { cartographerTools } from "./cartographer.js";
 import { changeTools } from "./change-tools.js";
 import { repoParamSchema, repoScopedKey, resolveRepoRoot } from "./context-repos.js";
 import { repoMapTool } from "./repo-map.js";
-import { symbolTools } from "./symbols.js";
+import { findReferencesTool, symbolTools } from "./symbols.js";
 
 // Keep an already-built symbol index in sync after a workspace write, so the
 // next impact / find_references / locate_change call in the same run sees the
@@ -300,9 +300,16 @@ async function grepHandler(input: JsonObject, ctx: ToolContext): Promise<ToolHan
   if (!pattern) {
     return { ok: false, code: "invalid_input", message: "grep requires a 'pattern' string." };
   }
-  const graphFirstBlock = symbolGrepGuard(pattern, ctx.env);
-  if (graphFirstBlock) {
-    return { ok: false, code: "graph_first_policy", message: graphFirstBlock };
+  // Graph-first: a grep for a bare symbol is answered FROM THE INDEX, in this
+  // same tool_result — not refused. A refusal costs the model a full extra LLM
+  // round-trip and, in the field, sent models into grep-variant retry spirals
+  // (370 refused calls in one run). Serving find_references' answer in the
+  // grep slot costs zero extra turns and the model just gets better data. When
+  // the index has nothing for the symbol, fall through and run the real grep —
+  // never leave the model with a refusal and no way forward.
+  if (symbolGrepGuard(pattern, ctx.env)) {
+    const viaGraph = await grepViaSymbolIndex(pattern, input, ctx);
+    if (viaGraph) return viaGraph;
   }
   const requestedPath = typeof input.path === "string" ? input.path : "";
   const repoRes = resolveRepoRoot(input, ctx);
@@ -393,20 +400,67 @@ export function looksLikeSymbolPattern(pattern: string): boolean {
 }
 
 // Graph-first policy (gated on ANCHORAGE_GRAPH_FIRST_GUARD=1, set only by the
-// coder and planner): refuse a grep whose pattern is a bare symbol and redirect
-// to the index tools, which are symbol-aware and cross re-exports a substring
-// grep misses. Mirrors coderShellPolicyGuard in shell.ts. Returns a refusal
-// message, or null to allow. Free-form text search is unaffected.
-export function symbolGrepGuard(pattern: string, env: Record<string, string>): string | null {
-  if (env.ANCHORAGE_GRAPH_FIRST_GUARD !== "1") return null;
-  if (!looksLikeSymbolPattern(pattern)) return null;
-  return (
-    `grep: refusing to search for the bare symbol \`${pattern}\`. To locate where a named ` +
-    `symbol is defined or used, the index tools are exact and cheaper: find_references (definition + ` +
-    `call sites), locate_change (where to edit it), impact (its blast radius). Use grep only for ` +
-    `free-form text (a string literal, a TODO, a regex). If you truly need a substring search, add a ` +
-    `regex metacharacter or scope it with 'path'.`
-  );
+// coder and planner): a grep whose pattern is a bare symbol is served from the
+// symbol index (see grepViaSymbolIndex) instead of a substring scan — the index
+// is symbol-aware and crosses re-exports a substring grep misses. Returns true
+// when the pattern qualifies. Free-form text search is unaffected.
+export function symbolGrepGuard(pattern: string, env: Record<string, string>): boolean {
+  if (env.ANCHORAGE_GRAPH_FIRST_GUARD !== "1") return false;
+  return looksLikeSymbolPattern(pattern);
+}
+
+// The identifier find_references should resolve for a symbol-shaped grep
+// pattern: anchors stripped; a qualified name (Foo.bar / a::b) resolves its
+// LAST segment (the member actually being located).
+export function symbolFromGrepPattern(pattern: string): string {
+  const core = pattern.trim().replace(/^\^/, "").replace(/\$$/, "");
+  const segments = core.split(/\.|::/);
+  return segments[segments.length - 1] ?? core;
+}
+
+// Answer a symbol-shaped grep FROM the index by delegating to find_references
+// and returning its output in the grep result slot. Returns null when the index
+// has no usable answer (no store, unsupported language, zero references) — the
+// caller then runs the real grep. The header names the delegation so the run
+// ledger and the model both see exactly what happened; meta.viaSymbolIndex lets
+// telemetry count how often the graph absorbed a grep.
+async function grepViaSymbolIndex(
+  pattern: string,
+  input: JsonObject,
+  ctx: ToolContext,
+): Promise<ToolHandlerResult | null> {
+  const symbol = symbolFromGrepPattern(pattern);
+  const delegated: JsonObject = { symbol };
+  if (typeof input.path === "string" && input.path.trim().length > 0) delegated.path = input.path;
+  if (typeof input.repo === "string") delegated.repo = input.repo;
+
+  let result: ToolHandlerResult;
+  try {
+    result = await findReferencesTool.handler(delegated, ctx);
+  } catch {
+    return null; // engine hiccup — the real grep still serves the model
+  }
+  // Only a real symbol answer replaces the grep. find_references fails closed
+  // (ok:true + meta.symbolData:false note) for unsupported/missing data; both
+  // that and hard errors fall back to the actual grep.
+  if (!result.ok) return null;
+  const hasData =
+    typeof result.meta === "object" && result.meta !== null
+      ? (result.meta as Record<string, unknown>).symbolData === true
+      : false;
+  if (!hasData || typeof result.output !== "string") return null;
+
+  const body =
+    `=== grep /${pattern}/ → resolved via symbol index (find_references: ${symbol}) ===\n` +
+    `${result.output}\n` +
+    `[graph-first: exact definition + reference sites from the index, instead of substring matches. ` +
+    `For blast radius use impact(${symbol}); to edit it use locate_change.]`;
+  return {
+    ok: true,
+    output: body,
+    bytesOut: body.length,
+    meta: { ...result.meta, pattern, viaSymbolIndex: true },
+  };
 }
 
 export const grepTool: ToolDefinition = {
