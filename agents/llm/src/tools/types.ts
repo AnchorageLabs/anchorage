@@ -289,6 +289,7 @@ export type RunWithToolsResult =
         | "provider_error"
         | "invalid_tool_call"
         | "model_loop_divergent"
+        | "output_truncated"
         | "terminal_tool_not_called";
       message: string;
       reason?: BudgetExceededReason;

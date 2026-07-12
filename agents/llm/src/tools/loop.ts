@@ -43,6 +43,15 @@ export async function runWithTools(
   const messages: LoopMessage[] = [...request.messages];
   const toolCalls: ToolCallRecord[] = [];
   let terminalNudgeUsed = false;
+  // Consecutive turns that ended with NO tool calls because the model was cut
+  // off at the output-token limit (stopReason "length"/"max_tokens"). A
+  // truncated turn is NOT a finished answer — the model ran out of room mid-
+  // response, frequently before it could emit its edits — so it must not be
+  // treated as a clean terminal turn (that is how a coder produces an empty,
+  // false "no changes"/"already implemented" result). We prod it to continue;
+  // a turn that DOES make tool calls resets the counter, so a run that keeps
+  // making progress but happens to truncate is never penalized.
+  let truncatedContinues = 0;
 
   // Lossless history dedup: agents routinely re-read a file or re-run a grep
   // they already issued (the repeatedSymbolGrep / grepReadChurn signals measure
@@ -196,6 +205,38 @@ export async function runWithTools(
     }
 
     if (toolUses.length === 0) {
+      // Truncated-at-length turn with nothing to show. The model was cut off by
+      // the per-turn output cap before finishing (and before emitting any tool
+      // call), so this is an INCOMPLETE turn, not a terminal one. Prod it to
+      // continue where it left off; only after it keeps truncating with no
+      // progress do we fail explicitly — never silently return ok:true with a
+      // partial answer, which downstream reads as an empty diff / "no changes".
+      if (isTruncatedStop(turnResult.stopReason)) {
+        if (truncatedContinues < MAX_TRUNCATION_CONTINUES) {
+          truncatedContinues += 1;
+          messages.push({
+            role: "user",
+            content:
+              "Your previous message was cut off at the output-token limit before it was " +
+              "complete. Continue from exactly where you stopped. Keep any remaining prose short " +
+              "and make the concrete tool calls (e.g. edit_file / write_file) needed to finish — " +
+              "do not restate your plan or repeat what you already wrote.",
+          });
+          continue;
+        }
+        return {
+          ok: false,
+          code: "output_truncated",
+          message:
+            `${provider.name} (${provider.model}) repeatedly hit the output-token limit ` +
+            `(stopReason '${turnResult.stopReason}') without completing — it produced no final ` +
+            `answer and no tool calls, so no change was applied. Raise ` +
+            `ANCHORAGE_CODER_MAX_TOKENS_PER_TURN or use a less verbose model.`,
+          messages,
+          toolCalls,
+          snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
+        };
+      }
       if (request.terminalTool) {
         // The model tried to finish with plain text. Nudge it once — a cheap
         // correction beats failing the whole run — then give up so a divergent
@@ -228,6 +269,10 @@ export async function runWithTools(
         snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
       };
     }
+
+    // The model acted this turn — real progress — so a prior length-truncation
+    // no longer counts against it: reset the consecutive-truncation guard.
+    truncatedContinues = 0;
 
     // Dispatch each requested tool sequentially. Anthropic and OpenAI both
     // accept multiple tool_use blocks per turn; serializing keeps budget
@@ -540,6 +585,20 @@ function contextNudge(signal: string): string {
     default:
       return "[context guard] Consider find_references / impact / repo_map to narrow context.";
   }
+}
+
+// Max consecutive length-truncated turns (no tool calls) we prod to continue
+// before failing the run honestly. A turn that makes a tool call resets the
+// count, so this only trips when a model keeps emitting truncated prose without
+// ever acting — not on a run that is truncating but still making progress.
+const MAX_TRUNCATION_CONTINUES = 3;
+
+// True when a turn ended because it hit the output-token cap rather than because
+// the model chose to stop. Provider-agnostic: OpenAI/OpenRouter report "length",
+// Anthropic "max_tokens", Bedrock "max_tokens" — all mean the same truncation.
+function isTruncatedStop(stopReason: string | null): boolean {
+  if (!stopReason) return false;
+  return /^(length|max_tokens|max_output_tokens|model_length)$/i.test(stopReason.trim());
 }
 
 function isToolUseBlock(block: ContentBlock): block is ToolUseBlock {

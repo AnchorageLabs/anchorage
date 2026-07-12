@@ -29,6 +29,20 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-07-12 — Coder no longer reports an empty "no changes" when its turn was truncated at the output-token limit.
+
+**Intent:** A coder run that produced no diff and was reported as "no changes needed / already implemented" was, in the field, frequently a turn the model never finished: the tool loop treated ANY assistant turn with no tool_use blocks as a successful terminal turn, ignoring `stopReason`. A turn cut off at the output-token cap (`stopReason` "length"/"max_tokens") has no complete tool call, so the loop returned success with partial text and the coder wrote an empty `no_changes` result — a false "already implemented". Reasoning models (e.g. deepseek-v4-pro) hit this constantly because their chain-of-thought counts as output tokens and blows the per-turn cap before they emit their edits. The loop now detects a length-truncated no-tool turn, prods the model to continue (up to 3 consecutive; the counter resets on any turn that makes a tool call), and if it keeps truncating with no progress fails honestly with `output_truncated` instead of a silent empty success — so these runs either recover and make the change or fail visibly. The coder's default per-turn output cap is raised 8000 → 16000 (still env-overridable via `ANCHORAGE_CODER_MAX_TOKENS_PER_TURN`, kept under lower-capacity Anthropic models' output ceiling) so a reasoning turn can think and act in one shot.
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/types.ts
+- agents/coder/src/index.ts
+- agents/llm/test/loop-truncation.test.mjs
+
+**Reason:** RDS run forensics 2026-07-12 — HalleyScore/teramot-aleph run_srv_1783879796612_0 (deepseek/deepseek-v4-pro) read the correct files but made zero edits; final LLM event carried `stopReason: "length"`, and the truncated turn was reported as a graceful `no_changes_needed`.
+
+**Author:** Sol Soletti
+
 ### 2026-07-06 — issue-opener drafts straight from an accepted clarify brief, skipping repository exploration.
 
 **Intent:** When the instruction is a brief the user already reviewed and accepted in the clarify chat (a repo-grounded issue with desired outcome, acceptance criteria, and an "Assumptions" section), issue-opener no longer runs its repository-exploration tool loop to re-derive the issue. A new `input.briefReady` flag (set by the orchestrator when the run carries a clarify transcript) makes it format the accepted brief into the GitHub issue in a single faithful-formatting call (`draftFromBrief`), falling back to the deterministic draft if that call can't produce valid JSON. Re-exploring was redundant with the clarification pass and slow on large repos (observed ~5 min for the open-issue step on teramot-aleph, ~91% LLM time). Raw instructions with no clarify pass leave `briefReady` unset and keep the full exploration behavior.
