@@ -29,6 +29,21 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-07-12 — Divergent-loop terminal guard, grep answered from the symbol index in-turn, and triage complexity for fast-coder routing.
+
+**Intent:** Three turn-efficiency fixes from the 2026-07-12 RDS audit (254 runs / 21 days; wall time = LLM latency × turn count, and wasted turns dominate the slow tail — slow runs are the top cause of user-canceled ones). (1) Loop refusals (repeat_backstop / duplicate-grep enforce / unknown tool) cost ~1ms of tool time but a FULL LLM round-trip each; a field run retried refused greps **370×** (~1h of pure model latency) before dying as a bogus "no changes". After 12 consecutive loop-refusals with no dispatched call between them, the run now fails honestly as `model_loop_divergent`; any productive call resets the counter. (2) The graph-first guard no longer REFUSES a bare-symbol grep — a refusal is what sent models into grep-variant spirals. The grep is now answered FROM the symbol index (find_references' output returned in the grep's own tool_result slot — zero extra turns, `meta.viaSymbolIndex` for telemetry), falling back to the real grep whenever the index has no answer, so the model is never left without a way forward. (3) issue-triage now classifies implementation `complexity` (low/medium/high, defaulting medium on omission); the orchestrator routes "low" tasks' code-writing steps to a fast coder model (haiku-class ~3.3s/turn × 44 turns measured vs reasoning coders 12.5s × 54 — minutes instead of tens of minutes).
+
+**Files touched:**
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/builtin/repo.ts
+- agents/issue-triage/src/index.ts
+- agents/llm/test/loop-refusal-terminal.test.mjs
+- agents/llm/test/graph-first-grep.test.mjs
+
+**Reason:** RDS audit 2026-07-12 — run_srv_1783702280009_1528 burned 370 refused greps (88% of its 438 tool calls); grep 14.8% global failure rate; lexical:graph tool usage 12:1 despite a healthy, fresh index; "canceled by bridge" (user impatience) the single largest failure bucket.
+
+**Author:** Sol Soletti
+
 ### 2026-07-12 — Coder no longer reports an empty "no changes" when its turn was truncated at the output-token limit.
 
 **Intent:** A coder run that produced no diff and was reported as "no changes needed / already implemented" was, in the field, frequently a turn the model never finished: the tool loop treated ANY assistant turn with no tool_use blocks as a successful terminal turn, ignoring `stopReason`. A turn cut off at the output-token cap (`stopReason` "length"/"max_tokens") has no complete tool call, so the loop returned success with partial text and the coder wrote an empty `no_changes` result — a false "already implemented". Reasoning models (e.g. deepseek-v4-pro) hit this constantly because their chain-of-thought counts as output tokens and blows the per-turn cap before they emit their edits. The loop now detects a length-truncated no-tool turn, prods the model to continue (up to 3 consecutive; the counter resets on any turn that makes a tool call), and if it keeps truncating with no progress fails honestly with `output_truncated` instead of a silent empty success — so these runs either recover and make the change or fail visibly. The coder's default per-turn output cap is raised 8000 → 16000 (still env-overridable via `ANCHORAGE_CODER_MAX_TOKENS_PER_TURN`, kept under lower-capacity Anthropic models' output ceiling) so a reasoning turn can think and act in one shot.

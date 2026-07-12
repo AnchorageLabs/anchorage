@@ -95,6 +95,16 @@ export async function runWithTools(
   // error list shrinks, a file re-read after an edit) resets and never trips.
   const repeatLastOutput = new Map<string, string>();
   const repeatUnproductiveRuns = new Map<string, number>();
+  // Terminal refusal guard: refusals issued BY THE LOOP (repeat_backstop,
+  // duplicate-grep enforce, unknown tool) cost ~1ms of tool time but a FULL LLM
+  // round-trip each — observed in the field: a coder retried refused greps 370
+  // times in a row (~1h of pure model latency) before exhausting its budget and
+  // surfacing a bogus "no changes". A refusal tells the model to change course;
+  // a model that keeps hitting refusals without a single dispatched call in
+  // between is divergent and will not recover. Count consecutive loop-refusals
+  // across calls/turns; ANY dispatched call (even one whose handler errors —
+  // that is real feedback) resets. Past the limit, fail the run honestly.
+  let consecutiveLoopRefusals = 0;
   const nudgesFired = new Set<string>();
   let grepReadChurn = 0;
   let prevToolName: string | null = null;
@@ -387,6 +397,26 @@ export async function runWithTools(
         turn: turnNumber,
       });
 
+      // Terminal refusal guard bookkeeping (see declaration above): the three
+      // loop-refusal shapes increment; any dispatched call resets.
+      const wasLoopRefusal = repeatingUnchanged || (enforceEnabled && duplicateGrep) || !tool;
+      consecutiveLoopRefusals = wasLoopRefusal ? consecutiveLoopRefusals + 1 : 0;
+      if (consecutiveLoopRefusals >= LOOP_REFUSAL_TERMINAL_LIMIT) {
+        return {
+          ok: false,
+          code: "model_loop_divergent",
+          message:
+            `The model made ${consecutiveLoopRefusals} consecutive tool calls that were refused ` +
+            `by the loop guards (repeated identical calls / unavailable tools) without a single ` +
+            `productive call in between — it is stuck and burning a full LLM round-trip per ` +
+            `refusal. Stopping honestly instead of exhausting the budget. Last refused call: ` +
+            `${use.name}.`,
+          messages,
+          toolCalls,
+          snapshot: snapshotOf(budget, toolCalls, [...nudgesFired]),
+        };
+      }
+
       // Repeat-backstop bookkeeping: count consecutive identical-output runs of
       // this exact (tool, input). Uses the raw outcome (before the nudge/dedup
       // rewrite of `content` below) and the FULL output — not a short preview —
@@ -559,6 +589,15 @@ const CONTEXT_CHURN_NUDGE_AT = 3;
 // never trips it; low enough to kill a 200+ repeat spiral early — including the
 // re-read loop that blew past the model's context window.
 const REPEAT_BACKSTOP_LIMIT = 3;
+
+// Consecutive loop-refused calls (repeat_backstop / duplicate-grep enforce /
+// unknown tool) after which the run is failed as divergent. Each refusal costs a
+// full LLM round-trip (~10s of model latency for ~1ms of tool time), so a model
+// that racks up this many in a row with zero dispatched calls between them is
+// spiraling, not recovering — the field case burned 370 before budget exhaustion.
+// Generous enough that a model that alternates a refusal with real work never
+// trips (any dispatched call resets the count).
+const LOOP_REFUSAL_TERMINAL_LIMIT = 12;
 
 // One-time guidance appended to a tool result when a context-miss signal fires.
 // Purely additive — it suggests cheaper tools, never withholds anything.
