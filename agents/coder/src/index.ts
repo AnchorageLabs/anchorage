@@ -482,7 +482,14 @@ async function driveCoderLoop(
     ...webTools,
   ];
 
-  const maxTokensPerTurn = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS_PER_TURN ?? 8000);
+  // Per-turn output cap. 8000 was tuned for terse tool-calling models, but
+  // reasoning models (e.g. deepseek-v4-pro) spend most of a turn on chain-of-
+  // thought that counts as output tokens, so they routinely hit the cap and get
+  // truncated BEFORE emitting their edits — the loop now recovers from that, but
+  // a higher default lets a reasoning turn finish (think + act) in one shot
+  // instead of burning continue-turns. Kept env-overridable and modest so it
+  // stays under the output ceiling of the lower-capacity Anthropic models.
+  const maxTokensPerTurn = Number(process.env.ANCHORAGE_CODER_MAX_TOKENS_PER_TURN ?? 16000);
   const contextMounts = contextReposFromEnvelope(task.contextRepos);
   // Pre-computed repo facts (cartographer). Refreshes the artifact (no-op on an
   // unchanged tree) and saves the model its orientation tool turns. Empty
