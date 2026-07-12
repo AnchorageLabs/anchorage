@@ -43,7 +43,11 @@ const editTool = (calls) => [
   },
 ];
 
-const base = { system: "test", messages: [{ role: "user", content: "go" }], workspacePath: process.cwd() };
+const base = {
+  system: "test",
+  messages: [{ role: "user", content: "go" }],
+  workspacePath: process.cwd(),
+};
 
 test("length-truncated turn with no tool calls is prodded to continue, then recovers", async () => {
   const calls = [];
@@ -51,7 +55,10 @@ test("length-truncated turn with no tool calls is prodded to continue, then reco
   // the model makes its edit and finishes cleanly.
   const p = provider([
     { content: [{ type: "text", text: "Let me think abou…" }], stopReason: "length" },
-    { content: [{ type: "tool_use", id: "e1", name: "edit_file", input: { path: "a.ts" } }], stopReason: "end_turn" },
+    {
+      content: [{ type: "tool_use", id: "e1", name: "edit_file", input: { path: "a.ts" } }],
+      stopReason: "end_turn",
+    },
     { content: [{ type: "text", text: "Done." }], stopReason: "end_turn" },
   ]);
 
@@ -82,22 +89,37 @@ test("truncation counter resets on progress: truncate→act→truncate→act sti
   // truncations in total but never 4 in a row, so the run is never failed.
   const p = provider([
     { content: [{ type: "text", text: "…" }], stopReason: "length" },
-    { content: [{ type: "tool_use", id: "e1", name: "edit_file", input: { path: "a" } }], stopReason: "end_turn" },
+    {
+      content: [{ type: "tool_use", id: "e1", name: "edit_file", input: { path: "a" } }],
+      stopReason: "end_turn",
+    },
     { content: [{ type: "text", text: "…" }], stopReason: "length" },
-    { content: [{ type: "tool_use", id: "e2", name: "edit_file", input: { path: "b" } }], stopReason: "end_turn" },
+    {
+      content: [{ type: "tool_use", id: "e2", name: "edit_file", input: { path: "b" } }],
+      stopReason: "end_turn",
+    },
     { content: [{ type: "text", text: "…" }], stopReason: "length" },
-    { content: [{ type: "tool_use", id: "e3", name: "edit_file", input: { path: "c" } }], stopReason: "end_turn" },
+    {
+      content: [{ type: "tool_use", id: "e3", name: "edit_file", input: { path: "c" } }],
+      stopReason: "end_turn",
+    },
     { content: [{ type: "text", text: "All done." }], stopReason: "end_turn" },
   ]);
 
   const result = await runWithTools(p, { ...base, tools: editTool(calls) });
 
   assert.equal(result.ok, true);
-  assert.equal(calls.length, 3, "each acting turn ran its edit; truncations between them did not fail the run");
+  assert.equal(
+    calls.length,
+    3,
+    "each acting turn ran its edit; truncations between them did not fail the run",
+  );
 });
 
 test("a clean end_turn with no tool calls is unaffected (still a terminal success)", async () => {
-  const p = provider([{ content: [{ type: "text", text: "final answer" }], stopReason: "end_turn" }]);
+  const p = provider([
+    { content: [{ type: "text", text: "final answer" }], stopReason: "end_turn" },
+  ]);
   const result = await runWithTools(p, { ...base, tools: editTool([]) });
   assert.equal(result.ok, true);
   assert.equal(result.finalText, "final answer");
