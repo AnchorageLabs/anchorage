@@ -137,6 +137,7 @@ export async function runWithTools(
       };
     }
 
+    const turnStartedAt = Date.now();
     const turnResult = await provider.requestTurn({
       system: request.system,
       messages,
@@ -144,6 +145,10 @@ export async function runWithTools(
       maxTokens: request.maxTokensPerTurn ?? 4096,
       temperature: request.temperature,
     });
+    // Model wall time (including in-turn rate-limit retries) — accumulated on
+    // ok AND error turns so a run that dies on a slow provider still reports
+    // where its time went.
+    budget.llmMsTotal += Date.now() - turnStartedAt;
 
     if (!turnResult.ok) {
       return {
@@ -685,6 +690,7 @@ function snapshotOf(
     outputTokensTotal: number;
     cacheReadInputTokensTotal: number;
     cacheCreationInputTokensTotal: number;
+    llmMsTotal: number;
   },
   toolCalls: ToolCallRecord[],
   nudgesFired: string[],
@@ -698,6 +704,7 @@ function snapshotOf(
     shellCalls: budget.shellCalls,
     inputTokensTotal: budget.inputTokensTotal,
     outputTokensTotal: budget.outputTokensTotal,
+    llmMsTotal: budget.llmMsTotal,
     cacheReadInputTokensTotal: budget.cacheReadInputTokensTotal,
     cacheCreationInputTokensTotal: budget.cacheCreationInputTokensTotal,
     filesReadCapHit: miss.filesReadCapHit,

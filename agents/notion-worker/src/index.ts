@@ -83,6 +83,7 @@ async function main(): Promise<number> {
     output: {
       ...llmEventInput(auth.value),
       stopReason: actResult.value.stopReason,
+      durationMs: actResult.value.llmMs,
       toolTurns: actResult.value.toolTurns,
       inputTokens: actResult.value.inputTokens,
       outputTokens: actResult.value.outputTokens,
@@ -231,6 +232,7 @@ async function driveWorkerLoop(
       toolTurns: result.snapshot.toolTurns,
       inputTokens: result.snapshot.inputTokensTotal,
       outputTokens: result.snapshot.outputTokensTotal,
+      llmMs: result.snapshot.llmMsTotal,
     },
   };
 }
@@ -409,6 +411,8 @@ interface WorkerLoopResult {
   toolTurns: number;
   inputTokens: number;
   outputTokens: number;
+  /** Model wall time for the loop (snapshot.llmMsTotal). */
+  llmMs: number;
 }
 
 type NotionTaskResult = ProtocolEvent["data"] & {
