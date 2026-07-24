@@ -166,6 +166,9 @@ async function main(): Promise<number> {
     output: {
       ...llmEventInput(auth.value),
       stopReason: codeResult.value.stopReason,
+      // Model wall time for the whole loop; persisted to llm_calls.latency_ms
+      // (durationMs / toolTurns ≈ per-turn latency).
+      durationMs: codeResult.value.snapshot.llmMsTotal,
       toolTurns: codeResult.value.snapshot.toolTurns,
       filesRead: codeResult.value.snapshot.filesRead.length,
       shellCalls: codeResult.value.snapshot.shellCalls,

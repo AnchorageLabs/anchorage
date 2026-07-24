@@ -161,6 +161,11 @@ export interface BudgetState extends BudgetConfig {
   webCalls: number;
   shellCalls: number;
   bytesAcquired: number;
+  // Wall-clock ms spent awaiting the model provider across the run (every
+  // requestTurn, including its in-turn rate-limit retries). The "model latency
+  // × turns" half of run duration — previously unmeasured anywhere
+  // (llm_calls.latency_ms was NULL on 100% of rows, 2026-07-24 audit).
+  llmMsTotal: number;
 }
 
 export type BudgetExceededReason =
@@ -230,6 +235,10 @@ export interface ContextSnapshot {
   shellCalls: number;
   inputTokensTotal: number;
   outputTokensTotal: number;
+  // Total wall-clock ms spent awaiting the model provider (see
+  // BudgetState.llmMsTotal). llmMsTotal / toolTurns ≈ per-turn model latency —
+  // the metric that separates a slow model from a turn-hungry one.
+  llmMsTotal: number;
   // Prompt-cache token totals across the run (0 when the provider doesn't
   // report cache usage). cacheRead is billed ~10% of input and cacheCreation
   // ~125%; together with inputTokensTotal (the uncached remainder) they give the

@@ -50,6 +50,7 @@ export function createBudgetState(overrides: Partial<BudgetConfig> = {}): Budget
     webCalls: 0,
     shellCalls: 0,
     bytesAcquired: 0,
+    llmMsTotal: 0,
   };
 }
 

@@ -164,6 +164,7 @@ async function main(): Promise<number> {
     output: {
       ...llmEventInput(auth.value),
       stopReason: reviewResult.value.stopReason,
+      durationMs: reviewResult.value.snapshot.llmMsTotal,
       toolTurns: reviewResult.value.snapshot.toolTurns,
       filesRead: reviewResult.value.snapshot.filesRead.length,
       webCalls: reviewResult.value.snapshot.webCalls,

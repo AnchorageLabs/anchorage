@@ -136,9 +136,16 @@ async function main(): Promise<number> {
       provider: llmConfig.value.provider,
       model: llmConfig.value.model,
       stopReason: result.stopReason,
+      durationMs: result.snapshot.llmMsTotal,
       toolTurns: result.snapshot.toolTurns,
       filesRead: result.snapshot.filesRead.length,
       webCalls: result.snapshot.webCalls,
+      // Top-level token fields: the orchestrator's llm_calls persist reads
+      // output.inputTokens directly and SKIPPED triage events while the tokens
+      // only lived under `usage` (why triage rows were absent from llm_calls).
+      // `usage` stays for any consumer already reading the nested shape.
+      inputTokens: result.snapshot.inputTokensTotal,
+      outputTokens: result.snapshot.outputTokensTotal,
       usage: {
         inputTokens: result.snapshot.inputTokensTotal,
         outputTokens: result.snapshot.outputTokensTotal,

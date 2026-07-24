@@ -435,6 +435,7 @@ async function createPlan(
     output: {
       ...llmEventInput(config.value),
       stopReason: result.stopReason,
+      durationMs: snapshot.llmMsTotal,
       toolTurns: snapshot.toolTurns,
       filesRead: snapshot.filesRead.length,
       webCalls: snapshot.webCalls,
