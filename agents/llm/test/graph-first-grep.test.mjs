@@ -97,3 +97,54 @@ test("qualified pattern resolves its last segment against the index", async () =
   assert.equal(res.meta.viaSymbolIndex, true);
   assert.match(res.output, /find_references: computeTotal/);
 });
+
+// ── Plain-identifier tier (2026-07-24: absorption fired on 0.4% of greps) ────
+
+async function makePlainWordRepo() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "anc-gfg-plain-"));
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(
+    path.join(root, "src", "graph.ts"),
+    "export function materialize(input) {\n  return input;\n}\n// error handling note\nexport function error(msg) {\n  return new Error(msg);\n}\n",
+  );
+  await writeFile(
+    path.join(root, "src", "user.ts"),
+    "import { materialize } from './graph.js';\nexport const g = materialize({});\n",
+  );
+  git(root, "init");
+  git(root, "add", "-A");
+  clearIndexStore(root);
+  return root;
+}
+
+test("plain lowercase word that IS an indexed symbol gets absorbed", async () => {
+  const root = await makePlainWordRepo();
+  const res = await grep.handler({ pattern: "materialize" }, ctxFor(root, GUARD_ON));
+  assert.equal(res.ok, true, "never a refusal");
+  assert.equal(res.meta.viaSymbolIndex, true);
+  assert.match(res.output, /find_references: materialize/);
+  assert.match(res.output, /src\/user\.ts/, "reference site present");
+});
+
+test("stoplist word stays a text grep even when a same-named symbol exists", async () => {
+  const root = await makePlainWordRepo();
+  const res = await grep.handler({ pattern: "error" }, ctxFor(root, GUARD_ON));
+  assert.equal(res.ok, true);
+  assert.equal(res.meta.viaSymbolIndex, undefined, "free-text search preserved");
+  assert.match(res.output, /error handling note/, "comment match not hidden");
+});
+
+test("plain word absent from the index falls through to the real grep", async () => {
+  const root = await makePlainWordRepo();
+  const res = await grep.handler({ pattern: "shenanigans" }, ctxFor(root, GUARD_ON));
+  assert.equal(res.ok, true);
+  assert.equal(res.meta.viaSymbolIndex, undefined);
+  assert.match(res.output, /no matches for/);
+});
+
+test("short words (<4 chars) never enter the plain tier", async () => {
+  const root = await makePlainWordRepo();
+  const res = await grep.handler({ pattern: "gra" }, ctxFor(root, GUARD_ON));
+  assert.equal(res.ok, true);
+  assert.equal(res.meta.viaSymbolIndex, undefined);
+});
