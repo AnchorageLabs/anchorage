@@ -399,14 +399,76 @@ export function looksLikeSymbolPattern(pattern: string): boolean {
   return hasUnderscore || hasCamelHump || hasSigil;
 }
 
-// Graph-first policy (gated on ANCHORAGE_GRAPH_FIRST_GUARD=1, set only by the
-// coder and planner): a grep whose pattern is a bare symbol is served from the
+// Plain single words developers routinely grep as FREE TEXT (in comments,
+// strings, logs). These never enter the plain-identifier absorption tier even
+// when a same-named symbol exists — a text search for "error" must stay a text
+// search. Structured identifiers (camelCase/underscore/sigil) are exempt from
+// this list: `parseError` is clearly a symbol, "error" is ambiguous.
+const PLAIN_WORD_GREP_STOPLIST = new Set([
+  "error",
+  "errors",
+  "warning",
+  "test",
+  "tests",
+  "todo",
+  "fixme",
+  "hack",
+  "note",
+  "debug",
+  "deprecated",
+  "import",
+  "export",
+  "return",
+  "function",
+  "class",
+  "const",
+  "async",
+  "await",
+  "main",
+  "index",
+  "config",
+  "data",
+  "value",
+  "values",
+  "type",
+  "types",
+  "name",
+  "file",
+  "files",
+  "path",
+  "paths",
+  "true",
+  "false",
+  "null",
+  "undefined",
+  "version",
+  "license",
+  "copyright",
+]);
+
+// Second absorption tier (2026-07-24: absorption fired on only 16/4,371 greps
+// — 0.4% — while ≥13% of identifier-shaped greps were index-resolvable): a
+// plain single word that is identifier-shaped and not a common free-text word
+// QUALIFIES FOR AN ABSORPTION ATTEMPT. This is safe to be generous with:
+// grepViaSymbolIndex only replaces the grep when the index returns REAL data
+// for that exact symbol; otherwise the actual grep runs. So "Indexer" or
+// "materialize" get the graph's exact answer when the symbol exists, and free
+// text falls through untouched.
+export function looksLikePlainIdentifier(pattern: string): boolean {
+  const core = pattern.trim().replace(/^\^/, "").replace(/\$$/, "");
+  if (core.length < 4 || core.length > 80) return false;
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(core)) return false;
+  return !PLAIN_WORD_GREP_STOPLIST.has(core.toLowerCase());
+}
+
+// Graph-first policy (gated on ANCHORAGE_GRAPH_FIRST_GUARD=1, set by agents
+// that navigate code): a grep whose pattern is a bare symbol is served from the
 // symbol index (see grepViaSymbolIndex) instead of a substring scan — the index
 // is symbol-aware and crosses re-exports a substring grep misses. Returns true
 // when the pattern qualifies. Free-form text search is unaffected.
 export function symbolGrepGuard(pattern: string, env: Record<string, string>): boolean {
   if (env.ANCHORAGE_GRAPH_FIRST_GUARD !== "1") return false;
-  return looksLikeSymbolPattern(pattern);
+  return looksLikeSymbolPattern(pattern) || looksLikePlainIdentifier(pattern);
 }
 
 // The identifier find_references should resolve for a symbol-shaped grep

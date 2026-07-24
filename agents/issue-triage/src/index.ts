@@ -100,7 +100,9 @@ async function main(): Promise<number> {
     terminalTool: "submit_triage",
     workspacePath: workspacePath ?? process.cwd(),
     capabilities: new Set(task.value.capabilities ?? []),
-    env: { ...process.env } as Record<string, string>,
+    // Graph-first absorption (see repo.ts symbolGrepGuard): triage explores the
+    // repo to size an issue — a bare-symbol grep gets the index's exact answer.
+    env: { ...process.env, ANCHORAGE_GRAPH_FIRST_GUARD: "1" } as Record<string, string>,
     maxTokensPerTurn: 1200,
     temperature: 0.1,
     onEvent: (event) => emitToolEvent(task.value, event),

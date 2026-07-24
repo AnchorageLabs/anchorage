@@ -473,7 +473,10 @@ async function requestReview(
     workspacePath: workspacePath ?? process.cwd(),
     contextRepos: contextMounts,
     capabilities: new Set(task.capabilities ?? []),
-    env: { ...process.env } as Record<string, string>,
+    // Graph-first absorption (see repo.ts symbolGrepGuard): a bare-symbol grep
+    // is answered from the symbol index when it has real data. Previously only
+    // the coder/planner set this; the reviewer navigates code the same way.
+    env: { ...process.env, ANCHORAGE_GRAPH_FIRST_GUARD: "1" } as Record<string, string>,
     maxTokensPerTurn: 4000,
     temperature: 0.1,
     onEvent: (event) => emitToolEvent(task, event),
