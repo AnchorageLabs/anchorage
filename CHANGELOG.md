@@ -42,7 +42,9 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 The extraction surface was found with `cartographer deps agents/coder/src/index.ts:753-803`, which reported the two module-scope helpers to move in one command — the query added yesterday for exactly this shape of refactor.
 
-20 new assertions; 101 now running across the three packages where 4 ran before. Also ignores `*.tsbuildinfo`, which the build drops next to each package and nothing ignored.
+**`pr-opener` too** — third by churn (40 commits, 3,149 lines), same story: nothing exported. `content.ts` now owns what the PR actually SAYS, which is the first thing a human reads on an agent's work. Pinned: no heading is ever followed by whitespace (an empty `## Why` reads as a broken template and a reviewer who sees one stops trusting the body); `## Notes` is omitted rather than filled, since there is no honest default for "anything else worth knowing"; `Closes #N` appears exactly when there is an issue, because omitting it leaves the issue open after the work merged; and a first summary line over 60 characters is NOT used as a title, since GitHub does not wrap them — which is the whole reason the branch-name fallback exists.
+
+36 new assertions; **198 now running** across five packages where 85 ran before. Also ignores `*.tsbuildinfo`, which the build drops next to each package and nothing ignored.
 
 **Files touched:**
 - agents/coder/src/summary.ts (new), agents/coder/src/branch.ts (new)
