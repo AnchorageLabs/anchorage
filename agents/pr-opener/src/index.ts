@@ -18,6 +18,14 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import {
+  assemblePrContent,
+  buildFallbackTitle,
+  changedFilesList,
+  fallbackPrContent,
+  parsePrContentJson,
+  readString,
+} from "./content.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -285,7 +293,7 @@ async function generatePrContent(
   const config = resolveLlmConfig(ROLE_DEFAULTS["pr-opener"]);
   if (!config.ok) {
     // No LLM configured at all — deterministic fallback title/body.
-    return fallbackPrContent(input, requestedByDisplay);
+    return fallbackPrContent(input.codeChangeResult, requestedByDisplay);
   }
 
   emit(task, "tool.requested", "info", "Generating PR title and body via LLM", {
@@ -304,11 +312,11 @@ async function generatePrContent(
       success: false,
       output: { error: response.message, fallback: true },
     });
-    return fallbackPrContent(input, requestedByDisplay);
+    return fallbackPrContent(input.codeChangeResult, requestedByDisplay);
   }
 
   const parsed = parsePrContentJson(response.value.text);
-  if (!parsed) return fallbackPrContent(input, requestedByDisplay);
+  if (!parsed) return fallbackPrContent(input.codeChangeResult, requestedByDisplay);
 
   emit(task, "tool.result", "info", "LLM PR content generated", {
     tool: config.value.tool,
@@ -356,124 +364,6 @@ function prContentUserPrompt(input: PrOpenerInput): string {
     null,
     2,
   );
-}
-
-function readString(obj: JsonObject | null, ...keys: string[]): string | null {
-  let current: JsonValue | undefined = obj as JsonValue;
-  for (const key of keys) {
-    if (!isObject(current)) return null;
-    current = current[key];
-  }
-  return typeof current === "string" ? current : null;
-}
-
-function parsePrContentJson(text: string): PrContentRaw | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1));
-    if (typeof parsed !== "object" || parsed === null) return null;
-    if (typeof parsed.title !== "string" || typeof parsed.why !== "string") return null;
-    return parsed as PrContentRaw;
-  } catch {
-    return null;
-  }
-}
-
-function assemblePrContent(
-  content: PrContentRaw,
-  codeChange: CodeChangeInput,
-  requestedByDisplay: string | null,
-): { title: string; body: string } {
-  const lines: string[] = [];
-
-  lines.push("## Summary");
-  lines.push("");
-  lines.push(content.summary?.trim() || content.why?.trim() || "See below.");
-  lines.push("");
-
-  lines.push("## Why");
-  lines.push("");
-  lines.push(content.why?.trim() || "Resolves the issue.");
-  lines.push("");
-
-  lines.push("## What");
-  lines.push("");
-  lines.push(content.what?.trim() || changedFilesList(codeChange.changedFiles));
-  lines.push("");
-
-  lines.push("## How");
-  lines.push("");
-  lines.push(content.how?.trim() || codeChange.summary || "See changed files.");
-  lines.push("");
-
-  if (content.notes?.trim()) {
-    lines.push("## Notes");
-    lines.push("");
-    lines.push(content.notes.trim());
-    lines.push("");
-  }
-
-  if (codeChange.issueNumber) {
-    lines.push(`Closes #${codeChange.issueNumber}`);
-    lines.push("");
-  }
-
-  lines.push("---");
-  if (requestedByDisplay) lines.push(`Requested by: ${requestedByDisplay}`);
-  lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
-
-  return { title: content.title.trim(), body: lines.join("\n") };
-}
-
-function fallbackPrContent(
-  input: PrOpenerInput,
-  requestedByDisplay: string | null,
-): { title: string; body: string } {
-  const { codeChangeResult } = input;
-  const title = buildFallbackTitle(codeChangeResult);
-  const lines: string[] = [];
-
-  lines.push("## Summary");
-  lines.push("");
-  lines.push(codeChangeResult.summary || "Automated PR opened by pr-opener agent.");
-  lines.push("");
-
-  lines.push("## What");
-  lines.push("");
-  lines.push(changedFilesList(codeChangeResult.changedFiles));
-  lines.push("");
-
-  if (codeChangeResult.issueNumber) {
-    lines.push(`Closes #${codeChangeResult.issueNumber}`);
-    lines.push("");
-  }
-
-  lines.push("---");
-  if (requestedByDisplay) lines.push(`Requested by: ${requestedByDisplay}`);
-  lines.push("*Opened by [pr-opener](https://github.com/AnchorageLabs/anchorage) agent.*");
-
-  return { title, body: lines.join("\n") };
-}
-
-function buildFallbackTitle(codeChange: CodeChangeInput): string {
-  if (codeChange.summary) {
-    const first = (codeChange.summary.split("\n")[0] ?? "").trim();
-    if (first.length > 0 && first.length <= 60) return first;
-  }
-  if (codeChange.issueNumber) return `Fix issue #${codeChange.issueNumber}`;
-  return (
-    codeChange.branchName
-      .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
-      .replaceAll(/[-_]/g, " ")
-      .trim() || `Code changes on ${codeChange.branchName}`
-  );
-}
-
-function changedFilesList(files: string[]): string {
-  if (files.length === 0) return "No files changed.";
-  return files.map((f) => `- \`${f}\``).join("\n");
 }
 
 // ── Input resolution ──────────────────────────────────────────────────────────

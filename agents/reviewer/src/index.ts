@@ -30,6 +30,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { extractJsonObject, parseReviewJson } from "./parse.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -668,64 +669,6 @@ function reviewerUserPrompt(pr: PrContext): string {
     null,
     2,
   );
-}
-
-function parseReviewJson(
-  value: string,
-): { ok: true; value: JsonObject } | { ok: false; message: string } {
-  const json = extractJsonObject(value);
-  if (!json) return { ok: false, message: "LLM response did not contain a JSON object." };
-  try {
-    const parsed = JSON.parse(json);
-    if (!isObject(parsed)) return { ok: false, message: "LLM review JSON was not an object." };
-    return { ok: true, value: parsed };
-  } catch (error) {
-    return { ok: false, message: `LLM review JSON was invalid: ${(error as Error).message}` };
-  }
-}
-
-function extractJsonObject(value: string): null | string {
-  // Strip common prefatory content: thinking tags, markdown fences, prose
-  // before/after. We scan from each "{" looking for a balanced object that
-  // parses cleanly. This recovers when models slip in <thinking>...</thinking>
-  // or ```json fences despite system-prompt instructions.
-  const cleaned = value.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").replace(/```(?:json)?/g, "");
-  for (let i = 0; i < cleaned.length; i++) {
-    if (cleaned[i] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let j = i; j < cleaned.length; j++) {
-      const ch = cleaned[j];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          const candidate = cleaned.slice(i, j + 1);
-          try {
-            JSON.parse(candidate);
-            return candidate;
-          } catch {
-            break; // mismatched braces inside string-like content; try next "{"
-          }
-        }
-      }
-    }
-  }
-  return null;
 }
 
 function normalizeReviewResult(

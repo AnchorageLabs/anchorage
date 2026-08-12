@@ -29,6 +29,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { buildPlanComment } from "./comment.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -126,39 +127,6 @@ async function maybePostPlanComment(
     });
     // Non-fatal — plan artifact is already written.
   }
-}
-
-function buildPlanComment(plan: ImplementationPlan): string {
-  const lines: string[] = [];
-  lines.push("## Anchorage Plan");
-  lines.push("");
-  lines.push(`**Goal:** ${plan.goal}`);
-  lines.push(`**Branch:** \`${plan.branchName}\``);
-  lines.push(`**Plan ID:** \`${plan.planId}\``);
-  lines.push("");
-  lines.push("### Steps");
-  lines.push("");
-  for (const step of plan.implementationSteps) {
-    lines.push(`- ${step}`);
-  }
-  lines.push("");
-  lines.push("### Acceptance criteria");
-  lines.push("");
-  for (const criterion of plan.acceptanceCriteria) {
-    lines.push(`- ${criterion}`);
-  }
-  if (plan.risks.length > 0) {
-    lines.push("");
-    lines.push("### Risks");
-    lines.push("");
-    for (const risk of plan.risks) {
-      lines.push(`- ${risk}`);
-    }
-  }
-  lines.push("");
-  lines.push("---");
-  lines.push("*Posted by [planner](https://github.com/AnchorageLabs/anchorage) agent.*");
-  return lines.join("\n");
 }
 
 async function readStdin(): Promise<string> {
