@@ -11,6 +11,11 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import {
+  classifyCiStatus,
+  resolveMergeMethod as resolveMergeMethodFromEnv,
+  reviewAllowsMerge,
+} from "./gate.js";
 
 const agentVersion = "0.1.0";
 let eventSequence = 0;
@@ -87,7 +92,7 @@ async function main(): Promise<number> {
   // left open with the reviewer's feedback, and a configured reviewer → coder
   // loop (if any) will have already had its chances before we reach here.
   const reviewDecision = await resolveReviewDecision(task.value);
-  if (reviewDecision !== "approve") {
+  if (!reviewAllowsMerge(reviewDecision)) {
     const reviewSummary = await resolveReviewSummary(task.value);
     const reason =
       reviewDecision === "request_changes"
@@ -414,11 +419,7 @@ async function resolvePrInfo(
 }
 
 function resolveMergeMethod(): MergeMethod {
-  const envMethod = process.env.ANCHORAGE_MERGE_METHOD;
-  if (envMethod === "merge" || envMethod === "squash" || envMethod === "rebase") {
-    return envMethod;
-  }
-  return "squash";
+  return resolveMergeMethodFromEnv(process.env.ANCHORAGE_MERGE_METHOD);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -462,49 +463,16 @@ async function checkCiStatus(
   pr: PrInfo,
 ): Promise<"success" | "failure" | "pending"> {
   const [statusResponse, checksResponse] = await Promise.all([
-    octokit.repos.getCombinedStatusForRef({
-      owner: pr.owner,
-      repo: pr.repo,
-      ref: pr.headSha,
-    }),
-    octokit.checks.listForRef({
-      owner: pr.owner,
-      repo: pr.repo,
-      ref: pr.headSha,
-    }),
+    octokit.repos.getCombinedStatusForRef({ owner: pr.owner, repo: pr.repo, ref: pr.headSha }),
+    octokit.checks.listForRef({ owner: pr.owner, repo: pr.repo, ref: pr.headSha }),
   ]);
-
-  const combinedState = statusResponse.data.state;
-  const totalStatuses = statusResponse.data.total_count;
-  const checkRuns = checksResponse.data.check_runs;
-
-  // No CI configured at all — treat as success so the merge is not blocked.
-  if (totalStatuses === 0 && checkRuns.length === 0) {
-    return "success";
-  }
-
-  const hasFailedStatus = combinedState === "failure" || combinedState === "error";
-  const hasPendingStatus = combinedState === "pending" && totalStatuses > 0;
-
-  const hasFailedCheck = checkRuns.some(
-    (run) =>
-      run.conclusion === "failure" ||
-      run.conclusion === "cancelled" ||
-      run.conclusion === "timed_out",
+  return classifyCiStatus(
+    { state: statusResponse.data.state, totalCount: statusResponse.data.total_count },
+    checksResponse.data.check_runs.map((run) => ({
+      conclusion: run.conclusion,
+      status: run.status,
+    })),
   );
-  const hasPendingCheck = checkRuns.some(
-    (run) => run.status === "queued" || run.status === "in_progress",
-  );
-
-  if (hasFailedStatus || hasFailedCheck) {
-    return "failure";
-  }
-
-  if (hasPendingStatus || hasPendingCheck) {
-    return "pending";
-  }
-
-  return "success";
 }
 
 interface MergeSuccess {

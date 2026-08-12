@@ -1,3 +1,5 @@
+import { extractJsonObject } from "@anchorage/sdk";
+
 /**
  * Getting the review verdict out of the model's reply.
  *
@@ -9,12 +11,10 @@
  * Extracted from `index.ts` so it can be tested (nothing in that 988-line script
  * was exported).
  *
- * NOTE ON DUPLICATION: this balanced-brace scan is character-for-character the
- * same algorithm as the coder's `parseCoderSummary`, and `pr-opener` solves the
- * same problem DIFFERENTLY (greedy first-`{` to last-`}`). Three agents therefore
- * behave differently on identical model output. Unifying them means putting the
- * scan in `@anchorage/sdk`, which is a public-protocol change and its own
- * decision — recorded here rather than done quietly.
+ * The scan itself is `extractJsonObject` from `@anchorage/sdk`: three agents had
+ * their own copy and two disagreed, so identical model output produced different
+ * results depending on which agent received it. What stays here is this agent's
+ * own vocabulary for WHY a reply was unusable, which the run surfaces.
  */
 
 export type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -46,51 +46,4 @@ export function parseReviewJson(value: string): ParsedReview {
   }
 }
 
-/**
- * The first substring that is a BALANCED, parseable object.
- *
- * Scans from each `{` rather than spanning to the last `}`, because prose after
- * the object (or a second object) would make a greedy span unparseable. String
- * state and escapes are tracked so a `}` inside a value does not end the scan
- * early. A candidate that does not parse moves on to the next `{` instead of
- * giving up — that is what recovers a reply with a brace in its prose.
- */
-export function extractJsonObject(value: string): null | string {
-  const cleaned = value.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").replace(/```(?:json)?/g, "");
-  for (let i = 0; i < cleaned.length; i++) {
-    if (cleaned[i] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let j = i; j < cleaned.length; j++) {
-      const ch = cleaned[j];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          const candidate = cleaned.slice(i, j + 1);
-          try {
-            JSON.parse(candidate);
-            return candidate;
-          } catch {
-            break; // mismatched braces inside string-like content; try next "{"
-          }
-        }
-      }
-    }
-  }
-  return null;
-}
+export { extractJsonObject };

@@ -11,6 +11,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { buildComment } from "./comment.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -264,47 +265,6 @@ async function readJsonArtifact(uri: string): Promise<JsonObject | null> {
   } catch {
     return null;
   }
-}
-
-function buildComment(input: IssueCloseInput): null | string {
-  const lines: string[] = [];
-  lines.push("## Anchorage Run Summary");
-  lines.push("");
-  lines.push(input.summary ?? "Workflow completed successfully.");
-  lines.push("");
-
-  const details = [
-    ["Pull request", input.prUrl],
-    ["Commit", input.commitSha],
-    ["Test report", input.testReportUri],
-    ["CI report", input.ciReportUri],
-    ["Deployment", input.deploymentUri],
-    ["Smoke test", input.smokeTestUri],
-  ].filter(
-    (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0,
-  );
-
-  if (details.length > 0) {
-    lines.push("## Links");
-    lines.push("");
-    for (const [label, value] of details) lines.push(`- ${label}: ${formatValue(value)}`);
-    lines.push("");
-  }
-
-  if (input.artifacts.length > 0) {
-    lines.push("## Artifacts");
-    lines.push("");
-    for (const artifact of input.artifacts) lines.push(`- ${formatValue(artifact)}`);
-    lines.push("");
-  }
-
-  lines.push("---");
-  lines.push("*Closed by [issue-closer](https://github.com/AnchorageLabs/anchorage) agent.*");
-  return lines.join("\n");
-}
-
-function formatValue(value: string): string {
-  return value.startsWith("http") ? value : `\`${value}\``;
 }
 
 async function writeArtifact(task: TaskEnvelope, result: IssueClosedResult) {

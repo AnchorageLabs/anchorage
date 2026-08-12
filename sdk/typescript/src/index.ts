@@ -29,6 +29,8 @@ export {
   terminalEventTypes,
 } from "./events/event-types.js";
 export { ExitCode, terminalEventTypeForExitCode } from "./exit-codes.js";
+export type { ModelJsonResult } from "./model-json.js";
+export { extractJsonObject, parseModelJsonObject } from "./model-json.js";
 export type { TaskRunManifest } from "./run-manifest.js";
 export { buildTaskRunManifest, TASK_RUN_MANIFEST_SCHEMA_VERSION } from "./run-manifest.js";
 export {
