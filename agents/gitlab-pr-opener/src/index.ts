@@ -8,9 +8,11 @@ import process from "node:process";
 import {
   ExitCode,
   type ProtocolEvent,
+  resolveOrCreatePr,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { buildDescription, buildTitle } from "./pr.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -64,31 +66,45 @@ async function main(): Promise<number> {
     input: { project, source: change.branchName, target: baseBranch, title },
   });
 
-  let mr: { iid: number; url: string; title: string };
-  try {
-    mr = await createMergeRequest(token, projectId, {
-      source_branch: change.branchName,
-      target_branch: baseBranch,
-      title,
-      description,
-    });
-  } catch (error) {
-    // Idempotent re-open: an MR may already exist for this source branch.
-    const existing = await findOpenMr(token, projectId, change.branchName).catch(() => null);
-    if (!existing) {
-      const message = error instanceof Error ? error.message : String(error);
-      emit(task.value, "tool.result", "error", "GitLab MR creation failed", {
-        tool: "gitlab.merge_requests.create",
+  // Look for an existing MR BEFORE creating, so a retried/resumed/salvaged run
+  // reuses its previous attempt's MR instead of opening a second one. The
+  // pre-check fails open and a lookup failure after a failed create is reported
+  // rather than read as "no MR exists" — see resolveOrCreatePr in @anchorage/sdk.
+  const outcome = await resolveOrCreatePr<{ iid: number; url: string; title: string }>({
+    findOpen: () => findOpenMr(token, projectId, change.branchName),
+    create: () =>
+      createMergeRequest(token, projectId, {
+        source_branch: change.branchName,
+        target_branch: baseBranch,
+        title,
+        description,
+      }),
+    onReuse: (existing) =>
+      emit(task.value, "tool.result", "info", `Reusing existing merge request !${existing.iid}`, {
+        tool: "gitlab.merge_requests.list",
+        success: true,
+        output: { prNumber: existing.iid, prUrl: existing.url },
+      }),
+    onPreCheckFailed: (message) =>
+      emit(task.value, "tool.result", "warn", "Could not check for an existing merge request", {
+        tool: "gitlab.merge_requests.list",
         success: false,
-        output: { error: { code: "gitlab_mr_create_failed", message } },
-      });
-      emit(task.value, "agent.failed", "error", "Failed to create merge request", {
-        error: { code: "gitlab_mr_create_failed", message },
-      });
-      return ExitCode.ExternalDependencyFailure;
-    }
-    mr = existing;
+        output: { message },
+      }),
+  });
+
+  if ("failure" in outcome) {
+    emit(task.value, "tool.result", "error", "GitLab MR creation failed", {
+      tool: "gitlab.merge_requests.create",
+      success: false,
+      output: { error: { code: "gitlab_mr_create_failed", message: outcome.failure } },
+    });
+    emit(task.value, "agent.failed", "error", "Failed to create merge request", {
+      error: { code: "gitlab_mr_create_failed", message: outcome.failure },
+    });
+    return ExitCode.ExternalDependencyFailure;
   }
+  const mr = outcome.pr;
 
   emit(task.value, "tool.result", "info", `Merge request !${mr.iid} ready`, {
     tool: "gitlab.merge_requests.create",
@@ -330,30 +346,6 @@ async function ensureBranchPushed(
 function authenticatedPushUrl(origin: string, token: string, authUser: string): string {
   const withoutScheme = origin.replace(/^https:\/\/([^@/]*@)?/, "");
   return `https://${authUser}:${token}@${withoutScheme}`;
-}
-
-function buildTitle(change: CodeChange): string {
-  const first = (change.summary.split("\n")[0] ?? "").trim();
-  if (first.length > 0 && first.length <= 72) return first;
-  if (change.issueNumber) return `Resolve issue #${change.issueNumber}`;
-  return (
-    change.branchName
-      .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
-      .replaceAll(/[-_]/g, " ")
-      .trim() || `Changes on ${change.branchName}`
-  );
-}
-
-function buildDescription(change: CodeChange): string {
-  const lines: string[] = ["## Summary", "", change.summary || "Automated change.", ""];
-  lines.push("## Changed files", "");
-  lines.push(
-    change.changedFiles.length
-      ? change.changedFiles.map((f) => `- \`${f}\``).join("\n")
-      : "No files changed.",
-  );
-  lines.push("", "---", "*Opened by the anchorage gitlab-pr-opener agent.*");
-  return lines.join("\n");
 }
 
 async function runGit(

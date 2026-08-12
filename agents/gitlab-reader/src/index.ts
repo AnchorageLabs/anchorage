@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { parseIssueRef } from "./ref.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -59,7 +60,7 @@ async function main(): Promise<number> {
 async function readGitlabIssue(
   task: TaskEnvelope,
 ): Promise<{ ok: true; value: IssueSummary } | ReaderFailure> {
-  const ref = parseRef(task.input.issueRef, task.repository);
+  const ref = parseIssueRef(task.input.issueRef, task.repository);
   if (!ref) {
     return failure(
       "invalid_issue_ref",
@@ -130,26 +131,6 @@ async function readGitlabIssue(
  * Accepts "group/project#iid", a bare "#iid"/"iid" (project from repository), or
  * a GitLab issue URL (https://gitlab.com/group/project/-/issues/12).
  */
-function parseRef(
-  value: JsonValue | undefined,
-  repository: TaskEnvelope["repository"],
-): { project: string; iid: number } | null {
-  const repoProject = repository ? `${repository.owner}/${repository.name}` : null;
-  if (typeof value !== "string" || value.trim().length === 0) return null;
-  const candidate = value.trim();
-
-  const urlMatch = candidate.match(/gitlab[^/]*\/(.+?)\/-\/issues\/(\d+)/i);
-  if (urlMatch?.[1] && urlMatch[2]) {
-    return { project: urlMatch[1], iid: Number(urlMatch[2]) };
-  }
-  const hashMatch = candidate.match(/^(?:(.+?)#)?(\d+)$/);
-  if (hashMatch?.[2]) {
-    const project = hashMatch[1] ?? repoProject;
-    if (!project) return null;
-    return { project, iid: Number(hashMatch[2]) };
-  }
-  return null;
-}
 
 async function gitlabGet(token: string, requestPath: string): Promise<JsonObject> {
   const response = await fetch(`${gitlabBase()}${requestPath}`, {

@@ -34,9 +34,13 @@ jobs:
       - name: Run lint checks
         run: pnpm lint
 
+      # NOT continue-on-error. It was, from the first version of this workflow
+      # (#62, 2026-05-09) when there was almost nothing to fail — and it stayed
+      # for three months, so a broken test could never turn a PR red. There are
+      # now 278 assertions across eleven packages; advisory tests are worse than
+      # no tests, because they are believed.
       - name: Run tests
         run: pnpm -r test
-        continue-on-error: true
 
       - name: Run tests with coverage
         run: |
@@ -51,5 +55,10 @@ jobs:
           verbose: true
         continue-on-error: true
 
+      # `|| true` made this unable to detect anything, and it was hiding a real
+      # defect: the runner had no `--help`, so it printed usage and exited 2 —
+      # every wrapper that shells out and asks for help saw a failure. Now that
+      # `--help` exits 0, the smoke test can do its job: prove the built CLI
+      # starts and responds.
       - name: CLI smoke test
-        run: node cli/anchorage-runner/dist/index.js --help || true
+        run: node cli/anchorage-runner/dist/index.js --help

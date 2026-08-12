@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { parseIssueRef } from "./ref.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -57,7 +58,7 @@ async function main(): Promise<number> {
 async function readBitbucketIssue(
   task: TaskEnvelope,
 ): Promise<{ ok: true; value: IssueSummary } | ReaderFailure> {
-  const ref = parseRef(task.input.issueRef, task.repository);
+  const ref = parseIssueRef(task.input.issueRef, task.repository);
   if (!ref) {
     return failure(
       "invalid_issue_ref",
@@ -134,26 +135,6 @@ async function readBitbucketIssue(
  * Accepts "workspace/repo#id", a bare "#id"/"id" (repo from repository), or a
  * Bitbucket issue URL (https://bitbucket.org/workspace/repo/issues/12/...).
  */
-function parseRef(
-  value: JsonValue | undefined,
-  repository: TaskEnvelope["repository"],
-): { repo: string; id: number } | null {
-  const repoSlug = repository ? `${repository.owner}/${repository.name}` : null;
-  if (typeof value !== "string" || value.trim().length === 0) return null;
-  const candidate = value.trim();
-
-  const urlMatch = candidate.match(/bitbucket\.org\/([^/]+\/[^/]+)\/issues\/(\d+)/i);
-  if (urlMatch?.[1] && urlMatch[2]) {
-    return { repo: urlMatch[1], id: Number(urlMatch[2]) };
-  }
-  const hashMatch = candidate.match(/^(?:(.+?)#)?(\d+)$/);
-  if (hashMatch?.[2]) {
-    const repo = hashMatch[1] ?? repoSlug;
-    if (!repo) return null;
-    return { repo, id: Number(hashMatch[2]) };
-  }
-  return null;
-}
 
 async function bitbucketGet(token: string, requestPath: string): Promise<JsonObject> {
   const response = await fetch(`${bitbucketApi}${requestPath}`, {
