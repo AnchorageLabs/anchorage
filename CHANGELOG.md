@@ -29,6 +29,25 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — policy-check reported "no violations" when it could not check at all.
+
+**Intent:** The last GitHub-path silent degrade.
+
+`policy-check` already distinguished its honest cases well — a missing `constraints.yaml` emits `checked: false`, and a rules-free file emits `ruleCount: 0`. But when rules DID exist and the import graph could not be built, `buildGraph` returned an empty view from a silent `catch`, `evaluateForbidImports` found nothing in it, and the agent emitted **"No hard policy violations"** with `checked: true, ruleCount: N` — claiming N rules were enforced against a graph that did not exist.
+
+Failing open is the right call and is unchanged: a missing index must never invent a violation. What was wrong is that it was **silent**, and an empty result indistinguishable from a genuine all-clear is precisely the ambiguity that let the B5 outage hide for two weeks in the orchestrator.
+
+The view now carries `available`, so the flag travels with the data rather than being inferred from an empty file list — which a genuinely empty repository would also produce. An unavailable graph emits a warning naming the rule count, and the completion event carries `graphAvailable` and says so in its message.
+
+**443 assertions across twenty-one packages.**
+
+**Files touched:**
+- agents/policy-check/src/index.ts
+
+**Reason:** Gate G7; the B5 post-mortem's "what else fails silently behind a plausible-looking empty result".
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — A smoke test that skipped most of its checks and reported pass; deploy-workflow detection that could pick a CDN job.
 
 **Intent:** Closing out the GitHub-path agents. Defects first, tests as proof.

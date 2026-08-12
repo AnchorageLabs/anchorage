@@ -93,7 +93,23 @@ async function main(): Promise<number> {
   // Build the import-graph view from the persisted index. Fail open: if the index
   // can't be built (no git / parse failure) there is nothing to evaluate, so a
   // missing index never invents a violation.
+  //
+  // Failing open is the right call — but it must not be SILENT. Without the
+  // graph, `evaluateForbidImports` finds nothing, and reporting that as "no
+  // violations, checked: true, ruleCount: N" claims N rules were enforced against
+  // a graph that did not exist. That is indistinguishable from a genuine
+  // all-clear, which is exactly the ambiguity that let B5 hide for two weeks in
+  // the orchestrator. `graphAvailable` is the distinguishing fact.
   const graph = await buildGraph(workspacePath);
+  if (!graph.available) {
+    emit(
+      task.value,
+      "agent.output",
+      "warn",
+      "No symbol index in this workspace — graph rules could not be enforced",
+      { graphAvailable: false, ruleCount: rules.length },
+    );
+  }
   const violations = evaluateForbidImports(rules, changedFiles, graph);
   const hard = violations.filter((v) => v.severity === "hard");
   const soft = violations.filter((v) => v.severity === "soft");
@@ -109,11 +125,20 @@ async function main(): Promise<number> {
   }
 
   if (hard.length === 0) {
-    emit(task.value, "agent.completed", "info", "No hard policy violations", {
-      checked: true,
-      ruleCount: rules.length,
-      softViolations: soft.length,
-    });
+    emit(
+      task.value,
+      "agent.completed",
+      "info",
+      graph.available
+        ? "No hard policy violations"
+        : "No hard policy violations found, but the import graph was unavailable",
+      {
+        checked: true,
+        graphAvailable: graph.available,
+        ruleCount: rules.length,
+        softViolations: soft.length,
+      },
+    );
     return ExitCode.Success;
   }
 
@@ -142,14 +167,25 @@ async function main(): Promise<number> {
   return ExitCode.PartialSuccessAttentionRequired;
 }
 
-async function buildGraph(workspacePath: string): Promise<ImportGraphView> {
+/**
+ * The import-graph view, plus whether it is real.
+ *
+ * `available: false` means the evaluation ran against nothing — no index in this
+ * workspace, or the store would not open. The caller must not report that as a
+ * clean pass, so the flag travels with the view rather than being inferred from
+ * an empty `allFiles` (which a genuinely empty repo would also produce).
+ */
+async function buildGraph(
+  workspacePath: string,
+): Promise<ImportGraphView & { available: boolean }> {
+  const unavailable = { allFiles: [], importersOf: () => [], available: false };
   try {
     const store = await getIndexStore(workspacePath);
-    if (!store) return { allFiles: [], importersOf: () => [] };
+    if (!store) return unavailable;
     const allFiles = store.inDegreeRanking().map((r) => r.file);
-    return { allFiles, importersOf: (t) => store.directImportersOf(t) };
+    return { allFiles, importersOf: (t) => store.directImportersOf(t), available: true };
   } catch {
-    return { allFiles: [], importersOf: () => [] };
+    return unavailable;
   }
 }
 
