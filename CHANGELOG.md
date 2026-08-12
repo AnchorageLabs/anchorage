@@ -29,6 +29,32 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — 97 test files' worth of assertions that CI never ran now run; the coder gets its first tests.
+
+**Intent:** Two problems, and the second one is bigger than the first.
+
+**CI was not running the tests this repo already had.** `pnpm -r test` runs each package's `test` script, and for `agents/llm` that script was `tsc --noEmit` — a typecheck. So its **16 test files (77 assertions) had never executed in CI**, nor had `issue-triage`'s. They all pass; they were simply not wired. `runtime` and `sdk/typescript` were the only packages whose `test` script ran anything (`vitest run`). Fixed by making `test` typecheck **and** run `node --test` in the three affected packages, matching what those files were written for.
+
+**The coder had no tests, and could not have had any.** It is the highest-churn file in the whole `agents/` tree — 77 commits, 3,812 lines changed, 4 authors — and **nothing in its 1,600-line script was exported**, so no test could reach the code. That, not neglect, is why "add tests to the agents" never happened. Two pure modules are now split out, following `issue-triage/src/comment.ts` (the one agent module already done this way):
+
+- `summary.ts` — parsing the model's final report out of prose, fences, `<thinking>` blocks and truncation. Two shipped bugs came from here and are now pinned: a length-truncated turn reported as an empty "no changes" (#209), and the fallback that keeps a partial reply from becoming silence.
+- `branch.ts` — run-scoped branch naming. The planner derives the name from the issue, so two runs on one issue propose the SAME branch; runs are concurrent and each pushes, so a collision means the second push rejects or lands on the first's work. Pinned: the suffix is the run id's **tail** (ids share a long common prefix, so a head-based suffix would collide — defeating the purpose), appending is idempotent so a resumed run keeps its branch, and a revision cycle continues on the previous change's branch rather than opening a second PR.
+
+The extraction surface was found with `cartographer deps agents/coder/src/index.ts:753-803`, which reported the two module-scope helpers to move in one command — the query added yesterday for exactly this shape of refactor.
+
+20 new assertions; 101 now running across the three packages where 4 ran before. Also ignores `*.tsbuildinfo`, which the build drops next to each package and nothing ignored.
+
+**Files touched:**
+- agents/coder/src/summary.ts (new), agents/coder/src/branch.ts (new)
+- agents/coder/test/summary.test.mjs (new), agents/coder/test/branch.test.mjs (new)
+- agents/coder/src/index.ts (the moved functions now imported)
+- agents/coder/package.json, agents/llm/package.json, agents/issue-triage/package.json
+- .gitignore
+
+**Reason:** Gate G7 in `anchorage-internal/plans/AnchorageLabs_Plan_2026-08-11.md`; churn data (`file_churn`) chose the target over the handoff's guess.
+
+**Author:** Sol Soletti
+
 ### 2026-07-12 — Divergent-loop terminal guard, grep answered from the symbol index in-turn, and triage complexity for fast-coder routing.
 
 **Intent:** Three turn-efficiency fixes from the 2026-07-12 RDS audit (254 runs / 21 days; wall time = LLM latency × turn count, and wasted turns dominate the slow tail — slow runs are the top cause of user-canceled ones). (1) Loop refusals (repeat_backstop / duplicate-grep enforce / unknown tool) cost ~1ms of tool time but a FULL LLM round-trip each; a field run retried refused greps **370×** (~1h of pure model latency) before dying as a bogus "no changes". After 12 consecutive loop-refusals with no dispatched call between them, the run now fails honestly as `model_loop_divergent`; any productive call resets the counter. (2) The graph-first guard no longer REFUSES a bare-symbol grep — a refusal is what sent models into grep-variant spirals. The grep is now answered FROM the symbol index (find_references' output returned in the grep's own tool_result slot — zero extra turns, `meta.viaSymbolIndex` for telemetry), falling back to the real grep whenever the index has no answer, so the model is never left without a way forward. (3) issue-triage now classifies implementation `complexity` (low/medium/high, defaulting medium on omission); the orchestrator routes "low" tasks' code-writing steps to a fast coder model (haiku-class ~3.3s/turn × 44 turns measured vs reasoning coders 12.5s × 54 — minutes instead of tens of minutes).
