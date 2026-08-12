@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { numberFromIdentifier } from "./issue-number.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -151,11 +152,6 @@ function parseRef(value: JsonValue | undefined): null | string {
   const candidate = value.trim();
   const fromUrl = candidate.match(/linear\.app\/[^/]+\/issue\/([A-Z0-9]+-\d+)/i)?.[1];
   return fromUrl ?? candidate;
-}
-
-function numberFromIdentifier(identifier: string): number {
-  const n = Number(identifier.split("-").at(-1));
-  return Number.isInteger(n) && n > 0 ? n : 1;
 }
 
 function extractLabels(labels: JsonValue | undefined): string[] {

@@ -54,3 +54,38 @@ export function buildPlanComment(plan: PlanComment): string {
   lines.push("*Posted by [planner](https://github.com/AnchorageLabs/anchorage) agent.*");
   return lines.join("\n");
 }
+
+/** Only the envelope fields the decision needs. */
+export interface PlanCommentContext {
+  capabilities?: unknown;
+  repository?: { owner: string; name: string } | null;
+}
+
+/**
+ * Should the plan be posted as a comment on the issue?
+ *
+ * All four conditions are required, and the last one is the one that was missing:
+ *
+ *  - the run was granted `github.write` — posting without it is exceeding scope;
+ *  - a token exists to post with;
+ *  - the run knows which repository it is about;
+ *  - **the issue number is a positive integer.**
+ *
+ * `issueNumber: 0` is the protocol's documented value for "there is no issue
+ * yet", used by the plan-only flow (instruction-to-plan) which plans BEFORE an
+ * issue exists — the planner's own `parseIssueSummary` allows it deliberately.
+ * Commenting on issue #0 is a guaranteed API rejection, so without this check the
+ * one flow the convention exists for was the one flow that reliably failed here.
+ */
+export function shouldPostPlanComment(
+  ctx: PlanCommentContext,
+  issueNumber: unknown,
+  token: string | undefined,
+): boolean {
+  const hasGithubWrite =
+    Array.isArray(ctx.capabilities) && ctx.capabilities.includes("github.write");
+  if (!hasGithubWrite) return false;
+  if (!token) return false;
+  if (!ctx.repository) return false;
+  return typeof issueNumber === "number" && Number.isInteger(issueNumber) && issueNumber > 0;
+}

@@ -17,6 +17,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { rankWorkflowFiles } from "./detect.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -239,8 +240,10 @@ async function detectDeployWorkflow(
   } catch {
     return null;
   }
-  // Prefer files whose name hints at deploying.
-  entries.sort((a, b) => score(b) - score(a));
+  // Prefer files whose name hints at deploying, with a stable tie-break so the
+  // same checkout always dispatches the same workflow (readdir order is not a
+  // guarantee).
+  entries = rankWorkflowFiles(entries);
   for (const file of entries) {
     let text: string;
     try {
@@ -254,13 +257,6 @@ async function detectDeployWorkflow(
     if (inputName) return { file, inputName };
   }
   return null;
-}
-
-function score(file: string): number {
-  const f = file.toLowerCase();
-  if (/deploy/.test(f)) return 3;
-  if (/release|cd|stage|ship/.test(f)) return 2;
-  return 0;
 }
 
 // ── environment watch ───────────────────────────────────────────────────────────

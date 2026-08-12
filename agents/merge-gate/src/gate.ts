@@ -1,3 +1,5 @@
+import { checkConclusionBlocks, checkRunIsPending, commitStatusBlocks } from "@anchorage/sdk";
+
 /**
  * The two rules that decide whether an agent's code gets merged.
  *
@@ -63,20 +65,16 @@ export function classifyCiStatus(
 ): CiStatus {
   if (combined.totalCount === 0 && checkRuns.length === 0) return "success";
 
-  const hasFailedStatus = combined.state === "failure" || combined.state === "error";
+  const hasFailedStatus = commitStatusBlocks(combined.state);
   const hasPendingStatus = combined.state === "pending" && combined.totalCount > 0;
 
-  // `cancelled` and `timed_out` count as failures: neither is evidence the code
-  // is good, and treating "we never found out" as success is how red code merges.
-  const hasFailedCheck = checkRuns.some(
-    (run) =>
-      run.conclusion === "failure" ||
-      run.conclusion === "cancelled" ||
-      run.conclusion === "timed_out",
-  );
-  const hasPendingCheck = checkRuns.some(
-    (run) => run.status === "queued" || run.status === "in_progress",
-  );
+  // The conclusion vocabulary lives in @anchorage/sdk because `ci-watcher`
+  // classifies the same thing and the two DISAGREED: it counted `action_required`
+  // as a failure and this did not, so a check demanding human intervention read
+  // as success and the PR merged — the watcher said CI failed and the gate merged
+  // it anyway, on the same PR.
+  const hasFailedCheck = checkRuns.some((run) => checkConclusionBlocks(run.conclusion));
+  const hasPendingCheck = checkRuns.some((run) => checkRunIsPending(run.status));
 
   if (hasFailedStatus || hasFailedCheck) return "failure";
   if (hasPendingStatus || hasPendingCheck) return "pending";

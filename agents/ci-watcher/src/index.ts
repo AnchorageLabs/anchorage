@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  checkConclusionBlocks,
+  checkRunIsPending,
+  commitStatusBlocks,
   ExitCode,
   type ProtocolEvent,
   type TaskEnvelope,
@@ -292,20 +295,13 @@ async function readCi(octokit: Octokit, pr: PrInfo, pollCount: number): Promise<
     completedAt: check.completed_at,
   }));
 
-  const failedStatuses = statuses.filter(
-    (status) => status.state === "failure" || status.state === "error",
-  );
-  const failedCheckRuns = checkRuns.filter(
-    (check) =>
-      check.conclusion === "failure" ||
-      check.conclusion === "cancelled" ||
-      check.conclusion === "timed_out" ||
-      check.conclusion === "action_required",
-  );
+  // Same vocabulary as merge-gate, from @anchorage/sdk. The two had drifted: this
+  // agent counted `action_required` as a failure and the gate did not, so the
+  // watcher could report CI failed on a PR the gate then merged.
+  const failedStatuses = statuses.filter((status) => commitStatusBlocks(status.state));
+  const failedCheckRuns = checkRuns.filter((check) => checkConclusionBlocks(check.conclusion));
   const pendingStatuses = statuses.filter((status) => status.state === "pending");
-  const pendingCheckRuns = checkRuns.filter(
-    (check) => check.status === "queued" || check.status === "in_progress",
-  );
+  const pendingCheckRuns = checkRuns.filter((check) => checkRunIsPending(check.status));
 
   let status: CiStatus = "passed";
   if (failedStatuses.length > 0 || failedCheckRuns.length > 0) status = "failed";

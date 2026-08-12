@@ -74,8 +74,48 @@ test("cancelled and timed_out are failures, not successes", () => {
   }
 });
 
+test("action_required BLOCKS — it used to merge, while ci-watcher called it failed", () => {
+  // The divergence this fixes. Two agents classified the same thing and
+  // disagreed: ci-watcher counted `action_required` as a failure, this did not.
+  // So a check run explicitly asking a human to act read as SUCCESS here and the
+  // PR merged — the watcher said CI failed and the gate merged it anyway, on the
+  // same PR. `action_required` is the clearest possible "not yet".
+  assert.equal(
+    classifyCiStatus(noStatuses, [{ conclusion: "action_required", status: "completed" }]),
+    "failure",
+  );
+});
+
+test("stale blocks too — it belongs to a superseded commit", () => {
+  assert.equal(
+    classifyCiStatus(noStatuses, [{ conclusion: "stale", status: "completed" }]),
+    "failure",
+  );
+});
+
+test("an UNKNOWN conclusion blocks — GitHub can add one", () => {
+  // Fail-closed on the vocabulary itself. A conclusion GitHub introduces later
+  // silently counting as a pass is how an unreviewed state merges, so passing
+  // conclusions are listed explicitly rather than inferred from "not blocking".
+  assert.equal(
+    classifyCiStatus(noStatuses, [{ conclusion: "some_future_conclusion", status: "completed" }]),
+    "failure",
+  );
+});
+
+test("neutral and skipped still pass — they are answers, not absences", () => {
+  // A workflow saying "this did not apply here" must not block forever.
+  for (const conclusion of ["neutral", "skipped"]) {
+    assert.equal(
+      classifyCiStatus(noStatuses, [{ conclusion, status: "completed" }]),
+      "success",
+      conclusion,
+    );
+  }
+});
+
 test("queued or running work is pending — never success", () => {
-  for (const status of ["queued", "in_progress"]) {
+  for (const status of ["queued", "in_progress", "waiting"]) {
     assert.equal(classifyCiStatus(noStatuses, [{ conclusion: null, status }]), "pending", status);
   }
   assert.equal(classifyCiStatus({ state: "pending", totalCount: 2 }, []), "pending");
@@ -114,14 +154,6 @@ test("all green on both surfaces is success", () => {
       { conclusion: "success", status: "completed" },
       { conclusion: "neutral", status: "completed" },
     ]),
-    "success",
-  );
-});
-
-test("a skipped check does not block", () => {
-  // `skipped` is a deliberate no-op in a workflow, not a missing answer.
-  assert.equal(
-    classifyCiStatus(noStatuses, [{ conclusion: "skipped", status: "completed" }]),
     "success",
   );
 });
