@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { isSuccessfulDeployment } from "./status.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -102,10 +103,6 @@ function parseDeployment(
       observedAt: new Date().toISOString(),
     },
   };
-}
-
-function isSuccessfulDeployment(status: string): boolean {
-  return ["deployed", "success", "succeeded", "ready"].includes(status.toLowerCase());
 }
 
 async function writeArtifact(task: TaskEnvelope, record: DeploymentRecord) {

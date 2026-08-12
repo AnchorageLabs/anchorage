@@ -11,6 +11,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { parseCheckSpecs } from "./checks.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -34,7 +35,7 @@ async function main(): Promise<number> {
 
   emit(task.value, "agent.started", "info", "smoke-test-runner started", { agentVersion });
 
-  const checks = parseChecks(task.value.input.checks);
+  const checks = parseChecks(task.value.input.checks, task.value);
   if (!checks.ok) return fail(task.value, checks);
 
   const workspacePath =
@@ -113,6 +114,7 @@ function parseTask(rawTask: string): { ok: true; value: TaskEnvelope } | AgentFa
 
 function parseChecks(
   value: JsonValue | undefined,
+  task?: TaskEnvelope,
 ): { ok: true; value: SmokeCheck[] } | SmokeFailure {
   if (!Array.isArray(value) || value.length === 0) {
     return failure(
@@ -122,31 +124,23 @@ function parseChecks(
     );
   }
 
-  const checks: SmokeCheck[] = [];
-  for (const candidate of value) {
-    if (!isObject(candidate)) continue;
-    const name = readString(candidate.name) ?? `check_${checks.length + 1}`;
-    const type = readString(candidate.type);
-    if (type === "http") {
-      const url = readString(candidate.url);
-      if (!url) continue;
-      checks.push({
-        type,
-        name,
-        url,
-        expectedStatus: readNumber(candidate.expectedStatus) ?? 200,
-      });
-    }
-    if (type === "shell") {
-      const command = readString(candidate.command);
-      if (!command) continue;
-      checks.push({
-        type,
-        name,
-        command,
-        args: Array.isArray(candidate.args) ? candidate.args.filter(isString) : [],
-      });
-    }
+  const { checks, skipped } = parseCheckSpecs(value);
+
+  // Say what was dropped. Silently skipping malformed entries meant a list of
+  // five checks with four mistakes ran ONE and reported `passed` — a smoke test
+  // that skipped most of its checks and called it success.
+  if (skipped.length > 0 && task) {
+    emit(
+      task,
+      "tool.result",
+      "warn",
+      `Ignored ${skipped.length} malformed smoke check(s) — ${checks.length} of ${value.length} will run`,
+      {
+        tool: "smoke.checks.parse",
+        success: false,
+        output: { skipped: skipped.map((s) => ({ index: s.index, reason: s.reason })) },
+      },
+    );
   }
 
   if (checks.length === 0) {
@@ -157,7 +151,7 @@ function parseChecks(
     );
   }
 
-  return { ok: true, value: checks };
+  return { ok: true, value: checks as SmokeCheck[] };
 }
 
 async function runHttpCheck(check: HttpCheck): Promise<SmokeCheckResult> {

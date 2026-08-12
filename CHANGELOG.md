@@ -29,6 +29,27 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — A smoke test that skipped most of its checks and reported pass; deploy-workflow detection that could pick a CDN job.
+
+**Intent:** Closing out the GitHub-path agents. Defects first, tests as proof.
+
+**`smoke-test-runner` silently dropped malformed checks.** Invalid entries were `continue`d, so a list of five checks with four mistakes ran **one** and the report said `passed` — a smoke test that skipped most of its checks and called it success, which is exactly the false reassurance a smoke test exists to refuse to give. Valid checks are still kept (refusing a whole run over one typo would be its own failure mode), but every dropped entry is now reported with its **array index** and a reason: a malformed entry frequently has no usable name, so the index is the only durable way to point at it. Same loud-degrade shape the context-pack engine and the cartographer binding preflight already use.
+
+**`deployer` could rank a CDN job as the deploy workflow.** The filename heuristic matched `cd` as a **substring**, so `cdn-purge.yml` and `abcd.yml` scored as deploy candidates. Since eligibility is decided separately (the file must have `workflow_dispatch` and an environment input), the consequence was ordering — a `cdn-invalidate.yml` could be considered ahead of a genuinely-unhinted `main.yml` that was the real deploy. Now matched against separator-delimited **tokens**, so `cd.yml` and `deploy-cd.yml` still score and the accidents do not. Ranking also gained a filename tie-break, because `readdir` order is not a guarantee and the same checkout must dispatch the same workflow every run.
+
+**`deploy-watch`'s success vocabulary is now explicit and tested.** It was already an allowlist — the right shape — so this is coverage, not a fix: an unrecognised status must never read as a live deployment, because "we do not recognise this" is not evidence that anything shipped.
+
+**435 assertions across nineteen packages.**
+
+**Files touched:**
+- agents/smoke-test-runner/src/checks.ts + test/checks.test.mjs (new), src/index.ts
+- agents/deployer/src/detect.ts + test/detect.test.mjs (new), src/index.ts
+- agents/deploy-watch/src/status.ts + test/status.test.mjs (new), src/index.ts
+
+**Reason:** Gate G7, GitHub path; the silent-degrade audit.
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — The merge gate merged PRs whose CI demanded human action, and the issue-opener had a fourth JSON scan.
 
 **Intent:** GitHub-path agents first — that is where the customers are. Both defects were found by **comparing two agents that classify the same thing**, which is the method that keeps paying.
