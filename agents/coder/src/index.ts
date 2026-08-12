@@ -34,6 +34,13 @@ import {
   validateTaskEnvelope,
   writeAllSync,
 } from "@anchorage/sdk";
+import {
+  appendRunSuffix,
+  runIdBranchSuffix,
+  withPreviousChangeBranch,
+  withRunScopedBranchName,
+} from "./branch.js";
+import { isObject, isString, parseCoderSummary } from "./summary.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -380,34 +387,6 @@ async function resolveImplementationPlan(
   return { ok: true, value: withRunScopedBranchName(artifactPlan.value, task.run.id) };
 }
 
-function withRunScopedBranchName(plan: ImplementationPlan, runId: string): ImplementationPlan {
-  return { ...plan, branchName: appendRunSuffix(plan.branchName, runId) };
-}
-
-function withPreviousChangeBranch(
-  plan: ImplementationPlan,
-  previousCodeChange: JsonObject | null,
-): ImplementationPlan {
-  const branchName =
-    typeof previousCodeChange?.branchName === "string" ? previousCodeChange.branchName.trim() : "";
-  return branchName.length > 0 ? { ...plan, branchName } : plan;
-}
-
-function appendRunSuffix(branchName: string, runId: string): string {
-  const suffix = runIdBranchSuffix(runId);
-  const normalizedBranch = branchName.trim().replace(/-+$/, "") || "fix/changes";
-  if (!suffix || normalizedBranch.includes(suffix)) return normalizedBranch;
-  return `${normalizedBranch}-${suffix}`;
-}
-
-function runIdBranchSuffix(runId: string): string {
-  return runId
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(-12);
-}
-
 function parseImplementationPlan(
   value: unknown,
 ): { ok: true; value: ImplementationPlan } | { ok: false } {
@@ -748,60 +727,6 @@ function summarizePriorCodeChange(change: JsonObject): JsonObject {
         : change.diff;
   }
   return out;
-}
-
-function parseCoderSummary(text: string): {
-  summary: string;
-  commandsSuggested: string[];
-  risks: string[];
-} {
-  const fallback = {
-    summary: text.slice(0, 800),
-    commandsSuggested: [] as string[],
-    risks: [] as string[],
-  };
-  const cleaned = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").replace(/```(?:json)?/g, "");
-  for (let i = 0; i < cleaned.length; i++) {
-    if (cleaned[i] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let j = i; j < cleaned.length; j++) {
-      const ch = cleaned[j];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(cleaned.slice(i, j + 1));
-            if (!isObject(parsed)) break;
-            const summary = typeof parsed.summary === "string" ? parsed.summary : fallback.summary;
-            const commandsSuggested = Array.isArray(parsed.commandsSuggested)
-              ? parsed.commandsSuggested.filter(isString)
-              : [];
-            const risks = Array.isArray(parsed.risks) ? parsed.risks.filter(isString) : [];
-            return { summary, commandsSuggested, risks };
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return fallback;
 }
 
 async function resetWorkspace(task: TaskEnvelope, workspacePath: string): Promise<void> {
@@ -1448,14 +1373,6 @@ function fail(task: TaskEnvelope, failureValue: CoderFailure): number {
 
 function failure(code: string, message: string, exitCode: number): CoderFailure {
   return { ok: false, code, message, exitCode };
-}
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
 }
 
 function emit(
