@@ -29,6 +29,29 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — Every GitHub-path agent now has tests: the issue reader, the issue opener, and the CI summary line.
+
+**Intent:** Closing the GitHub path, which is where the customers are. All three of these turned out to be well-designed code, so this is coverage rather than repair — and saying that plainly matters, because the previous rounds found nine real defects and it would be easy to keep implying every extraction uncovers one.
+
+**`issue-reader/src/summary.ts`** — the `issue.summary` artifact every downstream agent plans, codes and reviews from. The mapping was already careful and the tests pin why each choice is right: GitHub returns labels as **bare strings or `{ name }` objects in the same array**, so a label with no usable name is dropped rather than passed on as `null` (a downstream `labels.includes(...)` would compare against a hole); a null body becomes `""` so no consumer needs its own check; and `author` stays **nullable on purpose**, because a deleted account genuinely has no login and inventing one would be a false fact travelling in an artifact. Also pinned: the repository comes from the *run*, not from `html_url`, which would break for a transferred issue.
+
+**`issue-opener/src/draft.ts`** — the text that becomes a real issue. Title and body are both required, so a half-written model reply routes to the fallback rather than filing something that looks like an issue and carries nothing. The fallback's two load-bearing properties are now pinned: it **says** exploration did not complete, and it includes the instruction **verbatim** — the one thing that definitely came from the user survives even when everything else failed. Long titles truncate at 80 with an ellipsis because GitHub does not wrap them in list views.
+
+**`ci-watcher/src/summarize.ts`** — the one line a reviewer skims. The failing check **names** are what make it useful; `"CI failed: unknown check"` is the honest fallback when there is no named source, and the tests pin that the failed and pending lists are never crossed, since reporting the wrong checks is worse than reporting none.
+
+**475 assertions across twenty-four packages**, from 85 at the start of the session.
+
+**Deliberately still uncovered:** the three `notion-*` agents (not on the GitHub path) and `policy-check` — whose consequential logic, `evaluateForbidImports`, is already covered by `agents/llm`'s 77 assertions; what remains in it is `git diff` and IO, and a test there would assert the mock rather than the behaviour.
+
+**Files touched:**
+- agents/issue-reader/src/summary.ts + test/summary.test.mjs (new), src/index.ts
+- agents/issue-opener/src/draft.ts + test/draft.test.mjs (new), src/index.ts
+- agents/ci-watcher/src/summarize.ts + test/summarize.test.mjs (new), src/index.ts
+
+**Reason:** Gate G7, GitHub path completed.
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — CI can fail on a broken test again (it could not for three months), the runner has `--help`, and duplicate PRs stop happening.
 
 **Intent:** Behaviour fixes, with the tests as proof rather than as the goal.

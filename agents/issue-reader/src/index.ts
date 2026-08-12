@@ -11,6 +11,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { toIssueSummary } from "./summary.js";
 
 const agentVersion = "0.1.0";
 let eventSequence = 0;
@@ -164,18 +165,7 @@ async function readIssue(
       return failure("not_an_issue", message, ExitCode.InvalidInput);
     }
 
-    const summary = {
-      issueNumber: issue.number,
-      title: issue.title,
-      repository: `${task.repository.owner}/${task.repository.name}`,
-      state: issue.state,
-      labels: issue.labels
-        .map((label) => (typeof label === "string" ? label : label.name))
-        .filter(isString),
-      body: issue.body ?? "",
-      url: issue.html_url,
-      author: issue.user?.login ?? null,
-    };
+    const summary = toIssueSummary(issue, task.repository);
 
     if (issue.state === "closed") {
       emit(

@@ -14,6 +14,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { summarizeCi } from "./summarize.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -317,7 +318,11 @@ async function readCi(octokit: Octokit, pr: PrInfo, pollCount: number): Promise<
     headRef: pr.headRef,
     observedAt: new Date().toISOString(),
     pollCount,
-    summary: summarize(status, failedStatuses, failedCheckRuns, pendingStatuses, pendingCheckRuns),
+    summary: summarizeCi(
+      status,
+      [...failedStatuses, ...failedCheckRuns],
+      [...pendingStatuses, ...pendingCheckRuns],
+    ),
     statuses,
     checkRuns,
     failedChecks: [...failedStatuses, ...failedCheckRuns].map((check) => ({
@@ -344,24 +349,6 @@ function emptyReport(pr: PrInfo, pollCount: number): CiReport {
     checkRuns: [],
     failedChecks: [],
   };
-}
-
-function summarize(
-  status: CiStatus,
-  failedStatuses: StatusSummary[],
-  failedCheckRuns: CheckRunSummary[],
-  pendingStatuses: StatusSummary[],
-  pendingCheckRuns: CheckRunSummary[],
-): string {
-  if (status === "passed") return "All observed CI checks and statuses passed.";
-  if (status === "failed") {
-    const names = [...failedStatuses, ...failedCheckRuns].map((check) => check.name).join(", ");
-    return `CI failed: ${names || "unknown check"}.`;
-  }
-  const pendingNames = [...pendingStatuses, ...pendingCheckRuns]
-    .map((check) => check.name)
-    .join(", ");
-  return `CI is still pending: ${pendingNames || "checks not complete"}.`;
 }
 
 async function writeArtifact(task: TaskEnvelope, report: CiReport) {
