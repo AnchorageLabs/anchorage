@@ -24,6 +24,16 @@ interface ResolvedAgent {
 async function main(): Promise<number> {
   const [, , command, agentRef] = process.argv;
 
+  // `--help` is a request, not a mistake: it must print to stdout and exit 0, or
+  // every wrapper that shells out to this CLI sees a failure for asking. The CI
+  // smoke test has invoked `--help` since the workflow was written and had to
+  // append `|| true` to survive it, which meant the smoke test could not detect
+  // anything at all.
+  if (command === "--help" || command === "-h" || command === "help") {
+    printUsage(console.log);
+    return ExitCode.Success;
+  }
+
   if (command !== "run" || !agentRef) {
     printUsage();
     return ExitCode.InvalidInput;
@@ -45,8 +55,16 @@ async function main(): Promise<number> {
   return runAgent(agent.value, task.value, rawTask);
 }
 
-function printUsage(): void {
-  console.error("Usage: anchorage-runner run <agent-name-or-path> < task.json");
+/**
+ * Usage goes to stderr when it is a correction and to stdout when it was asked
+ * for, so `anchorage-runner --help | less` works and a wrapper capturing stderr
+ * does not mistake help for a diagnostic.
+ */
+function printUsage(write: (line: string) => void = console.error): void {
+  write("Usage: anchorage-runner run <agent-name-or-path> < task.json");
+  write("");
+  write("  run <agent>   run one agent, reading a task envelope from stdin");
+  write("  --help, -h    show this message");
 }
 
 async function readStdin(): Promise<string> {

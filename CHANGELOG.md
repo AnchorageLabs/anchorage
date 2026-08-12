@@ -29,6 +29,36 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — CI can fail on a broken test again (it could not for three months), the runner has `--help`, and duplicate PRs stop happening.
+
+**Intent:** Behaviour fixes, with the tests as proof rather than as the goal.
+
+**The biggest one: `pnpm -r test` had `continue-on-error: true`.** It has been there since the first version of this workflow (#62, 2026-05-09), when there was almost nothing to fail — and it stayed for three months. **A broken test could not turn a PR red.** Every assertion added in this repo was advisory, which is worse than having none, because advisory tests are believed. Removed. Safe to remove because the whole suite passes now, and the `typecheck` step (which *does* gate) already exercises the same `tsc --noEmit` every agent's test script runs.
+
+**The CI smoke test could not detect anything either** — it was `node cli/anchorage-runner/dist/index.js --help || true`, and the `|| true` was load-bearing: **the runner had no `--help`**, so it printed usage and exited **2**. Every wrapper that shells out and asks for help saw a failure. `--help`/`-h`/`help` now exit 0 and print to **stdout** (usage-as-an-answer belongs on stdout; usage-as-a-correction stays on stderr, so `--help | less` works and a wrapper capturing stderr does not mistake help for a diagnostic). The `|| true` is gone, so the smoke test now proves the built CLI starts.
+
+**Duplicate pull requests.** The three PR-openers had drifted: `pr-opener` (GitHub) looked for an existing PR **before** creating; `bitbucket-pr-opener` and `gitlab-pr-opener` only looked **after** a create had failed, and did it as `findOpen().catch(() => null)` — so "no PR exists" and "the lookup itself failed" were the same answer. A retried, resumed or salvaged run therefore opened a second PR, splitting review across two threads; and worse, a transient lookup failure while a PR *did* exist made the agent report `create_failed` on work that had actually succeeded.
+
+`resolveOrCreatePr` in `@anchorage/sdk` now encodes the order all three should follow, with the two asymmetries that matter: the pre-check **fails open** (a lookup outage must not stop a PR being opened — worst case is a duplicate, which the recovery path still catches), and the recovery lookup's failure is **reported, not swallowed**, because "the PR may exist and we could not check" is a different operational state from "there is no PR".
+
+**`#42` was rejected while `42` worked.** In `gitlab-reader` and `bitbucket-reader`, the reference pattern required at least one character before the `#`, so the most natural way to write an issue reference returned "could not parse". Now accepted, falling back to the run's own repository — the only thing it could mean. A bare number with no repository is still refused rather than guessed: reading an arbitrary project's issue 42 would be worse than failing.
+
+**An audit that found nothing, recorded so nobody repeats it:** 44 silent `catch`/`.catch(() => null)` sites across 14 agents. All but the PR lookups are legitimate — `stat(...).catch(() => null)` where a missing file *is* the answer, and `response.json().catch(() => null)` in all six readers/writers, each immediately followed by an explicit `response.ok` check that **throws**. That pattern is deliberate and correct.
+
+**391 assertions now run** across sixteen packages, and for the first time they can fail the build.
+
+**Files touched:**
+- .github/workflows/ci.yml (test + smoke gates)
+- cli/anchorage-runner/src/index.ts, cli/anchorage-runner/test/help.test.mjs (new)
+- sdk/typescript/src/idempotent-pr.ts, tests/idempotent-pr.test.ts (new), src/index.ts
+- agents/{bitbucket,gitlab}-pr-opener/src/index.ts (ordering fix), src/pr.ts + test/pr.test.mjs (new)
+- agents/{bitbucket,gitlab}-reader/src/index.ts, src/ref.ts + test/ref.test.mjs (new)
+- package.json test scripts for the five newly-covered packages
+
+**Reason:** Gate G7 in `anchorage-internal/plans/AnchorageLabs_Plan_2026-08-11.md`; the silent-catch audit prompted by the B5 post-mortem's "what else fails silently".
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — One JSON scan for the whole fleet (it fixes a silent pr-opener bug), plus tests for the merge gate, the tester and the closer.
 
 **Intent:** Two things, and the first turned out to be a bug fix rather than a cleanup.

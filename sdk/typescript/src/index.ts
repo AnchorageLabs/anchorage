@@ -29,6 +29,8 @@ export {
   terminalEventTypes,
 } from "./events/event-types.js";
 export { ExitCode, terminalEventTypeForExitCode } from "./exit-codes.js";
+export type { ResolveOrCreateDeps, ResolveOrCreateOutcome } from "./idempotent-pr.js";
+export { resolveOrCreatePr } from "./idempotent-pr.js";
 export type { ModelJsonResult } from "./model-json.js";
 export { extractJsonObject, parseModelJsonObject } from "./model-json.js";
 export type { TaskRunManifest } from "./run-manifest.js";

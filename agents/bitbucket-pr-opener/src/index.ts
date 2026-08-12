@@ -8,9 +8,11 @@ import process from "node:process";
 import {
   ExitCode,
   type ProtocolEvent,
+  resolveOrCreatePr,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { buildDescription, buildTitle } from "./pr.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -60,31 +62,45 @@ async function main(): Promise<number> {
     input: { repo, source: change.branchName, destination: baseBranch, title },
   });
 
-  let pr: { id: number; url: string; title: string };
-  try {
-    pr = await createPullRequest(token, repo, {
-      title,
-      source: { branch: { name: change.branchName } },
-      destination: { branch: { name: baseBranch } },
-      description,
-    });
-  } catch (error) {
-    // Idempotent re-open: a PR may already exist for this source branch.
-    const existing = await findOpenPr(token, repo, change.branchName).catch(() => null);
-    if (!existing) {
-      const message = error instanceof Error ? error.message : String(error);
-      emit(task.value, "tool.result", "error", "Bitbucket PR creation failed", {
-        tool: "bitbucket.pullrequests.create",
+  // Look for an existing PR BEFORE creating, so a retried/resumed/salvaged run
+  // reuses its previous attempt's PR instead of opening a second one. The
+  // pre-check fails open and a lookup failure after a failed create is reported
+  // rather than read as "no PR exists" — see resolveOrCreatePr in @anchorage/sdk.
+  const outcome = await resolveOrCreatePr<{ id: number; url: string; title: string }>({
+    findOpen: () => findOpenPr(token, repo, change.branchName),
+    create: () =>
+      createPullRequest(token, repo, {
+        title,
+        source: { branch: { name: change.branchName } },
+        destination: { branch: { name: baseBranch } },
+        description,
+      }),
+    onReuse: (existing) =>
+      emit(task.value, "tool.result", "info", `Reusing existing pull request #${existing.id}`, {
+        tool: "bitbucket.pullrequests.list",
+        success: true,
+        output: { prId: existing.id, url: existing.url },
+      }),
+    onPreCheckFailed: (message) =>
+      emit(task.value, "tool.result", "warn", "Could not check for an existing pull request", {
+        tool: "bitbucket.pullrequests.list",
         success: false,
-        output: { error: { code: "bitbucket_pr_create_failed", message } },
-      });
-      emit(task.value, "agent.failed", "error", "Failed to create pull request", {
-        error: { code: "bitbucket_pr_create_failed", message },
-      });
-      return ExitCode.ExternalDependencyFailure;
-    }
-    pr = existing;
+        output: { message },
+      }),
+  });
+
+  if ("failure" in outcome) {
+    emit(task.value, "tool.result", "error", "Bitbucket PR creation failed", {
+      tool: "bitbucket.pullrequests.create",
+      success: false,
+      output: { error: { code: "bitbucket_pr_create_failed", message: outcome.failure } },
+    });
+    emit(task.value, "agent.failed", "error", "Failed to create pull request", {
+      error: { code: "bitbucket_pr_create_failed", message: outcome.failure },
+    });
+    return ExitCode.ExternalDependencyFailure;
   }
+  const pr = outcome.pr;
 
   emit(task.value, "tool.result", "info", `Pull request #${pr.id} ready`, {
     tool: "bitbucket.pullrequests.create",
@@ -329,30 +345,6 @@ async function ensureBranchPushed(
 function authenticatedPushUrl(origin: string, token: string, authUser: string): string {
   const withoutScheme = origin.replace(/^https:\/\/([^@/]*@)?/, "");
   return `https://${authUser}:${token}@${withoutScheme}`;
-}
-
-function buildTitle(change: CodeChange): string {
-  const first = (change.summary.split("\n")[0] ?? "").trim();
-  if (first.length > 0 && first.length <= 72) return first;
-  if (change.issueNumber) return `Resolve issue #${change.issueNumber}`;
-  return (
-    change.branchName
-      .replace(/^(feature|fix|chore|refactor|docs)\//i, "")
-      .replaceAll(/[-_]/g, " ")
-      .trim() || `Changes on ${change.branchName}`
-  );
-}
-
-function buildDescription(change: CodeChange): string {
-  const lines: string[] = ["## Summary", "", change.summary || "Automated change.", ""];
-  lines.push("## Changed files", "");
-  lines.push(
-    change.changedFiles.length
-      ? change.changedFiles.map((f) => `- \`${f}\``).join("\n")
-      : "No files changed.",
-  );
-  lines.push("", "---", "*Opened by the anchorage bitbucket-pr-opener agent.*");
-  return lines.join("\n");
 }
 
 async function runGit(
