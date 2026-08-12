@@ -44,7 +44,11 @@ The extraction surface was found with `cartographer deps agents/coder/src/index.
 
 **`pr-opener` too** — third by churn (40 commits, 3,149 lines), same story: nothing exported. `content.ts` now owns what the PR actually SAYS, which is the first thing a human reads on an agent's work. Pinned: no heading is ever followed by whitespace (an empty `## Why` reads as a broken template and a reviewer who sees one stops trusting the body); `## Notes` is omitted rather than filled, since there is no honest default for "anything else worth knowing"; `Closes #N` appears exactly when there is an issue, because omitting it leaves the issue open after the work merged; and a first summary line over 60 characters is NOT used as a title, since GitHub does not wrap them — which is the whole reason the branch-name fallback exists.
 
-36 new assertions; **198 now running** across five packages where 85 ran before. Also ignores `*.tsbuildinfo`, which the build drops next to each package and nothing ignored.
+**`planner` and `reviewer` too**, the other two the handoff named. `planner/src/comment.ts` owns the plan comment posted on the issue — how a human first sees what the agent intends BEFORE any code is written, the cheapest point to say "no, not like that"; pinned that `### Risks` is omitted rather than left as a bare heading (an empty one reads as "we did not think about it"), and that the branch and plan id stay code-quoted so markdown does not eat an underscore. `reviewer/src/parse.ts` owns getting the verdict out of the reply — a failure there discards a **completed** review, so the recovery paths and the distinctness of the three failure messages are both pinned.
+
+**One duplication found and recorded rather than quietly unified:** the reviewer's `extractJsonObject` is character-for-character the same balanced-brace scan as the coder's `parseCoderSummary`, while `pr-opener` solves the same problem *differently* (greedy first-`{` to last-`}`). Three agents therefore behave differently on identical model output. Unifying them means putting the scan in `@anchorage/sdk`, which is a public-protocol change and its own decision.
+
+51 new assertions; **213 now running** across seven packages where 85 ran before. Also ignores `*.tsbuildinfo`, which the build drops next to each package and nothing ignored.
 
 **Files touched:**
 - agents/coder/src/summary.ts (new), agents/coder/src/branch.ts (new)
