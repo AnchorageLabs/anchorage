@@ -19,6 +19,8 @@
  * commits the model made during the loop not counting as delivered work (#202).
  */
 
+import { parseModelJsonObject } from "@anchorage/sdk";
+
 export type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -40,14 +42,12 @@ export interface CoderSummary {
 /**
  * Pull the report out of the model's final message.
  *
- * Scans for the first `{` that opens a BALANCED object and parses that, rather
- * than regex-matching or trusting a fence: a brace-counting scan is what
- * survives prose on both sides, nested objects, and braces inside string values
- * (string state and escapes are tracked, so `{"a": "}"}` does not end early).
+ * The scan is `parseModelJsonObject` from `@anchorage/sdk` — three agents had
+ * their own copy of it and two disagreed.
  *
  * Falls back to the first 800 characters as the summary when nothing parses,
- * which is the honest degrade — a truncated or chatty reply still reports what
- * the model said instead of turning into silence.
+ * which is the honest degrade: a truncated or chatty reply still reports what the
+ * model said instead of turning into silence (#209).
  */
 export function parseCoderSummary(text: string): CoderSummary {
   const fallback: CoderSummary = {
@@ -55,46 +55,13 @@ export function parseCoderSummary(text: string): CoderSummary {
     commandsSuggested: [],
     risks: [],
   };
-  const cleaned = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").replace(/```(?:json)?/g, "");
-  for (let i = 0; i < cleaned.length; i++) {
-    if (cleaned[i] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let j = i; j < cleaned.length; j++) {
-      const ch = cleaned[j];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(cleaned.slice(i, j + 1));
-            if (!isObject(parsed)) break;
-            const summary = typeof parsed.summary === "string" ? parsed.summary : fallback.summary;
-            const commandsSuggested = Array.isArray(parsed.commandsSuggested)
-              ? parsed.commandsSuggested.filter(isString)
-              : [];
-            const risks = Array.isArray(parsed.risks) ? parsed.risks.filter(isString) : [];
-            return { summary, commandsSuggested, risks };
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return fallback;
+  const parsed = parseModelJsonObject(text);
+  if (!parsed.ok) return fallback;
+  const summary =
+    typeof parsed.value.summary === "string" ? parsed.value.summary : fallback.summary;
+  const commandsSuggested = Array.isArray(parsed.value.commandsSuggested)
+    ? parsed.value.commandsSuggested.filter(isString)
+    : [];
+  const risks = Array.isArray(parsed.value.risks) ? parsed.value.risks.filter(isString) : [];
+  return { summary, commandsSuggested, risks };
 }

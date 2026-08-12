@@ -54,6 +54,22 @@ test("title and why are REQUIRED — missing either routes to the fallback", () 
   assert.equal(parsePrContentJson(""), null);
 });
 
+test("a <thinking> block with braces no longer costs the whole PR description", () => {
+  // REGRESSION. This agent used to span the outermost braces and strip nothing,
+  // so a model reasoning out loud with braces made the reply unparseable — and a
+  // failed parse is indistinguishable from a model that ignored the format, so
+  // the user silently got a mechanical title while the real description was
+  // discarded. Now shared with the coder and reviewer via @anchorage/sdk.
+  const good = JSON.stringify({ title: "Real title", why: "Real reason" });
+  for (const reply of [
+    `<thinking>consider {a:1} or {b:2}</thinking>${good}`,
+    `${good} note: use { braces } with care`,
+    `starts with { then ${good}`,
+  ]) {
+    assert.equal(parsePrContentJson(reply)?.title, "Real title", `reply: ${reply.slice(0, 40)}`);
+  }
+});
+
 test("never throws, whatever the model returned", () => {
   for (const input of ["", "{", "}", "{{{", '{"title":', "null", "[]"]) {
     assert.doesNotThrow(() => parsePrContentJson(input), `input: ${JSON.stringify(input)}`);

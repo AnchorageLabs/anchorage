@@ -14,6 +14,8 @@
  * `cartographer deps agents/pr-opener/src/index.ts:361-480`.
  */
 
+import { parseModelJsonObject } from "@anchorage/sdk";
+
 export type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -57,27 +59,22 @@ export function readString(obj: JsonObject | null, ...keys: string[]): string | 
 /**
  * Pull the PR sections out of the model's reply.
  *
- * Spans the OUTERMOST braces (first `{` to last `}`) rather than scanning for a
- * balanced object, which is a deliberate difference from the coder's parser: here
- * the whole reply is expected to be the object, and being greedy tolerates a
- * trailing fence or stray prose after it.
+ * Uses `parseModelJsonObject` from `@anchorage/sdk`. This agent previously spanned
+ * the outermost braces (first `{` to last `}`) and stripped nothing, which failed
+ * on any reply whose prose or `<thinking>` block contained a brace — and a failed
+ * parse here is indistinguishable from a model that ignored the format, so the
+ * user silently got a mechanically generated PR title while the model's real
+ * description was discarded.
  *
  * `title` and `why` are required and type-checked. Returning null when either is
  * missing is what routes the caller to `fallbackPrContent` — a PR with an empty
  * title is worse than a PR with a mechanical one.
  */
 export function parsePrContentJson(text: string): PrContentRaw | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1));
-    if (typeof parsed !== "object" || parsed === null) return null;
-    if (typeof parsed.title !== "string" || typeof parsed.why !== "string") return null;
-    return parsed as PrContentRaw;
-  } catch {
-    return null;
-  }
+  const parsed = parseModelJsonObject(text);
+  if (!parsed.ok) return null;
+  if (typeof parsed.value.title !== "string" || typeof parsed.value.why !== "string") return null;
+  return parsed.value as unknown as PrContentRaw;
 }
 
 /**

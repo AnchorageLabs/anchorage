@@ -29,6 +29,42 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — One JSON scan for the whole fleet (it fixes a silent pr-opener bug), plus tests for the merge gate, the tester and the closer.
+
+**Intent:** Two things, and the first turned out to be a bug fix rather than a cleanup.
+
+**`extractJsonObject` / `parseModelJsonObject` are now in `@anchorage/sdk`.** Every agent that asks a model for structured output has to solve the same problem — the reply is JSON *somewhere inside* prose, a fence, or a `<thinking>` block. Three reference agents had solved it separately and **two of the three disagreed**, so identical model output produced different results depending on which agent received it. It is in the SDK because "get my object back out of a model reply" is a problem every agent author has, not an Anchorage-internal detail.
+
+**Which semantics won was decided by measurement, not preference.** The simpler first-`{`-to-last-`}` span (what `pr-opener` used) fails on four inputs the balanced scan recovers, and wins on none:
+
+| reply | balanced | span |
+|---|---|---|
+| `{"a":1} note: use { braces } carefully` | recovers | fails |
+| `{"a":1} {"b":2}` | recovers first | fails |
+| `starts with { and then {"real":1}` | recovers | fails |
+| `<thinking>maybe {x}</thinking>{"a":1}` | recovers | fails |
+
+**So this fixes a real, silent defect.** `pr-opener` stripped nothing and spanned the outermost braces, so a model that reasoned out loud with braces lost its **entire PR description** — and because a failed parse is indistinguishable from a model that ignored the format, the user just got a mechanically generated title with no indication anything was dropped. Verified before and after; pinned as a regression test.
+
+**Four more agents get their first tests**, chosen by churn except `merge-gate`, which is chosen by consequence:
+
+- **`merge-gate/src/gate.ts`** — the highest-stakes pure logic in the fleet: every other agent proposes, this one lands. Both rules fail closed and the tests pin that asymmetry: only the exact string `"approve"` merges (not `"approved"`, not `"APPROVE"`, not a truthy object — each is a state where we do not *know* a reviewer approved, and `"unknown"` is what an unreadable review artifact produces); `cancelled` and `timed_out` count as CI **failures**, because treating "we never found out" as success is how red code merges; both of GitHub's CI surfaces are consulted, since reading one would call a red PR green.
+- **`tester/src/classify.ts`** — "the tests failed" vs "the environment could not run them". Wrong in one direction burns a retry *and* hands the coder a fix-this instruction about code that was never broken; wrong in the other lets broken code proceed. **Deliberate behaviour change:** the generic `: not found` pattern sat before the Docker one and shadowed it, so `docker: command not found` reported "a required command is not installed" — true but useless, since the fix is provisioning Docker, not installing a package.
+- **`issue-closer/src/comment.ts`** — the last thing anyone reads about a run, and often the only thing whoever filed the issue sees. Pinned: an absent link is dropped rather than rendered as a label with nothing after it, and a section with no entries is omitted whole rather than left as a bare heading (which reads as "the run produced nothing here" — a different and usually false claim).
+- **`planner`** and **`reviewer`** carried over from #216.
+
+**260 assertions now run** across ten packages, where 85 ran before this session started.
+
+**Files touched:**
+- sdk/typescript/src/model-json.ts (new), sdk/typescript/src/index.ts, sdk/typescript/tests/model-json.test.ts (new)
+- agents/coder/src/summary.ts, agents/reviewer/src/parse.ts, agents/pr-opener/src/content.ts (all three delegate to the SDK)
+- agents/merge-gate/{src/gate.ts,test/gate.test.mjs} (new), agents/tester/{src/classify.ts,test/classify.test.mjs} (new), agents/issue-closer/{src/comment.ts,test/comment.test.mjs} (new)
+- package.json test scripts for merge-gate, tester, issue-closer
+
+**Reason:** Gate G7 in `anchorage-internal/plans/AnchorageLabs_Plan_2026-08-11.md`; the duplication recorded in #216's `reviewer/src/parse.ts`.
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — 97 test files' worth of assertions that CI never ran now run; the coder gets its first tests.
 
 **Intent:** Two problems, and the second one is bigger than the first.

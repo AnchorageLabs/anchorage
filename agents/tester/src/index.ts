@@ -15,6 +15,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
+import { classifyEnvironment } from "./classify.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -461,52 +462,6 @@ async function detectNativeTestCommand(root: string, dir: string): Promise<TestC
 // or DB the suite spins up, or a Make target that died on a missing tool. These
 // must not be reported as test failures — otherwise a frontend change is blocked
 // by an unrunnable Dockerised backend suite.
-const ENVIRONMENT_FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [
-    /command not found|: not found|executable file not found/i,
-    "a required command is not installed",
-  ],
-  [
-    /docker: (?:command )?not found|cannot connect to the docker daemon|is the docker daemon running/i,
-    "Docker is not available in the worker",
-  ],
-  [/no such file or directory/i, "a required file or tool is missing"],
-  [
-    /connection refused|ECONNREFUSED|could not connect to server|could not translate host/i,
-    "a required service/database was not reachable",
-  ],
-  [/make: \*\*\* .*Error 127/i, "a Make target invoked a tool that is not installed"],
-  [/\bgradlew\b.*(?:not found|permission denied)/i, "the Gradle wrapper could not run"],
-  // Toolchain VERSION mismatches — the installed runtime is too old/new to parse
-  // the project's manifest (e.g. a Go repo pinning `go 1.25.x` against an older
-  // worker Go). The code isn't broken; the environment can't build/run it. Treat
-  // as environment-blocked so a version skew never fails the run.
-  [
-    /invalid go version|errors parsing go\.mod|go: .*requires go >=|must match format|go: downloading go\d/i,
-    "the worker's Go toolchain version cannot build this module",
-  ],
-  [
-    /unsupported engine|the engine "node" is incompatible|EBADENGINE|requires node|nvmrc|volta/i,
-    "the worker's runtime version does not match what the project requires",
-  ],
-  [
-    /SDK not found|JAVA_HOME|could not determine java version|unsupported class file major version/i,
-    "the worker's JDK version does not match what the project requires",
-  ],
-];
-
-function classifyEnvironment(result: CommandResult): { blocked: boolean; reason?: string } {
-  if (result.exitCode === 0) return { blocked: false };
-  const text = `${result.stderr}\n${result.stdout}`;
-  if (result.exitCode === 127) {
-    return { blocked: true, reason: "command exited 127 (not found / unavailable)" };
-  }
-  for (const [pattern, reason] of ENVIRONMENT_FAILURE_PATTERNS) {
-    if (pattern.test(text)) return { blocked: true, reason };
-  }
-  return { blocked: false };
-}
-
 async function runTestCommand(
   command: TestCommand,
   workspacePath: string,
