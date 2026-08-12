@@ -29,7 +29,7 @@ import {
   validateTaskEnvelope,
 } from "@anchorage/sdk";
 import { Octokit } from "@octokit/rest";
-import { buildPlanComment } from "./comment.js";
+import { buildPlanComment, shouldPostPlanComment } from "./comment.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -98,9 +98,8 @@ async function maybePostPlanComment(
   plan: ImplementationPlan,
 ): Promise<void> {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-  const hasGithubWrite =
-    Array.isArray(task.capabilities) && task.capabilities.includes("github.write");
-  if (!hasGithubWrite || !token || !task.repository) return;
+  if (!shouldPostPlanComment(task, issue.issueNumber, token)) return;
+  if (!task.repository) return; // narrowed for the destructure below
 
   const { owner, name: repo } = task.repository;
   const body = buildPlanComment(plan);

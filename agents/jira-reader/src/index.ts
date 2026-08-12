@@ -10,6 +10,7 @@ import {
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
+import { numberFromKey } from "./issue-number.js";
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = JsonObject | JsonValue[] | boolean | null | number | string;
@@ -168,11 +169,6 @@ function parseIssueKey(value: JsonValue | undefined): null | string {
   const fromUrl = candidate.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/i)?.[1];
   const key = (fromUrl ?? candidate).toUpperCase();
   return /^[A-Z][A-Z0-9_]+-\d+$/.test(key) ? key : null;
-}
-
-function numberFromKey(key: string): number {
-  const n = Number(key.split("-").at(-1));
-  return Number.isInteger(n) && n > 0 ? n : 1;
 }
 
 function resolveState(fields: JsonObject): string {

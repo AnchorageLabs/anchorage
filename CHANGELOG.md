@@ -29,6 +29,28 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — Two false-fact bugs with destructive consequences: a fabricated issue number that closes the wrong issue, and a plan comment on issue #0.
+
+**Intent:** Defect hunt first, tests as proof. Both of these were found by tracing where a value goes rather than by reading the agent that produces it.
+
+**A fabricated issue number closed an unrelated issue.** `linear-reader` and `jira-reader` derived the GitHub-style issue number from the vendor key's numeric tail — and returned **1** when it could not be derived. That number is not local: it travels in the `issue.summary` artifact through the planner and coder to `pr-opener`, which renders `Closes #N` into the PR body. So a Linear reference with no numeric tail — a **UUID**, which `linear-reader` accepts on purpose, or `ENG-0` — produced `Closes #1`, and **merging that PR closed issue #1 of the repository**.
+
+Now 0, which is not a fallback invented here: it is the protocol's existing value for "there is no issue number", allowed explicitly by the planner's `parseIssueSummary` for the plan-only flow, and falsy — so `pr-opener`'s `if (codeChange.issueNumber)` omits `Closes #` entirely. Saying "I don't know" is the only safe answer when the alternative is closing someone else's issue.
+
+**The planner commented on issue #0.** Found while verifying the fix above: `maybePostPlanComment` guarded on `github.write`, a token, and a repository — but not on the issue number. `issueNumber: 0` is the documented value for the instruction-to-plan flow, which plans *before* an issue exists, so **the one flow that convention exists for was the one flow that reliably failed here** with an API rejection. The decision is now a pure `shouldPostPlanComment` predicate so the guard is pinned rather than asserted.
+
+**Not every suspicion was a bug, and that is recorded too.** `jira-reader`'s ref parsing validates the key shape while `linear-reader`'s accepts any string — but that is correct, because Linear also accepts an issue **id**, and the error message already says so. `ENG--1` yielding 1 is correct too: the tail after the last dash genuinely is `1`, and validating a key's *shape* is a separate concern from reading its *number*.
+
+**Coverage:** `linear-reader`, `jira-reader` and the planner's new predicate. **408 assertions across seventeen packages.**
+
+**Files touched:**
+- agents/{linear,jira}-reader/src/issue-number.ts + test/issue-number.test.mjs (new), src/index.ts
+- agents/planner/src/comment.ts (`shouldPostPlanComment`), src/index.ts, test/comment.test.mjs
+
+**Reason:** Gate G7; the value-tracing method that found the `pr-opener` JSON defect.
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — CI can fail on a broken test again (it could not for three months), the runner has `--help`, and duplicate PRs stop happening.
 
 **Intent:** Behaviour fixes, with the tests as proof rather than as the goal.
