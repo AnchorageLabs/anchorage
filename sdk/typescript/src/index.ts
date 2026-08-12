@@ -16,6 +16,13 @@ export {
   REVISION_REQUEST_ARTIFACT_TYPE,
   RUNTIME_PREVIEW_ARTIFACT_TYPE,
 } from "./artifacts.js";
+export {
+  BLOCKING_CHECK_CONCLUSIONS,
+  checkConclusionBlocks,
+  checkRunIsPending,
+  commitStatusBlocks,
+  PASSING_CHECK_CONCLUSIONS,
+} from "./ci-conclusion.js";
 export { writeAllSync } from "./event-io.js";
 export type { EventStreamValidationContext } from "./events/event-stream.js";
 export {

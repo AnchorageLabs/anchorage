@@ -29,6 +29,34 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-12 — The merge gate merged PRs whose CI demanded human action, and the issue-opener had a fourth JSON scan.
+
+**Intent:** GitHub-path agents first — that is where the customers are. Both defects were found by **comparing two agents that classify the same thing**, which is the method that keeps paying.
+
+**The merge gate merged on `action_required`.** `ci-watcher` and `merge-gate` both classify GitHub check conclusions, and they disagreed:
+
+| conclusion | `ci-watcher` | `merge-gate` (before) |
+|---|---|---|
+| `action_required` | **failure** | **success → merged** |
+
+So a check run explicitly asking a human to act — a required approval, a security scan needing acknowledgement — read as success in the gate. **The watcher reported CI failed and the gate merged the same PR anyway.** `merge-gate`'s own stated principle is that only evidence the code is good may pass; `action_required` is the clearest possible "not yet".
+
+The vocabulary now lives once, in `@anchorage/sdk`, because "is this conclusion a pass" has to be answered identically by every agent or the fleet contradicts itself. Two consequences beyond the fix: `stale` now blocks (it belongs to a superseded commit), and **an unrecognised conclusion blocks** — passing conclusions are listed explicitly rather than inferred from "not blocking", so a conclusion GitHub adds later cannot silently become a pass. `waiting` joins `queued`/`in_progress` as pending.
+
+**`issue-opener` had the fourth copy of the JSON scan.** #217 unified three; this one was missed. It stripped fences and `<thinking>` blocks but then fell back to a greedy first-`{`-to-last-`}` span, so prose after the object, a second object, or a stray brace before it **lost the draft entirely** — and the agent then opened the issue from its mechanical fallback, with no indication the model's real draft had been discarded. Verified failing on all three before, passing after.
+
+**421 assertions across seventeen packages.**
+
+**Files touched:**
+- sdk/typescript/src/ci-conclusion.ts + tests/ci-conclusion.test.ts (new), src/index.ts
+- agents/merge-gate/src/gate.ts, test/gate.test.mjs
+- agents/ci-watcher/src/index.ts
+- agents/issue-opener/src/index.ts
+
+**Reason:** Gate G7, GitHub path prioritised; cross-agent comparison, same method as the `pr-opener` divergence in #218.
+
+**Author:** Sol Soletti
+
 ### 2026-08-12 — Two false-fact bugs with destructive consequences: a fabricated issue number that closes the wrong issue, and a plan comment on issue #0.
 
 **Intent:** Defect hunt first, tests as proof. Both of these were found by tracing where a value goes rather than by reading the agent that produces it.

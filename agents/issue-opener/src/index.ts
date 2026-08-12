@@ -20,6 +20,7 @@ import {
 import {
   ExitCode,
   type ProtocolEvent,
+  parseModelJsonObject,
   type TaskEnvelope,
   validateTaskEnvelope,
 } from "@anchorage/sdk";
@@ -379,24 +380,13 @@ function buildSystemPrompt(): string {
 }
 
 function parseIssueDraft(text: string): IssueDraft | null {
-  let raw = text
-    .trim()
-    .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
-    .trim();
-  const fence = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  if (fence?.[1]) raw = fence[1].trim();
-  if (!raw.startsWith("{")) {
-    const first = raw.indexOf("{");
-    const last = raw.lastIndexOf("}");
-    if (first === -1 || last <= first) return null;
-    raw = raw.slice(first, last + 1);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  // The scan lives in @anchorage/sdk: this was the FOURTH copy in the fleet, and
+  // it fell back to a greedy first-`{`-to-last-`}` span, so prose after the
+  // object, a second object, or a stray brace before it lost the draft entirely —
+  // and the agent then opened the issue from its mechanical fallback instead.
+  const result = parseModelJsonObject(text);
+  if (!result.ok) return null;
+  const parsed: unknown = result.value;
   if (!isObject(parsed)) return null;
   const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
   const body = typeof parsed.body === "string" ? parsed.body.trim() : "";
