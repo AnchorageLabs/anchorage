@@ -14,6 +14,7 @@ import type {
 } from "../types.js";
 import {
   isMaxCompletionTokensUnsupported,
+  isResponseFormatUnsupported,
   isTemperatureUnsupported,
   wantsMaxCompletionTokens,
 } from "./param-support.js";
@@ -76,6 +77,11 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
       // on whichever parameter the API rejects (up to two retries).
       let tokenParam: "max_completion_tokens" | "max_tokens" = "max_completion_tokens";
       let includeTemperature = typeof input.temperature === "number";
+      // JSON mode (response_format: json_object) is opt-in per call — used for
+      // tools-off "emit the final JSON now" turns. Some OpenAI-compatible
+      // gateways reject the parameter; flex it off like the token params so the
+      // turn degrades to a plain completion instead of failing.
+      let includeResponseFormat = input.responseFormat === "json_object";
 
       const send = (): Promise<Response> => {
         const body: JsonObject = {
@@ -88,6 +94,9 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         if (promptCacheKey) body.prompt_cache_key = promptCacheKey;
         if (includeTemperature && typeof input.temperature === "number") {
           body.temperature = input.temperature;
+        }
+        if (includeResponseFormat) {
+          body.response_format = { type: "json_object" };
         }
         return fetchWithTimeout(`${baseUrl}/chat/completions`, {
           method: "POST",
@@ -106,10 +115,16 @@ export function createOpenAiProvider(config: OpenAiProviderConfig): ProviderAdap
         // before the param-compatibility retries below — see retry.ts.
         response = await sendWithRateLimitRetry(send);
         text = await response.text();
-        for (let attempt = 0; attempt < 2 && !response.ok; attempt++) {
+        // Up to three flex retries: temperature, the token-budget parameter and
+        // response_format can each need dropping on the same turn.
+        for (let attempt = 0; attempt < 3 && !response.ok; attempt++) {
           let changed = false;
           if (includeTemperature && isTemperatureUnsupported(text)) {
             includeTemperature = false;
+            changed = true;
+          }
+          if (includeResponseFormat && isResponseFormatUnsupported(text)) {
+            includeResponseFormat = false;
             changed = true;
           }
           if (tokenParam === "max_tokens" && wantsMaxCompletionTokens(text)) {

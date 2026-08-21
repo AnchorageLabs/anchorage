@@ -52,3 +52,16 @@ export function isPromptCachingUnsupported(message: string): boolean {
     /(unsupported|not\s+support|not\s+allowed|invalid|unknown|does\s+not)/i.test(message)
   );
 }
+
+/**
+ * True when a provider rejects `response_format` (JSON mode) — some
+ * OpenAI-compatible gateways and older models don't know the parameter. Lets
+ * the caller retry once without it so a JSON-mode request degrades to a plain
+ * completion instead of failing the turn.
+ */
+export function isResponseFormatUnsupported(message: string): boolean {
+  return (
+    /response[_ ]?format|json[_ ]?(object|mode|schema)/i.test(message) &&
+    /(unsupported|not\s+support|not\s+allowed|invalid|unknown|unrecogni)/i.test(message)
+  );
+}

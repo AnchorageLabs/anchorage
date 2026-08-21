@@ -144,6 +144,7 @@ export async function runWithTools(
       tools: availableTools,
       maxTokens: request.maxTokensPerTurn ?? 4096,
       temperature: request.temperature,
+      responseFormat: request.responseFormat,
     });
     // Model wall time (including in-turn rate-limit retries) — accumulated on
     // ok AND error turns so a run that dies on a slow provider still reports

@@ -207,6 +207,16 @@ export interface RunWithToolsRequest {
   budget?: Partial<BudgetConfig>;
   maxTokensPerTurn?: number;
   temperature?: number;
+  /**
+   * Opt into the provider's JSON mode (`response_format: json_object` on
+   * OpenAI-compatible APIs) for every turn of this loop: the API then
+   * guarantees the reply is a JSON object. Only meaningful for tools-off
+   * "emit the final answer now" calls — JSON mode forbids tool calls on some
+   * providers, so never set it while the model is still exploring.
+   * Providers without JSON mode ignore it (the OpenAI adapter flexes the
+   * parameter off if the API rejects it).
+   */
+  responseFormat?: "json_object";
   // Forwarded to the ToolContext. The runtime owns workspacePath/budget/emit;
   // callers provide capabilities + env.
   capabilities?: Iterable<string>;
@@ -326,6 +336,8 @@ export interface ProviderTurnInput {
   tools: ToolDefinition[];
   maxTokens: number;
   temperature?: number;
+  /** See RunWithToolsRequest.responseFormat. Adapters without JSON mode ignore it. */
+  responseFormat?: "json_object";
 }
 
 export type ProviderTurnResult =

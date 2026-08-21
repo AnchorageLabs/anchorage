@@ -338,6 +338,9 @@ async function createPlan(
       env: scrubbedEnv(),
       maxTokensPerTurn: 8192,
       temperature: 0,
+      // Tools-off JSON-only call: ask the provider to guarantee a JSON object
+      // (ignored/flexed off where unsupported) so prose or fences can't sink it.
+      responseFormat: "json_object",
       onEvent: (event) => emitToolEvent(task, event),
     });
     if (forced.ok) result = forced;
@@ -379,6 +382,9 @@ async function createPlan(
       env: scrubbedEnv(),
       maxTokensPerTurn: 8192,
       temperature: 0,
+      // Same JSON-mode guarantee as the forced-emission call above: this re-ask
+      // is the last chance before the run fails with invalid_llm_plan_json.
+      responseFormat: "json_object",
       onEvent: (event) => emitToolEvent(task, event),
     });
     if (retry.ok) {

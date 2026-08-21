@@ -29,6 +29,22 @@ All substantive changes to this repo are recorded here. Format derived from Keep
 
 ## [unreleased]
 
+### 2026-08-21 — The planner's JSON-only calls now request provider JSON mode, so a chatty model can't sink a fully-explored plan with prose.
+
+**Intent:** A run whose planner had gathered full context could still die with `invalid_llm_plan_json` ("LLM response did not contain a JSON object.") when the model answered the final JSON-only demand with prose, fences, or truncated output — the parse-side recovery (fence stripping, balanced-object extraction, one bounded re-ask) was already in place, but nothing constrained the *response* side. The tool loop now exposes an opt-in `responseFormat: "json_object"` on `RunWithToolsRequest`/`ProviderTurnInput`; the OpenAI-compatible adapter sends `response_format: { "type": "json_object" }` and flexes the parameter off with a retry when a gateway rejects it (the same degrade-don't-fail pattern as the token-budget parameters); and the planner sets it on its two tools-off JSON-only calls — the budget forced-emission and the re-ask — where tool calls are no longer needed. Anthropic/Bedrock adapters ignore the flag, and providers without JSON mode behave exactly as before.
+
+**Files touched:**
+- agents/llm/src/tools/types.ts
+- agents/llm/src/tools/loop.ts
+- agents/llm/src/tools/providers/openai.ts
+- agents/llm/src/tools/providers/param-support.ts
+- agents/llm/test/openai-json-mode.test.mjs
+- agents/planner/src/index.ts
+
+**Reason:** issue #222 — planner run failed at `create-plan` with `invalid_llm_plan_json` after both the initial plan and the JSON-only re-ask came back without a parseable object (OpenAI-compatible gateway, chatty open model).
+
+**Author:** Valentìn Torassa Colombero
+
 ### 2026-08-12 — Every GitHub-path agent now has tests: the issue reader, the issue opener, and the CI summary line.
 
 **Intent:** Closing the GitHub path, which is where the customers are. All three of these turned out to be well-designed code, so this is coverage rather than repair — and saying that plainly matters, because the previous rounds found nine real defects and it would be easy to keep implying every extraction uncovers one.
